@@ -24,13 +24,14 @@ ai-coding-platform/
 │   ├── adr/                            ✅ ADR-0001…0026
 │   ├── installation.md, development.md, configuration.md, cli.md   ✅
 │   ├── audit.md (S3), github.md (S4), create.md (S5), develop.md (S6)   ✅
+│   ├── server.md (S8), acceptance.md, operations.md, runbook.md (S9)   ✅
 │   ├── backlog.md                      ✅ полный backlog по ТЗ
 │   ├── tz-notes.md                     ✅ замечания к ТЗ
-│   └── sprints/S1…S6-report.md         ✅
+│   └── sprints/S1…S9-report.md         ✅
 ├── examples/pilot-python, pilot-node   ✅ S4 пилотные проекты (AC-09)
 ├── src/ai_coding/
 │   ├── domain/        ✅ перечисления ТЗ, TaskStatus/Phase, ApprovalStatus, базовые ошибки
-│   ├── security/      ✅ redaction, детектор секретов; ⏳ S8 authn
+│   ├── security/      ✅ redaction, детектор секретов; ✅ S8 authn (api/security.py); ✅ S9 проверка локальных endpoint'ов
 │   ├── contracts/     ✅ контракт агента (AgentTask/AgentResult, валидация output_schema)
 │   ├── detection/     ✅ определение стеков (FR-02)
 │   ├── git/           ✅ порт GitRepository + LocalGitRepository (worktree, защита веток)
@@ -47,22 +48,27 @@ ai-coding-platform/
 │   ├── llm/           ✅ S2 порт LLMProvider, GuardedLLM; ✅ S5 адаптеры openai/anthropic/ollama/vllm, router+fallback, кэш
 │   ├── observability/ ✅ S2 structlog JSON + redaction + run_id/trace_id
 │   ├── executors/     ✅ S3 port, local (allow-list, env allow-list, rlimits, kill tree), docker
-│   │                       (hardened sandbox, --pull never); ✅ S4 github_actions
+│   │                       (hardened sandbox, --pull never); ✅ S4 github_actions;
+│   │                       ✅ S9 egress-прокси (allowlist), runtime gVisor, Job Objects (Windows)
 │   ├── tools/         ✅ S3 реестр, runner, gitleaks, semgrep (офлайн-правила), ruff; ✅ S6 testrun (тесты в песочнице); ✅ S7 trivy, osv,
-│   │                       phpstan, pint, eslint, tsc, mypy, go, golangci-lint, cargo, clippy; ⏳ S9 playwright, k6
+│   │                       phpstan, pint, eslint, tsc, mypy, go, golangci-lint, cargo, clippy; ✅ S9 playwright, k6
 │   ├── quality/       ✅ S3 движок гейтов PASS/FAIL/SKIPPED, fail-closed, strict, baseline
 │   ├── reports/       ✅ S3 JSON, Markdown; ✅ S4 SARIF 2.1.0, JUnit
 │   ├── integrations/  ✅ S4 порт RepositoryHost; github/: клиент, App/token, PR, checks, rulesets, Actions executor
 │   ├── agents/        ✅ S5 requirements, architect, planner, bootstrap; ✅ S6 developer, reviewer, database, planner.migration; ✅ S7 security, qa, performance, devops, maintenance
 │   ├── workflows/     ✅ S3 audit; ✅ S4 pull_request; ✅ S5 create; ✅ S6 develop, modernize, review, implement-цикл; ✅ S7 maintain
 │   └── api/           ✅ S8 services (auth, RBAC, изоляция), app (FastAPI), worker (очередь в БД, пул),
-│                           kinds, lifecycle (экспорт, retention), metrics, limits (ADR-0030)
+│                           kinds, lifecycle (экспорт, retention), metrics, limits (ADR-0030); ✅ S9 общий rate limiter (ADR-0034)
 ├── tests/
 │   ├── unit/          ✅
-│   ├── integration/   ✅ (реальный git)
+│   ├── integration/   ✅ (реальный git, Docker, PostgreSQL, S3)
+│   ├── acceptance/    ✅ S9 AC-05, AC-06, AC-09, AC-10 (матрица AC-01…AC-10)
+│   ├── security/      ✅ S9 права API, fuzzing, выход из песочницы
 │   └── fixtures/      ✅
 ├── web/               ✅ S8 React + TypeScript + Vite (ADR-0031)
-└── deploy/            ✅ S8 Dockerfile (non-root), docker-compose (Caddy, API, worker, PostgreSQL), backup.sh
+├── deploy/            ✅ S8 Dockerfile (non-root), docker-compose (Caddy, API, worker, PostgreSQL), backup.sh
+├── loadtest/          ✅ S9 k6 (API + worker'ы на PostgreSQL)
+└── scripts/sbom.py    ✅ S9 SBOM CycloneDX (пакет, Web UI, образ)
 ```
 
 ## Граф зависимостей модулей
