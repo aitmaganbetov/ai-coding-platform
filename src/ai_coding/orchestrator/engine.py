@@ -86,8 +86,10 @@ from ai_coding.persistence.models import (
     TaskDependency,
     User,
 )
+from ai_coding.persistence.models import Finding as FindingRow
 from ai_coding.persistence.types import utcnow
 from ai_coding.security import redact
+from ai_coding.tools.base import Finding
 
 _log = get_logger("ai_coding.orchestrator")
 _FAILED_DEP = {TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.SKIPPED}
@@ -1059,6 +1061,7 @@ class Orchestrator:
                     log=_log.bind(task=key, attempt=attempt, handler=handler.name),
                     budget=rc.budget,
                     record_usage=self._usage_recorder(rc, task_id),
+                    record_findings=self._findings_recorder(rc),
                 )
                 try:
                     result = await asyncio.wait_for(handler.run(ctx), timeout=timeout)
@@ -1113,6 +1116,44 @@ class Orchestrator:
                         cost_usd=cost,
                     )
                 )
+
+        return record
+
+    def _findings_recorder(self, rc: _RunContext) -> Callable[[Sequence[Finding]], int]:
+        """Persist normalised findings (``findings``) for the project; idempotent per run."""
+
+        def record(findings: Sequence[Finding]) -> int:
+            if not findings:
+                return 0
+            with self.db.session() as session:
+                run = self._get_run(session, rc.run_id)
+                known = set(
+                    session.scalars(
+                        select(FindingRow.fingerprint).where(FindingRow.run_id == rc.run_id)
+                    )
+                )
+                added = 0
+                for f in findings:
+                    if f.fingerprint in known:
+                        continue
+                    known.add(f.fingerprint)
+                    session.add(
+                        FindingRow(
+                            project_id=run.project_id,
+                            run_id=run.id,
+                            source=f.tool,
+                            rule_id=f.rule_id,
+                            severity=f.severity.value,
+                            title=redact(f.title)[:500],
+                            message=redact(f.message),
+                            file_path=f.path,
+                            line=f.line,
+                            fingerprint=f.fingerprint,
+                            evidence=_redact_json(f.evidence),
+                        )
+                    )
+                    added += 1
+                return added
 
         return record
 

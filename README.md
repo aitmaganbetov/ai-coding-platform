@@ -12,7 +12,7 @@
 
 Ключевые принципы: GitHub и LLM **опциональны**; детерминированные Quality Gates (PASS/FAIL/SKIPPED) не зависят от AI; изменения только в отдельных git worktree/ветках; секреты никогда не попадают в конфигурацию, логи и prompts; опасные операции — только с human approval.
 
-> **Статус: Sprints S1–S2 завершены.** S1 — архитектура, ADR, схема конфигурации, CLI, Git-абстракция, контракт агентов, CI. S2 — оркестратор (конечный автомат, DAG, checkpoints, retry, политики, approvals, бюджеты, аудит), хранилище SQLite + Alembic, восстановление после падения worker'а без дублирования коммитов, LLM-порт с guard'ом, команды `ai-coding run …`. Исполнители, агенты и API — S3–S9, см. [backlog](docs/backlog.md).
+> **Статус: Sprints S1–S3 завершены.** S1 — архитектура, схема конфигурации, CLI, Git. S2 — оркестратор (конечный автомат, DAG, checkpoints, retry, политики, approvals, аудит), восстановление после падения worker'а. S3 — исполнители Local и Docker-песочница, реестр инструментов (Gitleaks, Semgrep, Ruff), Quality Gates и baseline, **`ai-coding audit`** — безопасный офлайн read-only аудит с отчётами JSON/Markdown. GitHub-интеграция, агенты и API — S4–S9, см. [backlog](docs/backlog.md).
 
 ## Быстрый старт
 
@@ -33,7 +33,11 @@ uv run ai-coding config validate /path/to/project
 ```
 
 ```bash
-uv run ai-coding run discover -C /path/to/project
+uv run ai-coding tools pull
+```
+
+```bash
+uv run ai-coding audit -C /path/to/project --backend docker -o reports/
 ```
 
 Подробнее: [установка](docs/installation.md) · [конфигурация](docs/configuration.md) · [CLI](docs/cli.md).
@@ -42,11 +46,12 @@ uv run ai-coding run discover -C /path/to/project
 
 - [Архитектура](docs/architecture/overview.md) и [модули/зависимости](docs/architecture/modules.md)
 - [ADR](docs/adr/README.md) — архитектурные решения
+- [Аудит](docs/audit.md) — `ai-coding audit`, бэкенды, гейты, baseline
 - [Оркестратор](docs/orchestrator.md) — компоненты, жизненный цикл run, как писать обработчики
 - [Разработка](docs/development.md) — окружение, правила, тесты
 - [Backlog](docs/backlog.md) — все требования ТЗ по спринтам
 - [Замечания к ТЗ](docs/tz-notes.md) — сверка PDF и `.md`, интерпретации
-- Отчёты: [S1](docs/sprints/S1-report.md), [S2](docs/sprints/S2-report.md)
+- Отчёты: [S1](docs/sprints/S1-report.md), [S2](docs/sprints/S2-report.md), [S3](docs/sprints/S3-report.md)
 - [Политика безопасности](SECURITY.md)
 - Техническое задание: [AI_Coding_Platform_v2_1_TZ.pdf](AI_Coding_Platform_v2_1_TZ.pdf) (основной документ) · [Markdown-версия](AI_Coding_Platform_v2_1_TZ.md), сгенерированная из PDF
 

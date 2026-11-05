@@ -5,46 +5,28 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any
 
 import typer
 from rich.table import Table
 
+from ai_coding.cli.common import close_all, guard, load_project, open_orchestrator
 from ai_coding.cli.console import error, info, stdout
 from ai_coding.cli.exit_codes import ExitCode
-from ai_coding.config.loader import find_config
-from ai_coding.config.validator import validate_file
 from ai_coding.domain.enums import RunState
-from ai_coding.observability import configure_logging
 from ai_coding.orchestrator import Orchestrator, RunOptions, RunStatus, TaskPlanner
 from ai_coding.orchestrator.engine import short_id
-from ai_coding.orchestrator.errors import (
-    ApprovalError,
-    IdempotencyConflictError,
-    InvalidTransitionError,
-    OrchestratorError,
-    RunLeaseError,
-    RunNotFoundError,
-)
 from ai_coding.orchestrator.handlers import builtin_registry, discovery_plan
-from ai_coding.persistence import Database, upgrade_to_head
 
 app = typer.Typer(help="Start and manage orchestrated runs.", no_args_is_help=True)
-_OPENED: list[Orchestrator] = []
-
-
-def _close_all() -> None:
-    while _OPENED:
-        _OPENED.pop().close()
 
 
 @app.callback()
 def _group(ctx: typer.Context) -> None:
     """Start and manage orchestrated runs."""
     # Release databases when the command finishes, however it exits.
-    ctx.call_on_close(_close_all)
+    ctx.call_on_close(close_all)
 
 
 ProjectOpt = Annotated[
@@ -62,35 +44,11 @@ _STATE_EXIT = {
 
 
 def _orchestrator(project: Path) -> Orchestrator:
-    root = project.resolve()
-    config_path = find_config(root)
-    if config_path is None:
-        error(f"configuration not found in {root} (run `ai-coding init`)")
-        raise typer.Exit(ExitCode.NOT_FOUND)
-    report = validate_file(config_path)
-    if not report.ok or report.config is None:
-        error(f"{config_path} is invalid; run `ai-coding config validate`")
-        raise typer.Exit(ExitCode.INVALID)
-    configure_logging(json=True, level="WARNING")
-    db = Database.for_project(root)
-    upgrade_to_head(db)
-    orch = Orchestrator(db=db, config=report.config, project_root=root, registry=builtin_registry())
-    _OPENED.append(orch)
-    return orch
+    root, config = load_project(project)
+    return open_orchestrator(root, config, builtin_registry())
 
 
-def _guard[T](fn: Callable[[], T]) -> T:
-    try:
-        return fn()
-    except RunNotFoundError as exc:
-        error(str(exc))
-        raise typer.Exit(ExitCode.NOT_FOUND) from exc
-    except (RunLeaseError, IdempotencyConflictError) as exc:
-        error(str(exc))
-        raise typer.Exit(ExitCode.CONFLICT) from exc
-    except (InvalidTransitionError, ApprovalError, OrchestratorError) as exc:
-        error(str(exc))
-        raise typer.Exit(ExitCode.INVALID) from exc
+_guard = guard
 
 
 def _print_status(status: RunStatus, as_json: bool) -> None:

@@ -9,7 +9,7 @@ group.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from importlib.metadata import entry_points
 from pathlib import Path
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from ai_coding.orchestrator.budget import BudgetTracker
     from ai_coding.orchestrator.policy import PolicyEngine
     from ai_coding.persistence.artifacts import ArtifactRef
+    from ai_coding.tools.base import Finding
 
 ENTRY_POINT_GROUP = "ai_coding.handlers"
 
@@ -64,6 +65,7 @@ class StepContext:
     log: Any
     budget: BudgetTracker
     record_usage: Callable[[ProviderName, str, TokenUsage, float], None]
+    record_findings: Callable[[Sequence[Finding]], int]
 
     @property
     def cancelled(self) -> bool:

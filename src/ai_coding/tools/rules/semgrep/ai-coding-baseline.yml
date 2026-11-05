@@ -1,0 +1,120 @@
+# AI Coding Platform — offline baseline SAST rules (ADR-0019).
+# Written for this project (no third-party rule text); deliberately small and
+# high-signal. Projects can add their own rules via `ai-coding audit --semgrep-config`.
+rules:
+  - id: python-eval-exec
+    languages: [python]
+    severity: ERROR
+    message: Dynamic code execution with eval()/exec() can lead to code injection.
+    metadata: {cwe: "CWE-95"}
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: exec(...)
+
+  - id: python-subprocess-shell-true
+    languages: [python]
+    severity: ERROR
+    message: subprocess call with shell=True enables shell injection; pass an argv list.
+    metadata: {cwe: "CWE-78"}
+    pattern-either:
+      - pattern: subprocess.$FUNC(..., shell=True, ...)
+      - pattern: os.system(...)
+      - pattern: os.popen(...)
+
+  - id: python-unsafe-deserialization
+    languages: [python]
+    severity: ERROR
+    message: Deserialising untrusted data with pickle/marshal/yaml.load can execute code.
+    metadata: {cwe: "CWE-502"}
+    pattern-either:
+      - pattern: pickle.loads(...)
+      - pattern: pickle.load(...)
+      - pattern: marshal.loads(...)
+      - pattern: yaml.load($X)
+      - pattern: yaml.unsafe_load(...)
+
+  - id: python-weak-hash
+    languages: [python]
+    severity: WARNING
+    message: MD5/SHA1 are not collision resistant; do not use them for security.
+    metadata: {cwe: "CWE-327"}
+    pattern-either:
+      - pattern: hashlib.md5(...)
+      - pattern: hashlib.sha1(...)
+
+  - id: python-tls-verify-disabled
+    languages: [python]
+    severity: ERROR
+    message: TLS certificate verification is disabled.
+    metadata: {cwe: "CWE-295"}
+    pattern-either:
+      - pattern: requests.$M(..., verify=False, ...)
+      - pattern: httpx.$M(..., verify=False, ...)
+
+  - id: js-eval
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: eval()/new Function() executes dynamic code.
+    metadata: {cwe: "CWE-95"}
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+
+  - id: js-child-process-exec
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: child_process.exec runs a shell; prefer execFile/spawn with an argv array.
+    metadata: {cwe: "CWE-78"}
+    pattern-either:
+      - pattern: require("child_process").exec(...)
+      - pattern: child_process.exec(...)
+
+  - id: react-dangerously-set-inner-html
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: dangerouslySetInnerHTML can introduce XSS if the HTML is not sanitised.
+    metadata: {cwe: "CWE-79"}
+    pattern: <$EL dangerouslySetInnerHTML={...} />
+
+  - id: php-dangerous-exec
+    languages: [php]
+    severity: ERROR
+    message: Shell/code execution function with potentially user-controlled input.
+    metadata: {cwe: "CWE-78"}
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: system(...)
+      - pattern: shell_exec(...)
+      - pattern: exec(...)
+      - pattern: passthru(...)
+
+  - id: php-unserialize
+    languages: [php]
+    severity: ERROR
+    message: unserialize() on untrusted input can lead to object injection.
+    metadata: {cwe: "CWE-502"}
+    pattern: unserialize(...)
+
+  - id: laravel-raw-sql-concat
+    languages: [php]
+    severity: ERROR
+    message: Raw SQL built by string concatenation; use bindings.
+    metadata: {cwe: "CWE-89"}
+    pattern-either:
+      - pattern: DB::raw("..." . $X)
+      - pattern: DB::select("..." . $X)
+      - pattern: DB::statement("..." . $X)
+
+  - id: go-exec-shell
+    languages: [go]
+    severity: WARNING
+    message: Running a shell with a dynamic command string enables injection.
+    metadata: {cwe: "CWE-78"}
+    pattern: exec.Command("sh", "-c", ...)
+
+  - id: rust-unsafe-block
+    languages: [rust]
+    severity: INFO
+    message: unsafe block — review memory-safety invariants.
+    metadata: {cwe: "CWE-119"}
+    pattern: unsafe { ... }

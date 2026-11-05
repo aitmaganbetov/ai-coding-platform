@@ -19,6 +19,7 @@ from ai_coding.config.models import AICodingConfig
 from ai_coding.domain.enums import (
     AgentName,
     ApprovalOperation,
+    ExecutionBackend,
     Mode,
     NetworkPolicy,
     ProviderName,
@@ -152,6 +153,28 @@ class PolicyEngine:
                 f"'{exe}' is not allow-listed",
             )
         return Decision(Verdict.DENY, "execution.command_allowlist", f"'{exe}' is not allow-listed")
+
+    def tool(
+        self, name: str, *, executes_project_code: bool, backend: ExecutionBackend
+    ) -> Decision:
+        """Running a registered analysis tool (ADR-0019).
+
+        In the sandbox every tool is allowed. On the host, pinned analysis tools that
+        only *read* the project (linters, SAST, secret scanners) are allowed even in
+        read-only AUDIT mode; anything that executes project code (tests, builds)
+        falls back to the host-command rules.
+        """
+        if backend is ExecutionBackend.DOCKER:
+            return Decision(Verdict.ALLOW, "exec.sandbox", f"'{name}' runs in the sandbox")
+        if backend is ExecutionBackend.GITHUB_ACTIONS:
+            return Decision(Verdict.ALLOW, "exec.github_actions", f"'{name}' runs in CI")
+        if not executes_project_code:
+            return Decision(
+                Verdict.ALLOW,
+                "tools.read_only_analysis",
+                f"'{name}' is a registered analysis tool that only reads the project",
+            )
+        return self.command(name, on_host=True)
 
     def network(self, host: str) -> Decision:
         """Outbound connection to ``host`` (``host`` or ``host:port``)."""

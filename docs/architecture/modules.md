@@ -42,14 +42,15 @@ ai-coding-platform/
 │   │                       встроенные discovery-обработчики
 │   ├── llm/           ✅ S2 порт LLMProvider, GuardedLLM; ⏳ S5 openai, anthropic, ollama, vllm
 │   ├── observability/ ✅ S2 structlog JSON + redaction + run_id/trace_id
-│   ├── executors/     ⏳ S3 local, docker; S4 github_actions
-│   ├── tools/         ⏳ S3 реестр; S7 semgrep, gitleaks, trivy, osv, phpstan, pint, eslint,
-│   │                       tsc, ruff, mypy, go, golangci-lint, cargo, clippy, playwright, k6
-│   ├── quality/       ⏳ S3 движок гейтов PASS/FAIL/SKIPPED, baseline
-│   ├── reports/       ⏳ S4/S7 JSON, Markdown, SARIF, JUnit, PR-комментарии
+│   ├── executors/     ✅ S3 port, local (allow-list, env allow-list, rlimits, kill tree), docker
+│   │                       (hardened sandbox, --pull never); ⏳ S4 github_actions
+│   ├── tools/         ✅ S3 реестр, runner, gitleaks, semgrep (офлайн-правила), ruff; ⏳ S7 trivy, osv,
+│   │                       phpstan, pint, eslint, tsc, mypy, go, golangci-lint, cargo, clippy, playwright, k6
+│   ├── quality/       ✅ S3 движок гейтов PASS/FAIL/SKIPPED, fail-closed, strict, baseline
+│   ├── reports/       ✅ S3 JSON, Markdown; ⏳ S4 SARIF, JUnit, PR-комментарии
 │   ├── integrations/github/ ⏳ S4 GitHub API, App, checks, PR
 │   ├── agents/        ⏳ S5–S7 12 агентов
-│   ├── workflows/     ⏳ S5 create; S6 develop, modernize; S7 audit, maintain
+│   ├── workflows/     ✅ S3 audit; ⏳ S5 create; S6 develop, modernize; S7 maintain
 │   ├── api/           ⏳ S8 FastAPI
 │   └── worker/        ⏳ S8 серверный worker
 ├── tests/
@@ -73,15 +74,17 @@ flowchart BT
     persistence --> domain
     llm --> security & domain
     observability --> security
-    executors -.S3.-> security & config & git
-    tools -.S3.-> executors
-    quality -.S3.-> tools & contracts
+    executors --> security & config
+    tools --> executors
+    quality --> tools & config
+    reports --> security
     orchestrator --> persistence & config & security & llm & git & detection & observability
-    orchestrator -.S3.-> executors
+    orchestrator --> tools
     agents -.S5.-> contracts & llm & orchestrator
     reports -.S4.-> quality & contracts
     github[integrations.github] -.S4.-> git & reports
-    workflows -.S5.-> orchestrator & agents & quality & github
+    workflows --> orchestrator & quality & reports & tools & executors
+    workflows -.S5.-> agents & github
     cli --> config & detection & git
     cli -.-> workflows
     api -.S8.-> workflows & persistence

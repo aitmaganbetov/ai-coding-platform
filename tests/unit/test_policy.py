@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from ai_coding.domain.enums import AgentName, ApprovalOperation, Mode, ProviderName
+from ai_coding.domain.enums import (
+    AgentName,
+    ApprovalOperation,
+    ExecutionBackend,
+    Mode,
+    ProviderName,
+)
 from ai_coding.orchestrator.policy import PolicyEngine, PolicyOptions, Verdict
 from tests.helpers import make_config
 
@@ -130,3 +136,15 @@ def test_external_llm_rules() -> None:
 def test_vllm_remote_host_subject_to_egress() -> None:
     e = engine(ai__enabled=True, ai__provider="vllm", ai__model="m")
     assert e.external_llm(ProviderName.VLLM, base_url="http://gpu.internal:8000").verdict is D
+
+
+def test_tool_rule() -> None:
+    audit = engine(Mode.AUDIT)
+    readonly = audit.tool("semgrep", executes_project_code=False, backend=ExecutionBackend.LOCAL)
+    assert readonly.verdict is A and readonly.rule == "tools.read_only_analysis"
+    runs_code = audit.tool("pytest", executes_project_code=True, backend=ExecutionBackend.LOCAL)
+    assert runs_code.verdict is D and runs_code.rule == "execution.allow_host_commands"
+    sandbox = audit.tool("pytest", executes_project_code=True, backend=ExecutionBackend.DOCKER)
+    assert sandbox.verdict is A and sandbox.rule == "exec.sandbox"
+    ci = audit.tool("x", executes_project_code=True, backend=ExecutionBackend.GITHUB_ACTIONS)
+    assert ci.rule == "exec.github_actions"

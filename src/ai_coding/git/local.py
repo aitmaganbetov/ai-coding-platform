@@ -31,6 +31,7 @@ from ai_coding.git.base import (
 from ai_coding.git.errors import (
     GitCommandError,
     GitNotFoundError,
+    InvalidRefError,
     NotARepositoryError,
     ProtectedBranchError,
 )
@@ -124,6 +125,51 @@ class LocalGitRepository:
         path.mkdir(parents=True, exist_ok=True)
         _run(["init", "--quiet", f"--initial-branch={initial_branch}"], path)
         return cls(path.resolve(), **kwargs)  # type: ignore[arg-type]
+
+    @classmethod
+    def clone(
+        cls,
+        url: str,
+        dest: Path,
+        *,
+        branch: str | None = None,
+        depth: int | None = 1,
+        timeout: float = 600.0,
+        allow_file_protocol: bool = False,
+        **kwargs: object,
+    ) -> LocalGitRepository:
+        """Clone a remote repository into an empty/new directory (FR-01).
+
+        Only ``https://``, ``ssh://`` and scp-like ``user@host:path`` URLs are accepted;
+        ``file://``, local paths and ``ext::`` transports are refused. Submodules are not
+        fetched, hooks never run, and no credentials are prompted for.
+        ``allow_file_protocol`` exists for offline tests and mirrors; the CLI never sets it.
+        """
+        if allow_file_protocol and url.startswith("file://"):
+            protocols = ["-c", "protocol.file.allow=always"]
+        else:
+            validate_remote_url(url)
+            protocols = []
+        if branch is not None:
+            validate_branch_name(branch)
+        if depth is not None and depth < 1:
+            raise GitCommandError(["clone"], 1, "depth must be >= 1")
+        target = dest.resolve()
+        if target.exists() and any(target.iterdir()):
+            raise GitCommandError(["clone"], 1, f"{target} exists and is not empty")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        args = [
+            "-c", "protocol.allow=never", "-c", "protocol.https.allow=always",
+            "-c", "protocol.ssh.allow=always", *protocols,
+            "clone", "--quiet", "--no-recurse-submodules",
+        ]  # fmt: skip
+        if depth is not None:
+            args += ["--depth", str(depth)]
+        if branch is not None:
+            args += ["--branch", branch, "--single-branch"]
+        args += ["--", url, str(target)]
+        _run(args, target.parent, timeout=timeout)
+        return cls(target, **kwargs)  # type: ignore[arg-type]
 
     @staticmethod
     def is_repository(path: Path) -> bool:
@@ -277,6 +323,59 @@ class LocalGitRepository:
         self._check_start_point(ref)
         return ref
 
+    # ------------------------------------------------------------ diffs/patches --
+    def diff(self, base: str, head: str = "HEAD", *, paths: Sequence[str] = ()) -> str:
+        """Unified diff ``base..head`` (B-035)."""
+        self._check_start_point(base)
+        self._check_start_point(head)
+        return self._git(
+            "diff", "--no-color", "--no-ext-diff", f"{base}..{head}", "--", *paths
+        ).stdout
+
+    def diff_stat(self, base: str, head: str = "HEAD") -> list[tuple[str, int, int]]:
+        """``(path, added, deleted)`` per changed file; binary files report ``-1``."""
+        self._check_start_point(base)
+        self._check_start_point(head)
+        out = self._git("diff", "--numstat", "-z", "--no-ext-diff", f"{base}..{head}").stdout
+        stats: list[tuple[str, int, int]] = []
+        for record in (r for r in out.split("\0") if r):
+            added, deleted, path = record.split("\t", 2)
+            stats.append(
+                (path, int(added) if added != "-" else -1, int(deleted) if deleted != "-" else -1)
+            )
+        return stats
+
+    def apply_patch(self, patch: str, *, check_only: bool = False) -> None:
+        """Apply a unified diff to the working tree of a non-protected branch."""
+        branch = self.current_branch()
+        if branch is None:
+            raise ProtectedBranchError("refusing to apply a patch on a detached HEAD")
+        self.ensure_not_protected(branch)
+        args = ["apply", "--whitespace=nowarn", "--recount"]
+        if check_only:
+            args.append("--check")
+        proc = _run_input([*args, "-"], self._root, patch, timeout=self._timeout)
+        if proc.returncode != 0:
+            raise GitCommandError(["apply"], proc.returncode, proc.stderr)
+
+    def rollback_to(self, commit: str, *, discard_changes: bool = False) -> str:
+        """Reset the current non-protected branch to ``commit`` (rollback, ТЗ §18).
+
+        Refuses to destroy uncommitted work unless ``discard_changes`` is set.
+        """
+        branch = self.current_branch()
+        if branch is None:
+            raise ProtectedBranchError("refusing to roll back a detached HEAD")
+        self.ensure_not_protected(branch)
+        self._check_start_point(commit)
+        if not discard_changes and not self.status().is_clean:
+            raise GitCommandError(["reset"], 1, "working tree has uncommitted changes")
+        self._git("reset", "--hard", "--quiet", f"{commit}^{{commit}}")
+        sha = self.head_commit()
+        if sha is None:  # pragma: no cover - reset to an existing commit
+            raise GitCommandError(["reset"], 1, "HEAD missing after reset")
+        return sha
+
     # ------------------------------------------------------------ protection --
     @property
     def protected_branches(self) -> tuple[str, ...]:
@@ -303,6 +402,40 @@ class LocalGitRepository:
 
 
 # ---------------------------------------------------------------- parsers ---
+_SCP_URL = re.compile(r"^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[A-Za-z0-9._/~-]+$")
+
+
+def validate_remote_url(url: str) -> None:
+    """Accept only network transports that cannot execute local commands."""
+    if not url or url.startswith("-") or any(c in url for c in "\0\n\r \t"):
+        raise InvalidRefError(f"invalid repository URL: {url!r}")
+    lower = url.lower()
+    if lower.startswith(("https://", "ssh://")):
+        if "::" in url:
+            raise InvalidRefError(f"invalid repository URL: {url!r}")
+        return
+    if _SCP_URL.match(url):
+        return
+    raise InvalidRefError(
+        f"unsupported repository URL {url!r}: use https://, ssh:// or user@host:path"
+    )
+
+
+def _run_input(
+    args: Sequence[str], cwd: Path, data: str, *, timeout: float
+) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0", "LC_ALL": "C"})
+    try:
+        return subprocess.run(
+            [_git_executable(), *_SAFETY_CONFIG, *args],
+            cwd=cwd, env=env, input=data, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=timeout, check=False,
+        )  # fmt: skip
+    except subprocess.TimeoutExpired as exc:
+        raise GitCommandError(args, -1, f"timed out after {timeout}s") from exc
+
+
 def _parse_porcelain_z(output: str) -> list[FileStatus]:
     entries = output.split("\0")
     result: list[FileStatus] = []

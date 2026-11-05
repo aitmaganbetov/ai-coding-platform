@@ -86,6 +86,57 @@ jobs:
             coverage.xml
           retention-days: 14
 
+  sandbox:
+    name: Sandbox, tools & self-audit (Docker)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: [lint]
+    env:
+      GITLEAKS_VERSION: "8.30.1"
+      GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+      - run: uv sync
+      - name: Install gitleaks on the host (checksum-verified)
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/gitleaks.tgz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tgz" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP/bin" gitleaks
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Pull digest-pinned tool images
+        run: uv run ai-coding tools pull
+      - name: Pull the digest-pinned base image used by the sandbox isolation tests
+        # Keep in sync with ALPINE in tests/integration/conftest.py.
+        run: docker pull --quiet alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+      - name: Sandbox and audit integration tests (no skips allowed)
+        run: uv run pytest -m "docker or integration" -rs --junitxml=junit-sandbox.xml
+      - name: Fail if any Docker test was skipped
+        run: |
+          if grep -q '<skipped' junit-sandbox.xml; then
+            echo "Docker/integration tests were skipped in the sandbox job" >&2
+            exit 1
+          fi
+      - name: Self-audit of this repository (secrets + SAST, offline sandbox)
+        run: |
+          chmod -R a+rX .
+          uv run ai-coding audit --backend docker --tool gitleaks --tool semgrep --output audit-out
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: self-audit-report
+          path: |
+            audit-out/
+            junit-sandbox.xml
+          retention-days: 30
+
   build:
     name: Build & smoke-test wheel
     runs-on: ubuntu-24.04

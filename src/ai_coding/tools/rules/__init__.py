@@ -1,0 +1,1 @@
+"""Bundled offline rule packs."""
