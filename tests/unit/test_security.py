@@ -106,3 +106,21 @@ def test_find_secrets_in_nested_mapping() -> None:
     }
     findings = {f.path: f.reason for f in find_secrets_in_mapping(doc)}
     assert set(findings) == {"ai.api_key", "list[1]", "bad_env.api_key_env"}
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://cdn.example.com/blob?se=2026&sig=K3T%2FcOtTEPUWtXlmKBSM9N&sp=r",
+        "https://s3.amazonaws.com/b/k?X-Amz-Signature=abcdef0123456789&X-Amz-Date=1",
+        "https://api.example.com/x?" + "access_token" + "=abcdef123456",  # built: no literal
+        "https://blob.example.com/x?hmac=b238a28c9cc066451142c0ed565f",
+    ],
+)
+def test_signed_url_parameters_redacted(url: str) -> None:
+    out = redact(url)
+    assert REDACTED in out
+    for secret in ("K3T%2FcOtTEPUWtXlmKBSM9N", "abcdef0123456789", "b238a28c9cc066451142c0ed565f",
+                   "abcdef123456"):  # fmt: skip
+        assert secret not in out
+    assert out.split("?")[0] == url.split("?", maxsplit=1)[0]  # host/path stay readable

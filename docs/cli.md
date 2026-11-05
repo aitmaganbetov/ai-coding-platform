@@ -18,6 +18,11 @@
 | `ai-coding run cancel RUN [--reason] [--yes] [--dry-run]` | Отменить (кооперативно, если run выполняется) | S2 |
 | `ai-coding run approve RUN [--approval ID] [--note] [--resume]` | Подтвердить (только Owner/Maintainer) | S2 |
 | `ai-coding run reject RUN [--approval ID] [--note]` | Отклонить; run будет отменён при возобновлении | S2 |
+| `ai-coding audit [-C DIR] [-b local\|docker] [-t TOOL]… [--semgrep-config F] [--strict] [-o DIR] [--json] [--dry-run]` | Read-only аудит: секреты, SAST, lint → Quality Gates → отчёт ([audit.md](audit.md)) | S3 |
+| `ai-coding baseline create REPORT --owner O --reason R --expires YYYY-MM-DD [-o FILE] [--force]` | Baseline существующих находок с владельцем и сроком | S3 |
+| `ai-coding project add SOURCE [--dest DIR] [--branch B] [--depth N] [--full-history]` | Импорт локальной папки или Git URL (безопасный clone) | S3 |
+| `ai-coding tools list` | Инструменты, категории, образы, доступность | S3 |
+| `ai-coding tools pull [-t TOOL]…` | Явно скачать образы, закреплённые по digest (единственный шаг, требующий сети) | S3 |
 
 `RUN` — полный UUID, короткий id (последние 12 символов, их показывает `run list`) или уникальный префикс. Префикс UUIDv7 — это метка времени, поэтому для коротких id используется случайный хвост. Состояние хранится в `.ai-coding/state.db` проекта; каталог `.ai-coding/` сам себя исключает из git. Другую БД можно указать через `AI_CODING_DATABASE_URL`.
 
@@ -57,4 +62,4 @@
 
 ## Запланировано (ТЗ §14)
 
-`project add` (S5), `create` (S5), `develop` (S6), `modernize` (S6), `audit` (S3 — базовый, S7 — полный), `maintain` (S7), `agents list` (S5), `report export` (S4). Все изменяющие команды получат `--dry-run` и `--require-approval`.
+`create` (S5), `develop` (S6), `modernize` (S6), `maintain` (S7), `agents list` (S5), `report export` (S4); `audit` расширяется адаптерами стеков в S7. Все изменяющие команды получат `--dry-run` и `--require-approval`.

@@ -69,6 +69,8 @@ include = ["src/ai_coding", "tests", "docs", "README.md", "LICENSE", "pyproject.
 line-length = 100
 target-version = "py312"
 src = ["src", "tests"]
+# Deliberately insecure code samples that the bundled Semgrep rules must detect.
+extend-exclude = ["tests/fixtures/semgrep"]
 
 [tool.ruff.lint]
 select = [
@@ -105,6 +107,7 @@ testpaths = ["tests"]
 addopts = ["-ra", "--strict-markers", "--strict-config"]
 markers = [
   "integration: tests that call real external binaries (git) or subprocesses",
+  "docker: tests that need a running Docker daemon and the pinned tool images",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
@@ -133,7 +136,12 @@ name = "Layered architecture"
 type = "layers"
 layers = [
   "ai_coding.cli",
+  "ai_coding.workflows",
   "ai_coding.orchestrator",
+  "ai_coding.reports",
+  "ai_coding.quality",
+  "ai_coding.tools",
+  "ai_coding.executors",
   "ai_coding.llm | ai_coding.persistence | ai_coding.config",
   "ai_coding.contracts | ai_coding.detection | ai_coding.git | ai_coding.observability",
   "ai_coding.security",

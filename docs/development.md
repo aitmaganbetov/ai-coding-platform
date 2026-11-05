@@ -47,6 +47,18 @@ tests/
 
 Асинхронные тесты — `pytest-asyncio` (`asyncio_mode = "auto"`): достаточно объявить `async def test_…`. Базы данных, открытые через `tests/helpers.make_orchestrator`, закрываются автоматически. Предупреждения (включая `ResourceWarning` о незакрытых соединениях) — ошибки (`filterwarnings = error`). Тестовые двойники (`ScriptedHandler`, `FakeProvider`) живут только в `tests/`.
 
+Docker-тесты помечены `docker` и пропускаются, если нет демона или образов (неявных скачиваний нет). Полный прогон локально:
+
+```bash
+uv run ai-coding tools pull
+```
+
+```bash
+uv run pytest -m "docker or integration" -rs
+```
+
+Для тестов Local-бэкенда `gitleaks` должен быть в `PATH`. В CI это делает job `sandbox`: он ставит gitleaks с проверкой checksum, скачивает образы, запускает тесты и **падает, если хоть один из них пропущен**, а затем аудирует сам репозиторий.
+
 Тест восстановления (`tests/integration/test_recovery.py`) запускает настоящий процесс-worker и убивает его `os._exit` посреди задачи.
 
 ## Схема БД и миграции

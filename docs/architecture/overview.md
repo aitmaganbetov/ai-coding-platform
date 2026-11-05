@@ -52,11 +52,11 @@ flowchart TB
         worker[worker]:::todo
     end
     subgraph App[Прикладной слой]
-        workflows[workflows<br/>CREATE/DEVELOP/MODERNIZE/AUDIT/MAINTAIN]:::todo
+        workflows[workflows<br/>AUDIT ✓; CREATE/DEVELOP/MODERNIZE/MAINTAIN]:::done
         orchestrator[orchestrator<br/>planner, registry, router, executor,<br/>context, state, checkpoint, policy,<br/>approval, aggregator, audit, retry]:::done
         agents[agents x12]:::todo
-        quality[quality gates]:::todo
-        reports[reports JSON/MD/SARIF/JUnit]:::todo
+        quality[quality gates]:::done
+        reports[reports JSON/MD]:::done
     end
     subgraph Ports[Порты и адаптеры]
         config[config]:::done
@@ -64,9 +64,9 @@ flowchart TB
         git[git]:::done
         detection[detection]:::done
         persistence[persistence]:::done
-        executors[executors]:::todo
+        executors[executors local+docker]:::done
         llm[llm port + guard]:::done
-        tools[tools]:::todo
+        tools[tools gitleaks/semgrep/ruff]:::done
         github[integrations.github]:::todo
     end
     security[security]:::done
@@ -77,7 +77,7 @@ flowchart TB
     classDef todo fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 4 3;
 ```
 
-Зелёные — реализованы (S1–S2), серые — запланированы. Правило зависимостей проверяется `import-linter` (ADR-0003).
+Зелёные — реализованы (S1–S3), серые — запланированы. Правило зависимостей проверяется `import-linter` (ADR-0003).
 
 ## 4. Жизненный цикл run (ТЗ §5)
 

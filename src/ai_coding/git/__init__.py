@@ -20,7 +20,7 @@ from ai_coding.git.errors import (
     NotARepositoryError,
     ProtectedBranchError,
 )
-from ai_coding.git.local import LocalGitRepository, git_available
+from ai_coding.git.local import LocalGitRepository, git_available, validate_remote_url
 
 __all__ = [
     "BranchName",
@@ -36,4 +36,5 @@ __all__ = [
     "RepositoryStatus",
     "Worktree",
     "git_available",
+    "validate_remote_url",
 ]

@@ -29,12 +29,38 @@ class StackEvidence:
     path: str  # relative POSIX path of the marker file
 
 
+_SOURCE_EXTENSIONS: dict[str, Stack] = {
+    ".py": Stack.PYTHON,
+    ".php": Stack.PHP,
+    ".go": Stack.GO,
+    ".rs": Stack.RUST,
+    ".ts": Stack.TYPESCRIPT,
+    ".tsx": Stack.TYPESCRIPT,
+    ".js": Stack.JAVASCRIPT,
+    ".jsx": Stack.JAVASCRIPT,
+}
+
+
 def detect_stacks(root: Path, *, max_depth: int = 1) -> list[StackEvidence]:
-    """Return detected stacks with evidence, ordered by :class:`Stack` declaration order."""
+    """Return detected stacks with evidence, ordered by :class:`Stack` declaration order.
+
+    Manifests are authoritative. Source files (by extension, same depth) are a
+    fallback for projects without a manifest, e.g. a scripts folder.
+    """
     found: dict[Stack, str] = {}
-    for directory in _candidate_dirs(root, max_depth):
+    dirs = _candidate_dirs(root, max_depth)
+    for directory in dirs:
         for stack, marker in _detect_in(directory):
             found.setdefault(stack, (marker.relative_to(root)).as_posix())
+    for directory in dirs:
+        try:
+            files = sorted(p for p in directory.iterdir() if p.is_file() and not p.is_symlink())
+        except OSError:
+            continue
+        for path in files:
+            by_ext = _SOURCE_EXTENSIONS.get(path.suffix.lower())
+            if by_ext is not None:
+                found.setdefault(by_ext, path.relative_to(root).as_posix())
     order = list(Stack)
     return [StackEvidence(s, found[s]) for s in sorted(found, key=order.index)]
 

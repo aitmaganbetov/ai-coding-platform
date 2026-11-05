@@ -41,6 +41,12 @@ DEFAULT_PATTERNS: tuple[SecretPattern, ...] = (
     _p("jwt", r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}"),
     _p("url-credentials", r"(?<=://)[^/\s:@]+:([^/\s@]+)(?=@)", group=1),
     _p(
+        "signed-url-param",
+        r"(?i)[?&](?:sig|signature|x-amz-signature|x-goog-signature|hmac|token|access_token|"
+        r"x-amz-security-token|sas|sv-signature)=([^&\s\"']{6,})",
+        group=1,
+    ),
+    _p(
         "assignment",
         r"(?i)\b(?:api[_-]?key|secret|token|passw(?:or)?d|private[_-]?key|access[_-]?key)"
         r"\b\s*[:=]\s*['\"]?([^\s'\"]{6,})",

@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | S1 ✅ | E01 Каркас, E02 Конфигурация, E03 Git-абстракция, E04 Контракты/схемы | `init` / `config validate`; тесты каркаса |
 | S2 ✅ | E05 Persistence, E06 Orchestrator FSM, E07 Policy/Approval, E08 LLM-порт | Восстановление после прерывания; unit tests |
-| S3 | E09 Executors Local/Docker, E10 Tool registry, E11 Quality Gates engine | Безопасный локальный audit |
+| S3 ✅ | E09 Executors Local/Docker, E10 Tool registry, E11 Quality Gates engine | Безопасный локальный audit |
 | S4 | E12 GitHub adapter, E13 Reusable workflows, E14 Reports/PR | CI проходит на пилотном репозитории |
 | S5 | E15 Agents I, E16 LLM adapters, E17 CREATE | Новый проект из задачи до PR |
 | S6 | E18 Agents II, E19 DEVELOP, E20 MODERNIZE | Функция/рефакторинг через отдельный PR |
@@ -58,8 +58,8 @@
 | B-031 | Worktree add/list/remove, изоляция изменений | §18, AC-03 | P0 | ✅ |
 | B-032 | Защищённые ветки (glob), запрет коммита в protected/detached | AC-03, FR-17 | P0 | ✅ |
 | B-033 | Защита от исполнения кода из репозитория (fsmonitor, hooks), валидация ref-имён против option injection | §12 | P0 | ✅ |
-| B-034 | Импорт: локальная папка (✅ open, ✅ проверка состояния в `run discover`), Git URL clone в изолированный каталог с проверкой доступа | FR-01 | P0 | 🔜 S3 |
-| B-035 | diff/patch API (apply, check, stat), rollback ветки | FR-05, §18 | P0 | 🔜 S3 |
+| B-034 | Импорт: локальная папка, Git URL clone (https/ssh, без подмодулей и hooks), проверка доступа и состояния — `ai-coding project add` | FR-01 | P0 | ✅ S3 |
+| B-035 | diff/patch API (diff, numstat, apply/check), rollback незащищённой ветки | FR-05, §18 | P0 | ✅ S3 |
 | B-036 | Commit trailers `AI-Coding-Run/Task` для идемпотентного восстановления | AC-04 | P0 | ✅ S2 |
 
 ### E04 Контракты и доменная модель
@@ -122,28 +122,32 @@
 ## S3 — Local/Docker executor, sandbox, tool registry (P0-04)
 
 ### E09 Executors
-| ID | Задача | Трассировка | Pri |
-| --- | --- | --- | --- |
-| B-200 | Порт `Executor`, `CommandSpec`, `ExecutionResult`, контрактные тесты | ADR-0007 | P0 |
-| B-201 | LocalExecutor: allowlist, approval `host_command`, таймаут, лимит вывода, rlimits/Job Objects, redaction вывода | §4, §12 | P0 |
-| B-202 | DockerSandboxExecutor: `--network none`, `--read-only`, `--cap-drop ALL`, no-new-privileges, non-root, pids/cpu/memory, без Docker socket | §12 | P0 |
-| B-203 | Образы инструментов с закреплёнными digest | NFR-05 | P0 |
-| B-204 | Импорт Git URL: clone в sandbox, проверка доступа и состояния | FR-01 | P0 |
-| B-205 | Egress allowlist в sandbox (прокси/сеть по политике) | §12 | P1 |
+| ID | Задача | Трассировка | Pri | Статус |
+| --- | --- | --- | --- | --- |
+| B-200 | Порт `Executor`, `CommandSpec`, `ExecutionResult`, контрактные тесты | ADR-0007 | P0 | ✅ S3 |
+| B-201 | LocalExecutor: allowlist, approval `host_command`, таймаут, лимит вывода, rlimits/Job Objects, redaction вывода | §4, §12 | P0 | ✅ S3 (Job Objects для Windows — B-206) |
+| B-202 | DockerSandboxExecutor: `--network none`, `--read-only`, `--cap-drop ALL`, no-new-privileges, non-root, pids/cpu/memory, без Docker socket | §12 | P0 | ✅ S3 |
+| B-203 | Образы инструментов с закреплёнными digest | NFR-05 | P0 | ✅ S3 |
+| B-204 | Импорт Git URL: clone в sandbox, проверка доступа и состояния | FR-01 | P0 | ✅ S3 (`project add`; клонирование на хост в изолированный каталог, без hooks/submodules) |
+| B-205 | Egress allowlist в sandbox (прокси/сеть по политике) | §12 | P1 | ↪ S8 (в S3 сеть песочницы полностью выключена) |
+| B-206 | Лимиты Local Executor на Windows (Job Objects) | §5 | P2 | ⬜ S9 |
 
 ### E10 Tool registry
-| ID | Задача | Трассировка | Pri |
-| --- | --- | --- | --- |
-| B-210 | Порт `ToolAdapter` (detect, version, command, parse), реестр, entry points | §4 | P0 |
-| B-211 | Нормализованная модель находок (fingerprint, severity, file/line, evidence) | FR-06 | P0 |
-| B-212 | Первые адаптеры для безопасного локального audit: Gitleaks, Semgrep, Ruff | §16 S3 | P0 |
+| ID | Задача | Трассировка | Pri | Статус |
+| --- | --- | --- | --- | --- |
+| B-210 | Порт `ToolAdapter` (detect, version, command, parse), реестр, entry points | §4 | P0 | ✅ S3 (entry points для инструментов — S7) |
+| B-211 | Нормализованная модель находок (fingerprint, severity, file/line, evidence) | FR-06 | P0 | ✅ S3 |
+| B-212 | Первые адаптеры для безопасного локального audit: Gitleaks, Semgrep, Ruff | §16 S3 | P0 | ✅ S3 |
 
 ### E11 Quality Gates engine (P0-08 частично)
-| ID | Задача | Трассировка | Pri |
-| --- | --- | --- | --- |
-| B-220 | Гейты Build/Tests/Static/Security/Coverage/Review → PASS/FAIL/SKIPPED | §10, FR-11 | P0 |
-| B-221 | Baseline с owner/expires_at/reason | §10 | P1 |
-| B-222 | `ai-coding audit` (read-only, детерминированный, без LLM) — первая версия | FR-06 | P0 |
+| ID | Задача | Трассировка | Pri | Статус |
+| --- | --- | --- | --- | --- |
+| B-220 | Гейты Build/Tests/Static/Security/Coverage/Review → PASS/FAIL/SKIPPED | §10, FR-11 | P0 | ✅ S3 |
+| B-221 | Baseline с owner/expires_at/reason | §10 | P1 | ✅ S3 |
+| B-222 | `ai-coding audit` (read-only, детерминированный, без LLM) — первая версия | FR-06 | P0 | ✅ S3 |
+| B-223 | Проверка целостности рабочего дерева после read-only аудита | FR-06 | P0 | ✅ S3 |
+| B-224 | `ai-coding tools list/pull`; запрет неявного скачивания образов (`--pull never`) | AC-05, NFR-05 | P0 | ✅ S3 |
+| B-225 | Учёт `.semgrepignore`/`.gitleaksignore` проекта в отчёте (что исключено) | FR-06 | P2 | ⬜ S7 |
 
 ---
 
@@ -267,12 +271,12 @@
 
 | Требование | Backlog |
 | --- | --- |
-| FR-01 | B-030, B-034, B-204 |
+| FR-01 | B-030, B-034 ✅, B-204 ✅ |
 | FR-02 | B-018 |
 | FR-03 | B-401…B-404, B-420 |
 | FR-04 | B-500…B-503 |
 | FR-05 | B-035, B-504 |
-| FR-06 | B-016, B-211, B-222, B-609 |
+| FR-06 | B-016, B-211 ✅, B-222 ✅, B-223 ✅, B-609 |
 | FR-07 | B-610 |
 | FR-08 | B-112, B-116, B-117 |
 | FR-09 | B-114, B-121 |
@@ -294,10 +298,10 @@
 | NFR-07 | B-042, B-120, B-707 |
 | NFR-08 | B-104, B-709 |
 | AC-01 | B-420 |
-| AC-02 | B-609 |
+| AC-02 | B-609 (основа — ✅ S3 `ai-coding audit`; адаптеры Laravel/React — S7) |
 | AC-03 | B-031, B-032, B-301, B-502 |
 | AC-04 | B-036, B-115 (✅ `tests/integration/test_recovery.py`) |
-| AC-05 | B-016, B-412 |
+| AC-05 | B-016, B-224 ✅ (аудит без egress), B-412 (локальная модель — S5) |
 | AC-06 | B-220, B-302 |
 | AC-07 | B-611 |
 | AC-08 | B-701 |

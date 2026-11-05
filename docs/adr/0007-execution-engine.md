@@ -1,6 +1,6 @@
 # ADR-0007: Execution Engine — единый интерфейс и три исполнителя
 
-- Статус: Принято (реализация — S3 Local/Docker, S4 GitHub Actions)
+- Статус: Принято; Local и Docker реализованы в S3 (детали — ADR-0018), GitHub Actions — S4.
 - Дата: 2026-11-05
 
 ## Контекст
