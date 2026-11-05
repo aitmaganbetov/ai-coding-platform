@@ -121,6 +121,10 @@ class GitRepository(Protocol):
         """Remove a linked worktree."""
         ...
 
+    def find_commits_by_trailer(self, key: str, value: str, *, ref: str = "--all") -> list[str]:
+        """Commits carrying a given trailer (idempotent recovery)."""
+        ...
+
     def is_protected(self, branch: str) -> bool:
         """Whether ``branch`` matches a protected-branch pattern."""
         ...

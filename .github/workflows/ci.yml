@@ -106,5 +106,9 @@ jobs:
           "$RUNNER_TEMP/smoke/bin/ai-coding" --version
           "$RUNNER_TEMP/smoke/bin/ai-coding" --help
           mkdir "$RUNNER_TEMP/proj"
+          git -C "$RUNNER_TEMP/proj" init -q
           "$RUNNER_TEMP/smoke/bin/ai-coding" init "$RUNNER_TEMP/proj"
           "$RUNNER_TEMP/smoke/bin/ai-coding" config validate "$RUNNER_TEMP/proj"
+          # Orchestrator end-to-end from the wheel: migrations, FSM, DAG, artifacts.
+          "$RUNNER_TEMP/smoke/bin/ai-coding" run discover -C "$RUNNER_TEMP/proj"
+          "$RUNNER_TEMP/smoke/bin/ai-coding" run list -C "$RUNNER_TEMP/proj"

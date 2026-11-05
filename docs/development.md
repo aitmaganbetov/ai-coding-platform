@@ -45,6 +45,20 @@ tests/
 
 Интеграционные git-тесты изолированы от `~/.gitconfig` разработчика (`GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`).
 
+Асинхронные тесты — `pytest-asyncio` (`asyncio_mode = "auto"`): достаточно объявить `async def test_…`. Базы данных, открытые через `tests/helpers.make_orchestrator`, закрываются автоматически. Предупреждения (включая `ResourceWarning` о незакрытых соединениях) — ошибки (`filterwarnings = error`). Тестовые двойники (`ScriptedHandler`, `FakeProvider`) живут только в `tests/`.
+
+Тест восстановления (`tests/integration/test_recovery.py`) запускает настоящий процесс-worker и убивает его `os._exit` посреди задачи.
+
+## Схема БД и миграции
+
+Модели — `src/ai_coding/persistence/models.py`, миграции — `src/ai_coding/persistence/migrations/versions/`. После изменения моделей:
+
+```bash
+uv run python -c "from alembic import command; from ai_coding.persistence.migrate import alembic_config; command.revision(alembic_config('sqlite:///tmp-gen.db'), message='describe change', autogenerate=True)"
+```
+
+Проверьте сгенерированный файл вручную (миграции не должны импортировать код приложения) и удалите `tmp-gen.db`. Тест `test_migration_matches_models` падает, если схема и модели расходятся.
+
 ## Добавление CLI-команды
 
 1. Модуль в `src/ai_coding/cli/commands/<name>.py`, регистрация в `cli/app.py`.

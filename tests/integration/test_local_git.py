@@ -231,3 +231,35 @@ def test_parsers_handle_edge_cases() -> None:
     ]
     wts = _parse_worktrees_z("worktree /a\0HEAD abc\0detached\0locked\0\0")
     assert wts[0].branch is None and wts[0].locked and wts[0].is_main
+
+
+def test_commit_trailers_and_lookup(git_repo: LocalGitRepository) -> None:
+    assert git_repo.find_commits_by_trailer("AI-Coding-Task", "x") == []
+    subprocess.run(["git", "checkout", "-q", "-b", "ai/t"], cwd=git_repo.root, check=True)
+    (git_repo.root / "a.txt").write_text("a", encoding="utf-8")
+    sha = git_repo.commit("feat: a", trailers={"AI-Coding-Task": "run1/a", "AI-Coding-Run": "run1"})
+    (git_repo.root / "b.txt").write_text("b", encoding="utf-8")
+    git_repo.commit("feat: b", trailers={"AI-Coding-Task": "run1/b"})
+    assert git_repo.find_commits_by_trailer("AI-Coding-Task", "run1/a") == [sha]
+    assert git_repo.find_commits_by_trailer("AI-Coding-Run", "run1") == [sha]
+    assert git_repo.find_commits_by_trailer("AI-Coding-Task", "run1/zzz") == []
+    assert git_repo.find_commits_by_trailer("AI-Coding-Task", "run1/a", ref="ai/t") == [sha]
+    message = subprocess.run(
+        ["git", "log", "-1", "--format=%B", sha], cwd=git_repo.root,
+        capture_output=True, text=True, check=True,
+    ).stdout  # fmt: skip
+    assert message.strip().endswith("AI-Coding-Task: run1/a\nAI-Coding-Run: run1")
+
+
+@pytest.mark.parametrize(
+    "trailers", [{"bad key": "v"}, {"K": "multi\nline"}, {"K": " "}, {"-x": "v"}]
+)
+def test_invalid_trailers_rejected(git_repo: LocalGitRepository, trailers: dict[str, str]) -> None:
+    subprocess.run(["git", "checkout", "-q", "-b", "ai/t"], cwd=git_repo.root, check=True)
+    (git_repo.root / "a.txt").write_text("a", encoding="utf-8")
+    with pytest.raises(GitCommandError, match="invalid trailer"):
+        git_repo.commit("x", trailers=trailers)
+    with pytest.raises(GitCommandError, match="invalid trailer key"):
+        git_repo.find_commits_by_trailer("bad key", "v")
+    with pytest.raises(GitCommandError, match="invalid start point"):
+        git_repo.find_commits_by_trailer("K", "v", ref="--upload-pack=x")

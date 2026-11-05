@@ -146,3 +146,50 @@ class GateResult(StrEnum):
     PASS = "PASS"  # noqa: S105 - not a password
     FAIL = "FAIL"
     SKIPPED = "SKIPPED"
+
+
+class TaskStatus(StrEnum):
+    """Status of a single DAG step inside a run."""
+
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    SKIPPED = "SKIPPED"
+    CANCELLED = "CANCELLED"
+
+    @property
+    def is_terminal(self) -> bool:
+        """No further transitions are possible."""
+        return self in {
+            TaskStatus.SUCCEEDED,
+            TaskStatus.FAILED,
+            TaskStatus.SKIPPED,
+            TaskStatus.CANCELLED,
+        }
+
+
+class TaskPhase(StrEnum):
+    """Run phase a task belongs to; maps onto the run FSM (ТЗ §5)."""
+
+    DISCOVERY = "discovery"
+    EXECUTION = "execution"
+    VERIFICATION = "verification"
+
+
+class ApprovalStatus(StrEnum):
+    """Lifecycle of a human approval request."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+
+
+class Outcome(StrEnum):
+    """Outcome recorded on every audit event (ТЗ §3)."""
+
+    SUCCESS = "success"
+    FAILURE = "failure"
+    DENIED = "denied"
+    NOOP = "noop"
