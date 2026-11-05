@@ -66,7 +66,18 @@
 
 ## 5. CI на GitHub
 
-**Ещё не запускался.** Workflows срабатывают на `pull_request` и push в `main`; ручной `workflow_dispatch` GitHub разрешает только для workflow, уже присутствующих в default branch (попытка запуска вернула 404). Первый прогон матрицы Linux/Windows/macOS произойдёт при открытии PR из ветки `claude/cool-sagan-ho737s`. До этого Windows/macOS-совместимость подтверждена только проектированием (pathlib, argv без shell, `os.devnull`), не запуском.
+После слияния PR #1 в `main` (коммит `0745155`) GitHub Actions выполнил все проверки — **успешно**:
+
+| Workflow / job | Результат |
+| --- | --- |
+| CI · Lint & type-check (ruff, mypy, import-linter, schema drift, self-validate) | ✅ success |
+| CI · Tests ubuntu-24.04 × py3.12 / py3.13 | ✅ success / ✅ success |
+| CI · Tests windows-2025 × py3.12 / py3.13 | ✅ success / ✅ success |
+| CI · Tests macos-15 × py3.12 / py3.13 | ✅ success / ✅ success |
+| CI · Build & smoke-test wheel | ✅ success |
+| Repository security · Gitleaks (вся история) + pip-audit | ✅ success |
+
+Прогон CI: https://github.com/aitmaganbetov/ai-coding-platform/actions/runs/41975059069. Тот же набор прошёл и на PR (run 41974921663). Один прогон для merge-коммита отменён штатно (`concurrency: cancel-in-progress`) последующим push.
 
 ## 6. Незавершённые задачи S1
 
