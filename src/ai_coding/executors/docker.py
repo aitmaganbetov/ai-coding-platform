@@ -171,7 +171,8 @@ class DockerSandboxExecutor:
             raise ExecutorUnavailableError("docker CLI not found")
         name = f"ai-coding-{uuid.uuid4().hex[:16]}"
         if spec.network and spec.egress is not None:
-            async with _gateway(docker, name, spec.egress, _docker_env()) as gateway:
+            async with _gateway(docker, name, spec.egress, _docker_env(),
+                                allow_private=spec.egress_private) as gateway:  # fmt: skip
                 result = await self._run(docker, name, spec, gateway.route)
             denied = gateway.denied()
             if denied:  # make the reason of a failed install visible in the step's output

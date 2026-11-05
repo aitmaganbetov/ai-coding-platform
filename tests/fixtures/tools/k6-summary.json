@@ -1,0 +1,59 @@
+{
+    "root_group": {
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {},
+        "checks": {
+                "always": {
+                    "name": "always",
+                    "path": "::always",
+                    "id": "c7a689de5e72a0785ecca1a3974f3a5e",
+                    "passes": 5,
+                    "fails": 0
+                }
+            }
+    },
+    "metrics": {
+        "data_received": {
+            "count": 0,
+            "rate": 0
+        },
+        "iteration_duration": {
+            "med": 0.013469,
+            "max": 0.105547,
+            "p(90)": 0.06884420000000001,
+            "p(95)": 0.08719559999999998,
+            "avg": 0.031163800000000002,
+            "min": 0.010902
+        },
+        "iterations": {
+            "rate": 16129.136317008495,
+            "count": 5
+        },
+        "checks": {
+            "fails": 0,
+            "passes": 5,
+            "thresholds": {
+                "rate>0.99": false
+            },
+            "value": 1
+        },
+        "work_ms": {
+            "max": 5,
+            "p(90)": 5,
+            "p(95)": 5,
+            "avg": 5,
+            "min": 5,
+            "med": 5,
+            "thresholds": {
+                "avg<1000": false,
+                "p(95)<1": true
+            }
+        },
+        "data_sent": {
+            "count": 0,
+            "rate": 0
+        }
+    }
+}

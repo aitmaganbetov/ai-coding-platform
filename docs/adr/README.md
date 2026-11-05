@@ -36,3 +36,6 @@
 | [0029](0029-maintain-and-dependency-upgrades.md) | MAINTAIN: утверждённый план, обновление зависимостей пакетным менеджером, регрессионные тесты | Принято | S7 |
 | [0030](0030-server-api-rbac-queue.md) | Self-Hosted сервер: API, аутентификация, RBAC, изоляция проектов, idempotency, очередь в БД и worker'ы | Принято | S8 |
 | [0031](0031-server-deployment-storage-ui.md) | Развёртывание (образ, compose, TLS, backup, ротация), S3/MinIO, Web UI, метрики, экспорт и retention | Принято | S8 |
+| [0032](0032-acceptance-load-and-security-testing.md) | Приёмочная матрица AC-01…AC-10, нагрузочные (k6) и security-тесты перед релизом | Принято | S9 |
+| [0033](0033-sandbox-egress-and-e2e-tools.md) | Egress-allowlist песочницы (прокси, internal-сеть, защита от SSRF), Playwright и k6 для проектов | Принято | S9 |
+| [0034](0034-server-scaling-and-isolation.md) | Масштабирование и изоляция сервера: процессы API, общий rate limiter, пул БД, rootless или удалённый Docker, S3 | Принято | S9 |

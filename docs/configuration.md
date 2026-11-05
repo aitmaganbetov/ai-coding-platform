@@ -88,6 +88,9 @@ security:
 | `install_hosts` | Хосты, нужные установке (проверяются egress-политикой) | по стеку |
 | `image` | Образ рантайма, только `name@sha256:…` | `python-runtime` / `node-runtime` |
 | `timeout_seconds` | Таймаут каждого шага | 900 |
+| `e2e` | Запускать E2E-тесты проекта на Playwright (S9) | `true` |
+| `performance_scripts` | Скрипты k6, пути от корня проекта, без `..` (S9) | `*.k6.js` и `k6/*.js` |
+| `performance_hosts` | Хосты тестируемой системы для k6, допустимо `host:port`. Это egress-allowlist, хосты должны быть разрешены и в `security`. Хосты указывает оператор, поэтому разрешены и внутренние адреса (S9) | пусто: k6 SKIPPED |
 
 Установка выполняется только при `execution.docker.network: bridge` и разрешённых хостах. Иначе тесты получают статус SKIPPED с причиной (с `--strict` такой результат не принимается). Подробнее — в [develop.md](develop.md).
 

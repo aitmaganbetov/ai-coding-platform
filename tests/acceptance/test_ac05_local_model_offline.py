@@ -64,8 +64,8 @@ def sandbox_networks(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     networks: list[str] = []
     real = DockerSandboxExecutor.build_argv
 
-    def build_argv(self: DockerSandboxExecutor, spec: Any, name: str) -> list[str]:
-        argv = real(self, spec, name)
+    def build_argv(self: DockerSandboxExecutor, spec: Any, name: str, **kw: Any) -> list[str]:
+        argv = real(self, spec, name, **kw)
         networks.append(argv[argv.index("--network") + 1])
         return argv
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -25,7 +26,7 @@ from ai_coding.tools.prepare import (
     prepare,
     readable_argv,
 )
-from ai_coding.tools.project import DEPS, WORK, ProjectToolRunner
+from ai_coding.tools.project import DEPS, WORK, Invocation, ProjectToolRunner
 from ai_coding.tools.rust import CLIPPY_CACHE, CargoTestAdapter, ClippyAdapter
 from ai_coding.tools.trivy import TrivyAdapter
 
@@ -387,3 +388,37 @@ def test_failure_reason_keeps_the_panic_line() -> None:
     assert reason.startswith("panic: runtime error: invalid memory address")
     assert reason.endswith("main.main()") and len(reason) <= 600
     assert failure_reason("a\nb\nc\nd") == "b | c | d"
+
+
+async def test_writable_copy_keeps_installed_dependencies(tmp_path: Path) -> None:
+    """A tool that writes into a copy of the tree still sees the project's installed
+    node_modules (left out of the copy for size): mounted read-only at the same path."""
+    from ai_coding.tools.base import ToolCategory as Cat  # noqa: PLC0415
+    from ai_coding.tools.base import ToolSpec as Spec  # noqa: PLC0415
+
+    (tmp_path / "node_modules" / "x").mkdir(parents=True)
+    (tmp_path / "app.js").write_text("1\n", encoding="utf-8")
+
+    class Writer:
+        spec = Spec(
+            name="writer", category=Cat.TESTS, binary="node", image="img@sha256:" + "a" * 64
+        )
+
+        def plan(self, root: Path) -> Invocation:
+            return Invocation(argv=("node", "x"), writable=True)
+
+        def ok_exit_codes(self) -> frozenset[int]:
+            return frozenset({0})
+
+        def parse(self, stdout: str, stderr: str, exit_code: int) -> list[Any]:
+            return []
+
+        def parse_version(self, output: str) -> str | None:
+            return None
+
+    ex = FakeExecutor()
+    run = await runner(ex, tmp_path).run(Writer())
+    assert run.succeeded, run.error
+    (spec,) = ex.seen
+    deps = [m for m in spec.mounts if m.target == "/work/node_modules"]
+    assert deps and deps[0].read_only and deps[0].source == tmp_path / "node_modules"

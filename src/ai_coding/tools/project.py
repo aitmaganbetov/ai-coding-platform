@@ -45,6 +45,7 @@ TOOLCHAIN = "/toolchain"
 _COPY_SKIP = frozenset({".git", ".ai-coding", "node_modules", "vendor", ".venv", "venv",
                         "target", "__pycache__", ".mypy_cache", ".pytest_cache"})  # fmt: skip
 _MAX_COPY = 500 * 1024 * 1024
+_DEPENDENCY_DIRS = ("node_modules", "vendor")
 _ERROR_CHARS = 400
 
 
@@ -67,6 +68,10 @@ class Invocation:
     version_argv: tuple[str, ...] | None = None
     writable: bool = False  # the tool writes into the tree (e.g. Cargo.lock): use a copy
     toolchain: str | None = None  # platform-cache entry mounted at /toolchain
+    # Hosts the tool itself must reach (k6 against the system under test), through the
+    # egress allowlist proxy (B-205); ``None``: the tool runs without network.
+    egress: tuple[str, ...] | None = None
+    egress_private: bool = False  # the hosts are operator-named (may be internal)
 
 
 @runtime_checkable
@@ -125,6 +130,16 @@ class ProjectToolRunner:
             return f"dependency install needs egress to {', '.join(denied)} (security policy)"
         return None
 
+    def _egress_blocker(self, hosts: tuple[str, ...] | None) -> str | None:
+        if hosts is None:
+            return None
+        if not self._sandbox_network:
+            return "the tool needs the network, but execution.docker.network is 'none'"
+        denied = [h for h in hosts if not self._network_allowed(h)]
+        if denied:
+            return f"the tool needs egress to {', '.join(denied)} (security policy)"
+        return None
+
     def _plan(self, tool: ProjectTool) -> Invocation | str:
         """The invocation, or why the tool is skipped."""
         if self.executor.backend is not ExecutionBackend.DOCKER:
@@ -133,6 +148,7 @@ class ProjectToolRunner:
         if isinstance(plan, str):
             return plan
         blocker = self._install_blocker(plan.install) if plan.install is not None else None
+        blocker = blocker or self._egress_blocker(plan.egress)
         if blocker:
             return blocker
         if plan.toolchain is not None and not tool_cache(plan.toolchain).is_dir():
@@ -182,13 +198,23 @@ class ProjectToolRunner:
                                          Mount(deps, DEPS, read_only=False))  # fmt: skip
             if plan.toolchain is not None:
                 mounts += (Mount(tool_cache(plan.toolchain), TOOLCHAIN, read_only=False),)
+            if not work_ro and plan.install is None:
+                # The copy leaves out dependency trees (size); a tool that writes into the
+                # copy still needs the project's installed ones: mounted read-only.
+                for name in _DEPENDENCY_DIRS:
+                    if (self.root / name).is_dir():
+                        (work / name).mkdir(exist_ok=True)
+                        mounts += (Mount(self.root / name, f"{WORK}/{name}", read_only=True),)
 
             def command(
-                argv: tuple[str, ...], *, egress: tuple[str, ...] | None = None
+                argv: tuple[str, ...],
+                *,
+                egress: tuple[str, ...] | None = None,
+                private: bool = False,
             ) -> CommandSpec:
                 return CommandSpec(
                     argv=argv, cwd=work, image=spec.image, mounts=mounts, workdir=WORK,
-                    network=egress is not None, egress=egress,
+                    network=egress is not None, egress=egress, egress_private=private,
                     env={**dict(spec.env), **dict(plan.env)},
                     timeout_seconds=self.timeout, ok_exit_codes=frozenset(range(256)),
                 )  # fmt: skip
@@ -204,7 +230,9 @@ class ProjectToolRunner:
                 ver = await self.executor.run(command(plan.version_argv))
                 if ver.exit_code == 0:
                     version = tool.parse_version(ver.stdout + "\n" + ver.stderr)
-            return version, await self.executor.run(command(plan.argv))
+            return version, await self.executor.run(
+                command(plan.argv, egress=plan.egress, private=plan.egress_private)
+            )
 
     @staticmethod
     def _finish(tool: ProjectTool, base: ToolRun, result: ExecutionResult) -> ToolRun:

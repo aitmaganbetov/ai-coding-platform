@@ -33,6 +33,7 @@ SUPPORTED_SCHEMA_VERSIONS: frozenset[str] = frozenset({SCHEMA_VERSION})
 _ENV_NAME = r"^[A-Z_][A-Z0-9_]*$"
 _LABEL = r"[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
 _HOSTNAME = rf"^(\*\.)?{_LABEL}(\.{_LABEL})*(:\d{{1,5}})?$"
+_REL_PATH = r"^[A-Za-z0-9_][A-Za-z0-9_./-]*$"  # project-relative; ".." refused below
 _BRANCH_GLOB = r"^[A-Za-z0-9._/*-]+$"
 
 ReportFormat = Literal["json", "markdown", "sarif", "junit"]
@@ -313,6 +314,27 @@ class TestsGate(_Gate):
         description="Digest-pinned runtime image (default: per stack).",
     )
     timeout_seconds: int = Field(default=900, ge=10, le=7200)
+    e2e: bool = Field(
+        default=True,
+        description="Run the project's Playwright end-to-end tests in the sandbox (S9).",
+    )
+    performance_scripts: list[Annotated[str, Field(pattern=_REL_PATH, max_length=300)]] = Field(
+        default_factory=list,
+        description="k6 scripts, relative paths; empty: *.k6.js files and k6/*.js (S9).",
+    )
+    performance_hosts: list[Annotated[str, Field(pattern=_HOSTNAME, max_length=260)]] = Field(
+        default_factory=list,
+        description="Hosts of the system under test the k6 scripts load (egress allowlist; "
+        "they must also be allowed by `security`); empty: k6 is SKIPPED.",
+    )
+
+    @field_validator("performance_scripts")
+    @classmethod
+    def _inside_project(cls, value: list[str]) -> list[str]:
+        for path in value:
+            if ".." in path.split("/"):
+                raise ValueError(f"performance script {path!r} must stay inside the project")
+        return value
 
 
 class StaticGate(_Gate):

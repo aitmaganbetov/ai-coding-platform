@@ -18,6 +18,7 @@ from importlib.metadata import entry_points
 
 from ai_coding.domain.enums import Stack
 from ai_coding.tools.base import ToolAdapter
+from ai_coding.tools.e2e import K6Adapter, PlaywrightAdapter
 from ai_coding.tools.gitleaks import GitleaksAdapter
 from ai_coding.tools.golang import GolangciLintAdapter, GoTestAdapter
 from ai_coding.tools.mypy import MypyAdapter
@@ -87,6 +88,7 @@ def builtin_tools() -> list[AnyTool]:
         GitleaksAdapter(), SemgrepAdapter(), RuffAdapter(), TrivyAdapter(), OSVScannerAdapter(),
         PHPStanAdapter(), PintAdapter(), ESLintAdapter(), TypeScriptAdapter(), MypyAdapter(),
         GoTestAdapter(), GolangciLintAdapter(), CargoTestAdapter(), ClippyAdapter(),
+        PlaywrightAdapter(), K6Adapter(),
     ]  # fmt: skip
 
 

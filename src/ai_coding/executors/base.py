@@ -46,6 +46,9 @@ class CommandSpec:
     # With ``network``: the only hosts the step may reach (egress allowlist proxy,
     # B-205); ``None`` means unrestricted (explicit operator actions only).
     egress: tuple[str, ...] | None = None
+    # The listed hosts may resolve to private addresses (an internal staging system
+    # named by the operator); never for registry hosts, where it would allow SSRF.
+    egress_private: bool = False
     ok_exit_codes: frozenset[int] = frozenset({0})
 
     def __post_init__(self) -> None:

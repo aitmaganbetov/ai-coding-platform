@@ -1,0 +1,169 @@
+{
+  "config": {
+    "configFile": "/work/playwright.config.js",
+    "rootDir": "/work/tests",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "reporter": [
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "quiet": false,
+    "projects": [
+      {
+        "outputDir": "/work/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "/work/tests",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 30000
+      }
+    ],
+    "shard": null,
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.56.1",
+    "workers": 2,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "ui.spec.js",
+      "file": "ui.spec.js",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "greets the user",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 189,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-05T20:41:39.279Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "6cacfa4b79c1be8f210f-33827166241b8a85928c",
+          "file": "ui.spec.js",
+          "line": 2,
+          "column": 1
+        },
+        {
+          "title": "shows the total",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 1103,
+                  "error": {
+                    "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  locator('#total')\nExpected: \u001b[32m\"4\u001b[7m2\u001b[27m\"\u001b[39m\nReceived: \u001b[31m\"4\u001b[7m1\u001b[27m\"\u001b[39m\nTimeout:  1000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveText\" with timeout 1000ms\u001b[22m\n\u001b[2m  - waiting for locator('#total')\u001b[22m\n\u001b[2m    5 × locator resolved to <p id=\"total\">41</p>\u001b[22m\n\u001b[2m      - unexpected value \"41\"\u001b[22m\n",
+                    "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  locator('#total')\nExpected: \u001b[32m\"4\u001b[7m2\u001b[27m\"\u001b[39m\nReceived: \u001b[31m\"4\u001b[7m1\u001b[27m\"\u001b[39m\nTimeout:  1000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveText\" with timeout 1000ms\u001b[22m\n\u001b[2m  - waiting for locator('#total')\u001b[22m\n\u001b[2m    5 × locator resolved to <p id=\"total\">41</p>\u001b[22m\n\u001b[2m      - unexpected value \"41\"\u001b[22m\n\n    at /work/tests/ui.spec.js:8:40",
+                    "location": {
+                      "file": "/work/tests/ui.spec.js",
+                      "column": 40,
+                      "line": 8
+                    },
+                    "snippet": "   6 | test(\"shows the total\", async ({ page }) => {\n   7 |   await page.setContent(\"<p id=total>41</p>\");\n>  8 |   await expect(page.locator(\"#total\")).toHaveText(\"42\", { timeout: 1000 });\n     |                                        ^\n   9 | });\n  10 |"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/work/tests/ui.spec.js",
+                        "column": 40,
+                        "line": 8
+                      },
+                      "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  locator('#total')\nExpected: \u001b[32m\"4\u001b[7m2\u001b[27m\"\u001b[39m\nReceived: \u001b[31m\"4\u001b[7m1\u001b[27m\"\u001b[39m\nTimeout:  1000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveText\" with timeout 1000ms\u001b[22m\n\u001b[2m  - waiting for locator('#total')\u001b[22m\n\u001b[2m    5 × locator resolved to <p id=\"total\">41</p>\u001b[22m\n\u001b[2m      - unexpected value \"41\"\u001b[22m\n\n\n   6 | test(\"shows the total\", async ({ page }) => {\n   7 |   await page.setContent(\"<p id=total>41</p>\");\n>  8 |   await expect(page.locator(\"#total\")).toHaveText(\"42\", { timeout: 1000 });\n     |                                        ^\n   9 | });\n  10 |\n    at /work/tests/ui.spec.js:8:40"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-05T20:41:39.810Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/work/test-results/ui-shows-the-total/error-context.md"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/work/tests/ui.spec.js",
+                    "column": 40,
+                    "line": 8
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "6cacfa4b79c1be8f210f-0039c75b23f439e6b2a9",
+          "file": "ui.spec.js",
+          "line": 6,
+          "column": 1
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-11-05T20:41:38.231Z",
+    "duration": 2768.628,
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 1,
+    "flaky": 0
+  }
+}

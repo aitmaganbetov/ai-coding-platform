@@ -63,7 +63,7 @@ def _run(docker: str, env: Mapping[str, str], *args: str, timeout: float = 60) -
     return proc.stdout.strip()
 
 
-def proxy_argv(name: str, allow: tuple[str, ...]) -> list[str]:
+def proxy_argv(name: str, allow: tuple[str, ...], *, allow_private: bool = False) -> list[str]:
     """``docker run`` argv of the proxy container (exposed for review and tests)."""
     argv = ["run", "-d", "--rm", "--name", name, "--pull", "never",
             "--network", "bridge", "--read-only", "--cap-drop", "ALL",
@@ -76,12 +76,19 @@ def proxy_argv(name: str, allow: tuple[str, ...]) -> list[str]:
         if not host or any(c.isspace() for c in host) or host.startswith("-"):
             raise ExecutorError(f"invalid egress host {host!r}")
         argv += ["--allow", host]
+    if allow_private:
+        argv.append("--allow-private")
     return argv
 
 
 @asynccontextmanager
 async def egress_gateway(
-    docker: str, name: str, allow: tuple[str, ...], env: Mapping[str, str]
+    docker: str,
+    name: str,
+    allow: tuple[str, ...],
+    env: Mapping[str, str],
+    *,
+    allow_private: bool = False,
 ) -> AsyncIterator[Gateway]:
     """Internal network + allowlist proxy for one sandbox step."""
     gateway = Gateway(network=f"{name}-net", proxy=f"{name}-egress")
@@ -94,7 +101,8 @@ async def egress_gateway(
         await asyncio.to_thread(call, "network", "create", "--internal",
                                 "--label", "ai-coding.egress=network", gateway.network)  # fmt: skip
         created.append(("network", "rm", gateway.network))
-        await asyncio.to_thread(call, *proxy_argv(gateway.proxy, allow))
+        await asyncio.to_thread(call, *proxy_argv(gateway.proxy, allow,
+                                                   allow_private=allow_private))  # fmt: skip
         created.append(("rm", "-f", gateway.proxy))
         await asyncio.to_thread(call, "network", "connect", gateway.network, gateway.proxy)
         address = await asyncio.to_thread(

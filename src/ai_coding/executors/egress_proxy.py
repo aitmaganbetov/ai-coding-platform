@@ -52,11 +52,19 @@ def log(**fields: object) -> None:
 
 
 class Proxy:
-    def __init__(self, allow: list[str]) -> None:
+    def __init__(self, allow: list[str], *, allow_private: bool = False) -> None:
         self.allow = [a.lower() for a in allow]
+        self.allow_private = allow_private  # operator-named internal hosts (k6 targets)
 
-    def allowed(self, host: str) -> bool:
-        return any(host_matches(host, p) for p in self.allow)
+    def allowed(self, host: str, port: int, default_ports: frozenset[int]) -> bool:
+        """``host:port`` entries allow exactly that port; plain entries the default ones."""
+        for entry in self.allow:
+            name, _, wanted = entry.rpartition(":") if entry.count(":") == 1 else (entry, "", "")
+            if host_matches(host, name or entry) and (
+                port == int(wanted) if wanted else port in default_ports
+            ):
+                return True
+        return False
 
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -98,11 +106,8 @@ class Proxy:
         host = host.lower().rstrip(".")  # match and resolve the same, normalised name
         method = "CONNECT" if first is None else "HTTP"
         ports = CONNECT_PORTS if first is None else HTTP_PORTS
-        if port not in ports:
-            await self.refuse(writer, method, target, f"port {port} not allowed")
-            return
-        if not self.allowed(host):
-            await self.refuse(writer, method, target, f"'{host}' is not in the allowlist")
+        if not self.allowed(host, port, ports):
+            await self.refuse(writer, method, target, f"'{host}:{port}' is not in the allowlist")
             return
         try:
             infos = await asyncio.get_running_loop().getaddrinfo(
@@ -112,7 +117,7 @@ class Proxy:
             await self.refuse(writer, method, target, f"cannot resolve: {exc}")
             return
         addresses = sorted({str(i[4][0]) for i in infos})
-        private = [a for a in addresses if not public_address(a)]
+        private = [] if self.allow_private else [a for a in addresses if not public_address(a)]
         if private or not addresses:
             reason = f"resolves to non-public address(es) {', '.join(private)}"
             await self.refuse(writer, method, target, reason)
@@ -144,10 +149,10 @@ class Proxy:
                 dst.close()
 
 
-async def serve(port: int, allow: list[str]) -> None:
-    proxy = Proxy(allow)
+async def serve(port: int, allow: list[str], *, allow_private: bool = False) -> None:
+    proxy = Proxy(allow, allow_private=allow_private)
     server = await asyncio.start_server(proxy.handle, "0.0.0.0", port, limit=HEAD_LIMIT)  # noqa: S104
-    log(ready=True, port=port, allow=allow)
+    log(ready=True, port=port, allow=allow, allow_private=allow_private)
     async with server:
         await server.serve_forever()
 
@@ -156,8 +161,9 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="egress-proxy")
     parser.add_argument("--port", type=int, default=3128)
     parser.add_argument("--allow", action="append", default=[])
+    parser.add_argument("--allow-private", action="store_true")
     args = parser.parse_args(argv)
-    asyncio.run(serve(args.port, args.allow))
+    asyncio.run(serve(args.port, args.allow, allow_private=args.allow_private))
 
 
 if __name__ == "__main__":
