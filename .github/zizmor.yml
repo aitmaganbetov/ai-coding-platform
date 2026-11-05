@@ -1,0 +1,7 @@
+# zizmor configuration (ADR-0022).
+rules:
+  # pilots.yml deliberately calls this repository's reusable workflows by local path
+  # so that every PR tests the workflows it changes (AC-09); external callers pin @<sha>.
+  self-repository:
+    ignore:
+      - pilots.yml

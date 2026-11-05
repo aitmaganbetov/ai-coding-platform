@@ -1,0 +1,57 @@
+# Reusable workflow: run test-rust tests and publish JUnit results.
+# Executes project code, so it runs only on GitHub-hosted, ephemeral runners.
+name: test-rust (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        type: string
+        default: "."
+      rust-toolchain:
+        type: string
+        default: "stable"
+      install-command:
+        type: string
+        default: "cargo fetch --locked"
+      test-command:
+        type: string
+        default: "cargo clippy --locked --all-targets -- -D warnings && cargo test --locked"
+
+permissions: {}
+
+jobs:
+  test:
+    name: test-rust
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    env:
+      INSTALL_COMMAND: ${{ inputs.install-command }}
+      TEST_COMMAND: ${{ inputs.test-command }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain (rustup is preinstalled on GitHub runners)
+        env:
+          RUST_TOOLCHAIN: ${{ inputs.rust-toolchain }}
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy
+          rustup default "$RUST_TOOLCHAIN"
+      - name: Install dependencies
+        run: bash -c "$INSTALL_COMMAND"
+      - name: Test
+        run: bash -c "$TEST_COMMAND"
+      - name: Upload JUnit report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-test-rust-${{ github.run_attempt }}-${{ strategy.job-index }}
+          path: ${{ inputs.working-directory }}/**/junit*.xml
+          if-no-files-found: ignore
+          retention-days: 14

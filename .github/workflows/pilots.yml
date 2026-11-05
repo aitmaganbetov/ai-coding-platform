@@ -1,0 +1,57 @@
+# Pilot repositories for S4 / AC-09: two different stacks get their checks in the PR.
+# Calls the reusable workflows of this repository with the local platform checkout.
+name: Pilots
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pilots-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-tests:
+    name: Python pilot — tests
+    uses: ./.github/workflows/test-python.yml
+    with:
+      working-directory: examples/pilot-python
+
+  python-quality:
+    name: Python pilot — quality
+    uses: ./.github/workflows/quality.yml
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+    with:
+      working-directory: examples/pilot-python
+      platform-spec: "."
+      tools: ruff
+      check-name: "ai-coding / quality (pilot-python)"
+      comment-key: quality-pilot-python
+
+  node-tests:
+    name: Node pilot — tests
+    uses: ./.github/workflows/test-node.yml
+    with:
+      working-directory: examples/pilot-node
+
+  node-security:
+    name: Node pilot — security
+    uses: ./.github/workflows/security.yml
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+      security-events: write
+    with:
+      working-directory: examples/pilot-node
+      platform-spec: "."
+      check-name: "ai-coding / security (pilot-node)"
+      comment-key: security-pilot-node

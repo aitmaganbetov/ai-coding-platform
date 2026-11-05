@@ -13,6 +13,7 @@ Design notes (ADR-0008):
 
 from __future__ import annotations
 
+import base64
 import fnmatch
 import os
 import re
@@ -35,6 +36,7 @@ from ai_coding.git.errors import (
     NotARepositoryError,
     ProtectedBranchError,
 )
+from ai_coding.security import default_redactor
 
 DEFAULT_TIMEOUT_SECONDS = 60.0
 DEFAULT_PROTECTED = ("main", "master", "release/*")
@@ -66,9 +68,11 @@ def _run(
     *,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     check: bool = True,
+    extra_env: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0", "LC_ALL": "C"})
+    env.update(extra_env or {})
     try:
         proc = subprocess.run(
             [_git_executable(), *_SAFETY_CONFIG, *args],
@@ -193,6 +197,11 @@ class LocalGitRepository:
         """Checked-out branch name, ``None`` if detached."""
         proc = self._git("symbolic-ref", "--quiet", "--short", "HEAD", check=False)
         return proc.stdout.strip() or None if proc.returncode == 0 else None
+
+    def rev_parse(self, ref: str) -> str:
+        """Full commit SHA of ``ref`` (validated; never an option)."""
+        self._check_start_point(ref)
+        return self._git("rev-parse", "--verify", f"{ref}^{{commit}}").stdout.strip()
 
     def head_commit(self) -> str | None:
         """Full SHA of HEAD, ``None`` if there are no commits."""
@@ -323,6 +332,45 @@ class LocalGitRepository:
         self._check_start_point(ref)
         return ref
 
+    # -------------------------------------------------------------------- push --
+    def push(self, branch: str, *, remote: str = "origin", token: str | None = None) -> str:
+        """Push ``branch`` (never protected, never forced); returns the pushed SHA.
+
+        A token is passed as an HTTP header through environment-only git config
+        (``GIT_CONFIG_*``), so it never appears in the process argument list.
+        """
+        name = validate_branch_name(branch)
+        self.ensure_not_protected(name)
+        validate_branch_name(remote)
+        if not self.branch_exists(name):
+            raise GitCommandError(["push"], 1, f"branch {name!r} does not exist")
+        url = self.remote_url(remote)
+        if url is None:
+            raise GitCommandError(["push"], 1, f"remote {remote!r} is not configured")
+        if not url.startswith("file://"):  # local mirrors are used by tests and offline setups
+            validate_remote_url(url)
+        env = _auth_env(token) if token else {}
+        _run(
+            ["push", "--quiet", "--no-verify", "--porcelain", "--", remote,
+             f"refs/heads/{name}:refs/heads/{name}"],
+            self._root, timeout=self._timeout, extra_env=env,
+        )  # fmt: skip
+        sha = self._git("rev-parse", f"refs/heads/{name}").stdout.strip()
+        return sha
+
+    def remote_branch_sha(
+        self, branch: str, *, remote: str = "origin", token: str | None = None
+    ) -> str | None:
+        """SHA of ``branch`` on the remote (``None`` if absent) — used to probe pushes."""
+        name = validate_branch_name(branch)
+        validate_branch_name(remote)
+        proc = _run(
+            ["ls-remote", "--heads", "--", remote, f"refs/heads/{name}"],
+            self._root, timeout=self._timeout, extra_env=_auth_env(token) if token else None,
+        )  # fmt: skip
+        line = proc.stdout.strip().splitlines()
+        return line[0].split()[0] if line else None
+
     # ------------------------------------------------------------ diffs/patches --
     def diff(self, base: str, head: str = "HEAD", *, paths: Sequence[str] = ()) -> str:
         """Unified diff ``base..head`` (B-035)."""
@@ -419,6 +467,17 @@ def validate_remote_url(url: str) -> None:
     raise InvalidRefError(
         f"unsupported repository URL {url!r}: use https://, ssh:// or user@host:path"
     )
+
+
+def _auth_env(token: str) -> dict[str, str]:
+    """Environment-only git config carrying a GitHub token (not visible in argv)."""
+    basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    default_redactor.add_literals([token, basic])
+    return {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.extraHeader",
+        "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {basic}",
+    }
 
 
 def _run_input(

@@ -19,9 +19,11 @@
 | [0012](0012-quality-gates.md) | Детерминированные Quality Gates PASS/FAIL/SKIPPED, независимые от AI | Принято | движок — S3 (ADR-0020); адаптеры стеков — S7 |
 | [0013](0013-queue-and-worker.md) | Очередь: БД-очередь по умолчанию, Redis опционально | Принято | S1 (реализация S8) |
 | [0014](0014-api-and-web-ui.md) | FastAPI + OpenAPI; Web UI на React + TypeScript + Vite | Принято | S1 (реализация S8) |
-| [0015](0015-github-actions-integration.md) | GitHub Actions: reusable workflows, SHA-pinning, минимальные permissions | Принято | S1 (реализация S4) |
+| [0015](0015-github-actions-integration.md) | GitHub Actions: reusable workflows, SHA-pinning, минимальные permissions | Принято | S1; реализация — S4 (ADR-0022) |
 | [0016](0016-worker-leases-and-effect-ledger.md) | Lease прогона, журнал эффектов, кооперативная отмена (AC-04) | Принято | S2 |
 | [0017](0017-structured-logging.md) | structlog JSON + redaction + run_id/trace_id | Принято | S2 |
 | [0018](0018-executors-implementation.md) | Исполнители: Docker CLI, `--pull never`, ограничения хоста | Принято | S3 |
 | [0019](0019-tool-adapters-and-findings.md) | Адаптеры инструментов, fingerprint находок, офлайн-правила Semgrep, fail-closed | Принято | S3 |
 | [0020](0020-quality-gates-semantics-and-baseline.md) | Семантика PASS/FAIL/SKIPPED, strict, baseline с владельцем и сроком | Принято | S3 |
+| [0021](0021-github-integration.md) | GitHub: httpx-клиент, порт RepositoryHost, PR без merge, checks, Actions executor | Принято | S4 |
+| [0022](0022-reusable-workflows.md) | Reusable workflows: права, форки, установка платформы, SHA-pinning, пилоты | Принято | S4 |

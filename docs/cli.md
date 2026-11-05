@@ -14,7 +14,7 @@
 | `ai-coding run status RUN` | Состояние, задачи, approvals, артефакты | S2 |
 | `ai-coding run events RUN` | Журнал переходов состояния | S2 |
 | `ai-coding run audit RUN [-o FILE]` | Экспорт audit trail в JSON (AC-10) | S2 |
-| `ai-coding run resume RUN [--force] [--yes]` | Продолжить с последнего подтверждённого шага | S2 |
+| `ai-coding run resume RUN [--force] [--yes]` | Продолжить с последнего подтверждённого шага (отказывает, если для оставшихся шагов нужны обработчики другой команды, например `pr resume`) | S2 |
 | `ai-coding run cancel RUN [--reason] [--yes] [--dry-run]` | Отменить (кооперативно, если run выполняется) | S2 |
 | `ai-coding run approve RUN [--approval ID] [--note] [--resume]` | Подтвердить (только Owner/Maintainer) | S2 |
 | `ai-coding run reject RUN [--approval ID] [--note]` | Отклонить; run будет отменён при возобновлении | S2 |
@@ -23,6 +23,12 @@
 | `ai-coding project add SOURCE [--dest DIR] [--branch B] [--depth N] [--full-history]` | Импорт локальной папки или Git URL (безопасный clone) | S3 |
 | `ai-coding tools list` | Инструменты, категории, образы, доступность | S3 |
 | `ai-coding tools pull [-t TOOL]…` | Явно скачать образы, закреплённые по digest (единственный шаг, требующий сети) | S3 |
+| `ai-coding report export [RUN] [-i FILE] [-f json\|markdown\|sarif\|junit] [-o FILE]` | Экспорт отчёта аудита (SARIF 2.1.0, JUnit XML, JSON, Markdown) | S4 |
+| `ai-coding github comment --pr N --report FILE [--key K] [-R owner/repo]` | PR-комментарий с отчётом без дублей (маркер + upsert) | S4 |
+| `ai-coding github check --sha SHA --report FILE [--name N] [-R owner/repo]` | Check run с вердиктом и аннотациями по файлам/строкам | S4 |
+| `ai-coding github protection [-b BRANCH] [--json] [-R owner/repo]` | Проверка защиты ветки (rulesets); exit 1 при пробелах | S4 |
+| `ai-coding pr open -b BRANCH -t TITLE [--body-file F] [--base B] [--draft] [--remote R] [-R owner/repo] [-C DIR] [--require-approval] [--dry-run]` | Push рабочей ветки и PR под политикой и approval `pr_create`; без merge/auto-merge ([github.md](github.md)) | S4 |
+| `ai-coding pr resume RUN [-R owner/repo] [-C DIR]` | Продолжить PR-прогон после approval (обработчики PR) | S4 |
 
 `RUN` — полный UUID, короткий id (последние 12 символов, их показывает `run list`) или уникальный префикс. Префикс UUIDv7 — это метка времени, поэтому для коротких id используется случайный хвост. Состояние хранится в `.ai-coding/state.db` проекта; каталог `.ai-coding/` сам себя исключает из git. Другую БД можно указать через `AI_CODING_DATABASE_URL`.
 
@@ -62,4 +68,4 @@
 
 ## Запланировано (ТЗ §14)
 
-`create` (S5), `develop` (S6), `modernize` (S6), `maintain` (S7), `agents list` (S5), `report export` (S4); `audit` расширяется адаптерами стеков в S7. Все изменяющие команды получат `--dry-run` и `--require-approval`.
+`create` (S5), `develop` (S6), `modernize` (S6), `maintain` (S7), `agents list` (S5); `audit` расширяется адаптерами стеков в S7. Все изменяющие команды получат `--dry-run` и `--require-approval`.
