@@ -105,6 +105,28 @@ async def test_ten_runs_execute_in_parallel(
     assert {server.run_status(admin, r)["state"] for r in runs} == {"COMPLETED"}
 
 
+def test_embedded_worker_does_not_block_the_api(
+    server: Server, setup: tuple[Principal, uuid.UUID], tmp_path: Path
+) -> None:
+    """Handlers do synchronous work (database, git, files). With ``serve --with-worker``
+    the API must keep answering while a run blocks (seen on Windows CI: requests
+    timed out after 30 s while a discovery ran)."""
+    admin, alpha = setup
+    marker = tmp_path / "m"
+    run = server.create_run(admin, alpha, "probe", {"block": 3.0, "marker": str(marker)})
+    with TestClient(create_app(server, run_worker=True)) as client:
+        deadline = time.monotonic() + 30
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert marker.exists(), "the worker started the run"
+        started = time.monotonic()
+        assert client.get("/healthz").status_code == 200
+        assert time.monotonic() - started < 1.5, "the API waited for the blocking step"
+        while server.run_status(admin, run)["state"] != "COMPLETED":
+            assert time.monotonic() < deadline
+            time.sleep(0.1)
+
+
 async def test_concurrency_limit_is_respected(
     server: Server, setup: tuple[Principal, uuid.UUID], tmp_path: Path
 ) -> None:

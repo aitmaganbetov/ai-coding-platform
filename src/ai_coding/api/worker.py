@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -139,6 +140,9 @@ class Worker:
         self.metrics = metrics or Metrics()
         self._slots = asyncio.Semaphore(self.concurrency)
         self._tasks: set[asyncio.Task[None]] = set()
+        # One thread per running job; the default pool (min(32, CPUs + 4)) would cap
+        # the concurrency on small hosts below NFR-02.
+        self._pool = ThreadPoolExecutor(self.concurrency, thread_name_prefix="ai-coding-job")
 
     async def run(self, stop: asyncio.Event) -> None:
         """Lease and execute jobs until ``stop`` is set; then wait for running jobs.
@@ -221,6 +225,15 @@ class Worker:
                 return
 
     async def _execute(self, job: LeasedJob) -> None:
+        """Run the job in its own thread with its own event loop.
+
+        Handlers do synchronous work (database, git, files). In the worker's loop that
+        would stall the other runs and, with ``serve --with-worker``, the API itself.
+        """
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(self._pool, asyncio.run, self._execute_isolated(job))
+
+    async def _execute_isolated(self, job: LeasedJob) -> None:
         with self.server.session() as s:
             run = s.get(Run, job.run_id)
             if run is None:
@@ -237,9 +250,7 @@ class Worker:
         if not kind:
             raise RuntimeError(f"run {job.run_id} has no server run kind")
         orch, config = self.server.orchestrator(project, actor=actor)
-        (registry, _steps), _ = await asyncio.to_thread(
-            build_kind, str(kind), orch.project_root, config, params
-        )
+        (registry, _steps), _ = build_kind(str(kind), orch.project_root, config, params)
         orch.registry = registry
         orch.lease_ttl = self.lease_seconds
         if state is RunState.CREATED and job.kind == "execute":

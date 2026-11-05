@@ -13,6 +13,8 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -28,11 +30,13 @@ from ai_coding.orchestrator import HandlerRegistry, StepContext, StepResult, Ste
 
 CRASH_ENV = "AI_CODING_TEST_CRASH"
 STATS: dict[str, int] = {"current": 0, "peak": 0}
+_STATS_LOCK = threading.Lock()  # jobs run in their own threads
 
 
 class ProbeParams(_Params):
     steps: int = Field(default=1, ge=1, le=10)
     sleep: float = Field(default=0.0, ge=0, le=10)
+    block: float = Field(default=0.0, ge=0, le=10)  # synchronous work, like real handlers
     marker: str
     approve: bool = False  # the first step is a deploy: approval required (ТЗ §5)
 
@@ -51,12 +55,15 @@ class ProbeHandler:
             fh.write(f"{ctx.task_key}\n")
         if os.environ.get(CRASH_ENV) == ctx.task_key:
             os._exit(137)
-        STATS["current"] += 1
-        STATS["peak"] = max(STATS["peak"], STATS["current"])
+        with _STATS_LOCK:
+            STATS["current"] += 1
+            STATS["peak"] = max(STATS["peak"], STATS["current"])
         try:
+            time.sleep(float(ctx.input.get("block", 0.0)))  # blocks this event loop
             await asyncio.sleep(float(ctx.input["sleep"]))
         finally:
-            STATS["current"] -= 1
+            with _STATS_LOCK:
+                STATS["current"] -= 1
         return StepResult(output={"step": ctx.task_key})
 
 
@@ -69,7 +76,7 @@ def _build(root: Path, config: Any, params: Any) -> Any:
             phase=TaskPhase.EXECUTION,
             depends_on=(f"probe.{i - 1}",) if i else (),
             max_attempts=3,
-            input={"marker": p.marker, "sleep": p.sleep},
+            input={"marker": p.marker, "sleep": p.sleep, "block": p.block},
             requires_approval=ApprovalOperation.DEPLOY if p.approve and i == 0 else None,
         )
         for i in range(p.steps)
