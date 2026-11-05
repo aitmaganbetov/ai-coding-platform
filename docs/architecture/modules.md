@@ -7,7 +7,7 @@
 ```text
 ai-coding-platform/
 ├── AI_Coding_Platform_v2_1_TZ.pdf     # ТЗ — основной источник требований
-├── AI_Coding_Platform_v2_1_TZ.md      # конвертация ТЗ (с дефектами, см. docs/tz-notes.md)
+├── AI_Coding_Platform_v2_1_TZ.md      # Markdown-версия ТЗ, сгенерирована из PDF
 ├── README.md, LICENSE, SECURITY.md, CONTRIBUTING.md
 ├── pyproject.toml, uv.lock, Makefile   ✅ сборка, зависимости, линтеры, слои
 ├── .ai-coding.yml                      ✅ конфигурация платформы для самой себя (dogfooding)
