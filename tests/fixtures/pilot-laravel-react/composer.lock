@@ -1,0 +1,18 @@
+{
+    "_readme": ["Test fixture: a trimmed lock file with a known-vulnerable package."],
+    "content-hash": "0d6f2b8a5a1c4b3e9f7a6d5c4b3a2f1e",
+    "packages": [
+        {
+            "name": "guzzlehttp/psr7",
+            "version": "1.8.0",
+            "source": {"type": "git", "url": "https://github.com/guzzle/psr7.git",
+                       "reference": "1afdd860a2566ed3c2b0b4a3de6e23434a79ec85"},
+            "type": "library",
+            "license": ["MIT"]
+        }
+    ],
+    "packages-dev": [],
+    "minimum-stability": "stable",
+    "platform": {"php": "^8.2"},
+    "plugin-api-version": "2.6.0"
+}

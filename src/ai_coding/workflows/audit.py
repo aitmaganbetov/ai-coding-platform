@@ -3,8 +3,14 @@
 DAG::
 
     discovery:    discover.config  discover.git  discover.stacks  audit.snapshot
-    execution:    scan.<tool> …  (gitleaks, semgrep, ruff — by stack)
+                  audit.suppressions
+    execution:    scan.<tool> …  (selected by the project stacks)
+                  [audit.triage]  (after the scans)
     verification: quality.gates   audit.integrity   →   report.audit
+
+``audit.triage`` (opt-in) asks the Security Agent to triage the new findings; it is
+advisory and never changes the gates (ТЗ §10). ``audit.suppressions`` lists the
+scanners' own ignore files and inline markers, which bypass the baseline (B-225).
 
 ``audit.integrity`` proves the audit did not modify the repository: it compares
 a snapshot taken before the scans with the state afterwards and fails the run if
@@ -21,12 +27,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ai_coding.agents import SecurityAgent
 from ai_coding.config.models import AICodingConfig
 from ai_coding.detection import detect_stacks
 from ai_coding.domain.enums import ExecutionBackend, Stack, TaskPhase
+from ai_coding.domain.errors import PermanentError as DomainPermanentError
+from ai_coding.domain.errors import TransientError as DomainTransientError
 from ai_coding.executors import DockerSandboxExecutor, LocalExecutor
 from ai_coding.executors.base import Executor, ExecutorError, ExecutorUnavailableError
-from ai_coding.orchestrator.errors import PermanentError
+from ai_coding.orchestrator.errors import (
+    ApprovalRequiredError,
+    BudgetExceededError,
+    PermanentError,
+)
 from ai_coding.orchestrator.handlers import (
     ConfigDiscoveryHandler,
     GitDiscoveryHandler,
@@ -37,11 +50,13 @@ from ai_coding.orchestrator.registry import HandlerRegistry, StepContext, StepRe
 from ai_coding.persistence.types import utcnow
 from ai_coding.quality import QualityGateEngine, load_baseline
 from ai_coding.quality.baseline import BaselineError
+from ai_coding.quality.suppressions import scan_suppressions
 from ai_coding.reports import AuditReport, render_markdown
 from ai_coding.tools import ToolRun, ToolRunner, default_tool_registry
 from ai_coding.tools.base import Finding, skipped_run
 from ai_coding.tools.project import ProjectTool, ProjectToolRunner
 from ai_coding.tools.registry import AnyTool
+from ai_coding.workflows.agent_runtime import run_agent
 
 _SNAPSHOT_EXCLUDES = {".git", ".ai-coding"}
 
@@ -54,6 +69,7 @@ class AuditOptions:
     tools: tuple[str, ...] = ()  # empty: every tool applicable to the stacks
     semgrep_config: Path | None = None
     strict: bool = False
+    triage: bool = False  # Security Agent triage of new findings (needs `ai`)
 
 
 def snapshot_digest(root: Path) -> tuple[str, int]:
@@ -156,6 +172,104 @@ def _tool_runs(ctx: StepContext) -> list[ToolRun]:
     ]
 
 
+class SuppressionsHandler(_Handler):
+    """Lists the scanners' own ignore files and inline markers (B-225)."""
+
+    name = "builtin.audit.suppressions"
+    capabilities = frozenset({"audit.suppressions"})
+
+    async def run(self, ctx: StepContext) -> StepResult:
+        return StepResult(output=await asyncio.to_thread(scan_suppressions, ctx.project_root))
+
+
+TRIAGE_MAX_FINDINGS = 100
+TRIAGE_MAX_FILES = 30
+TRIAGE_MAX_LINES = 400
+_SEVERITY_ORDER = ("critical", "high", "medium", "low", "info")
+
+
+def triage_id(finding: Finding) -> str:
+    """Short, stable id of a finding for the Security Agent."""
+    return finding.fingerprint[:12]
+
+
+def _excerpt(root: Path, rel: str) -> str | None:
+    path = (root / rel).resolve()
+    if not path.is_relative_to(root.resolve()) or not path.is_file() or path.is_symlink():
+        return None
+    try:
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            return "".join(line for _, line in zip(range(TRIAGE_MAX_LINES), fh, strict=False))
+    except OSError:
+        return None
+
+
+def triage_inputs(root: Path, findings: Sequence[Finding], stacks: Sequence[str]) -> dict[str, Any]:
+    """Inputs of the Security Agent: the most severe findings and the code they point to.
+
+    Files with secret findings are never sent to the model (only the finding itself).
+    """
+    ranked = sorted(
+        findings, key=lambda f: (_SEVERITY_ORDER.index(f.severity.value), f.path or "", f.line or 0)
+    )[:TRIAGE_MAX_FINDINGS]
+    secret_paths = {f.path for f in ranked if f.tool == "gitleaks"}
+    code: dict[str, str] = {}
+    for f in ranked:
+        if (f.path and f.path not in code and f.path not in secret_paths
+                and len(code) < TRIAGE_MAX_FILES):  # fmt: skip
+            text = _excerpt(root, f.path)
+            if text is not None:
+                code[f.path] = text
+    return {
+        "stacks": list(stacks),
+        "findings": [
+            {
+                "id": triage_id(f),
+                "tool": f.tool,
+                "rule_id": f.rule_id,
+                "severity": f.severity.value,
+                "path": f.path,
+                "line": f.line,
+                "title": f.title,
+            }
+            for f in ranked
+        ],
+        "code": code,
+    }
+
+
+class TriageHandler(_Handler):
+    """Security Agent triage of the new findings — advisory, never changes the gates."""
+
+    name = "agent.security.triage"
+    capabilities = frozenset({"audit.triage"})
+
+    async def run(self, ctx: StepContext) -> StepResult:
+        everything = [f for r in _tool_runs(ctx) for f in r.findings]
+        try:
+            new, _, expired = load_baseline(ctx.project_root).partition(everything)
+            findings = new + expired  # actively baselined findings are already accepted
+        except BaselineError:
+            findings = everything  # the gates step reports the broken baseline
+        if not findings:
+            return StepResult(output={"status": "skipped", "reason": "no new findings"})
+        stacks = ctx.dependencies.get("discover.stacks", {}).get("effective", [])
+        inputs = triage_inputs(ctx.project_root, findings, [str(s) for s in stacks])
+        try:
+            agent_ctx, result = await run_agent(ctx, SecurityAgent(), inputs)
+        except (ApprovalRequiredError, BudgetExceededError):
+            raise  # pause the run for a human; never decide this silently
+        except (DomainPermanentError, DomainTransientError) as exc:
+            # Advisory step: a model outage or unusable output leaves the audit valid.
+            return StepResult(output={"status": "failed", "reason": str(exc)[:400]})
+        return StepResult(
+            output={"status": "done", "result": result.output,
+                    "models": list(dict.fromkeys(agent_ctx.models)),
+                    "triaged": len(inputs["findings"]), "total": len(findings)},
+            evidence_refs=list(result.evidence_refs), confidence=result.confidence,
+        )  # fmt: skip
+
+
 class GatesHandler(_Handler):
     """Evaluates the Quality Gates from the scan results and the baseline."""
 
@@ -204,13 +318,24 @@ class AuditReportHandler(_Handler):
     name = "builtin.report.audit"
     capabilities = frozenset({"report.audit"})
 
-    def __init__(self, *, backend: ExecutionBackend) -> None:
+    def __init__(self, *, backend: ExecutionBackend, images: dict[str, str] | None = None) -> None:
         self.backend = backend
+        self.images = images or {}
+
+    def _reproducibility(self, runs: Sequence[ToolRun]) -> list[dict[str, Any]]:
+        """What pins each result: tool version, sandbox image digest, offline data snapshot."""
+        return [{"tool": r.tool, "version": r.version,
+                 "image": self.images.get(r.tool) if r.backend == "docker" else None,
+                 "data": dict(r.metadata) or None, "skipped": r.skipped}
+                for r in runs]  # fmt: skip
 
     async def run(self, ctx: StepContext) -> StepResult:
         deps = ctx.dependencies
         gates = deps["quality.gates"]
         suppressed, expired = set(gates["suppressed"]), set(gates["expired"])
+        triage = deps.get("audit.triage")
+        verdicts = {a["finding_id"]: a for a in
+                    ((triage or {}).get("result") or {}).get("assessments", [])}  # fmt: skip
         runs = _tool_runs(ctx)
         findings: list[dict[str, Any]] = []
         for f in (finding for r in runs for finding in r.findings):
@@ -220,6 +345,10 @@ class AuditReportHandler(_Handler):
                 else "expired-baseline" if f.fingerprint in expired
                 else "new"
             )  # fmt: skip
+            assessment = verdicts.get(triage_id(f))
+            if assessment is not None:
+                item["triage"] = {k: assessment.get(k) for k in
+                                  ("verdict", "severity", "recommendation", "cwe")}  # fmt: skip
             findings.append(item)
         report = AuditReport(
             project=ctx.config.project.name,
@@ -234,6 +363,9 @@ class AuditReportHandler(_Handler):
             integrity=dict(deps["audit.integrity"]),
             discovery={k: deps[k] for k in sorted(deps) if k.startswith("discover.")},
             notes=list(gates["notes"]),
+            suppressions=dict(deps.get("audit.suppressions") or {}),
+            triage=dict(triage) if triage is not None else None,
+            reproducibility=self._reproducibility(runs),
         )
         json_ref = await asyncio.to_thread(
             ctx.save_artifact, "audit-report.json", report.to_json().encode(), "application/json"
@@ -292,10 +424,14 @@ def build_audit(
             GitDiscoveryHandler(),
             StackDiscoveryHandler(),
             SnapshotHandler(),
+            SuppressionsHandler(),
             *(ToolScanHandler(a, runner) for a in adapters),
             GatesHandler(strict=options.strict),
+            *([TriageHandler()] if options.triage else []),
             IntegrityHandler(),
-            AuditReportHandler(backend=options.backend),
+            AuditReportHandler(
+                backend=options.backend, images={a.spec.name: a.spec.image for a in adapters}
+            ),
         ]
     )
     timeout = float(config.execution.limits.timeout_seconds)
@@ -304,6 +440,7 @@ def build_audit(
         "discover.git": "discovery.git",
         "discover.stacks": "discovery.stacks",
         "audit.snapshot": "audit.snapshot",
+        "audit.suppressions": "audit.suppressions",
     }
     discovery = list(discovery_caps)
     steps = [
@@ -316,13 +453,19 @@ def build_audit(
                  depends_on=("discover.config", "audit.snapshot"))
         for k in scans
     ]  # fmt: skip
+    triage = ["audit.triage"] if options.triage else []
     steps += [
         StepSpec(key="quality.gates", capability="quality.gates",
                  phase=TaskPhase.VERIFICATION, depends_on=tuple(scans)),
+        # Execution phase: an external model may pause the run for approval (FSM).
+        *(StepSpec(key=k, capability=k, phase=TaskPhase.EXECUTION, max_attempts=3,
+                   timeout_seconds=900.0,
+                   depends_on=("discover.config", "discover.stacks", *scans)) for k in triage),
         StepSpec(key="audit.integrity", capability="audit.integrity",
-                 phase=TaskPhase.VERIFICATION, depends_on=("audit.snapshot", *scans)),
+                 phase=TaskPhase.VERIFICATION,
+                 depends_on=("audit.snapshot", *scans, *triage)),
         StepSpec(key="report.audit", capability="report.audit", phase=TaskPhase.VERIFICATION,
-                 depends_on=(*discovery, *scans, "quality.gates", "audit.integrity"),
+                 depends_on=(*discovery, *scans, "quality.gates", *triage, "audit.integrity"),
                  success_criteria=_REPORT_CRITERIA),
     ]  # fmt: skip
     return registry, steps, adapters

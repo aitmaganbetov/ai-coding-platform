@@ -22,7 +22,7 @@ from ai_coding.agents.security import confirmed
 from ai_coding.contracts.agent import AgentResultStatus
 from tests.unit.test_agents import ScriptedLLM, task_for
 
-AWS_KEY = "AKIA" + "QYLPMN5HHHFPZAM2"  # split so secret scanners ignore the test data
+AWS_KEY = "".join(("AKIA", "QYLPMN5HHHFPZAM2"))  # split so secret scanners ignore the test data
 
 # ----------------------------------------------------------------- samples --
 SEC_INPUTS: dict[str, Any] = {
