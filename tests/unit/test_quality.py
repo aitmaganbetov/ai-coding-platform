@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -60,7 +61,7 @@ def test_clean_project_passes_with_honest_skips() -> None:
     assert result[GateName.STATIC] is GateResult.PASS
     skipped = {o.gate: o.reason for o in report.outcomes if o.result is GateResult.SKIPPED}
     assert set(skipped) == {GateName.BUILD, GateName.TESTS, GateName.COVERAGE, GateName.REVIEW}
-    assert "S7" in skipped[GateName.BUILD]
+    assert "no build tool applies" in skipped[GateName.BUILD]
 
 
 def test_high_finding_fails_security_with_evidence() -> None:
@@ -207,3 +208,28 @@ def test_baseline_file_roundtrip(tmp_path: Path) -> None:
     )
     with pytest.raises(BaselineError, match="invalid"):
         load_baseline(tmp_path)
+
+
+def test_skipped_tools_do_not_fail_gates_but_explain_the_skip() -> None:
+    phpstan = replace(run("phpstan", ToolCategory.TYPES, ok=False), skipped=True,
+                      error="vendor/ is missing")  # fmt: skip
+    report = evaluate(run("gitleaks", ToolCategory.SECRETS), phpstan)
+    reasons = {o.gate: o.reason for o in report.outcomes}
+    assert gates(report)[GateName.STATIC] is GateResult.SKIPPED
+    assert "phpstan: vendor/ is missing" in reasons[GateName.STATIC]
+    assert report.verdict is GateResult.PASS
+    strict = evaluate(run("gitleaks", ToolCategory.SECRETS), phpstan, strict=True)
+    assert strict.verdict is GateResult.FAIL  # strict: a blocking SKIPPED gate fails
+
+
+def test_coverage_gate_uses_test_tool_coverage() -> None:
+    low = replace(run("go-test", ToolCategory.TESTS), coverage=61.5)
+    high = replace(run("cargo-test", ToolCategory.TESTS), coverage=92.0)
+    report = evaluate(high, low, coverage={"min_percent": 70})
+    outcome = next(o for o in report.outcomes if o.gate is GateName.COVERAGE)
+    assert outcome.result is GateResult.FAIL and "61.5% < 70.0%" in outcome.reason
+    assert report.verdict is GateResult.FAIL
+    ok = evaluate(high, coverage={"min_percent": 70})
+    assert gates(ok)[GateName.COVERAGE] is GateResult.PASS
+    none = evaluate(run("go-test", ToolCategory.TESTS))
+    assert gates(none)[GateName.COVERAGE] is GateResult.SKIPPED

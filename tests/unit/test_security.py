@@ -34,6 +34,14 @@ def test_known_token_formats_are_redacted(secret: str) -> None:
     assert out.startswith("before ")
 
 
+def test_authorization_headers_redacted() -> None:
+    token = "abcdefghijklmnopqrstuvwxyz123456"
+    assert token not in redact(f'curl -H "Authorization: Bearer {token}" https://api')
+    assert "dXNlcjpwYXNzd29yZA" not in redact("Authorization: Basic dXNlcjpwYXNzd29yZA==")
+    assert token not in redact(f"bearer {token}")
+    assert redact("the bearer of bad news") == "the bearer of bad news"
+
+
 def test_private_key_block_redacted() -> None:
     pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY-----"
     assert redact(f"key:\n{pem}\n") == f"key:\n{REDACTED}\n"

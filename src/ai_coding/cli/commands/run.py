@@ -171,6 +171,10 @@ _RESUME_HINTS = {
     "modernize.": "ai-coding modernize --resume",
     "rollback.": "ai-coding modernize --resume",
     "review.": "ai-coding review",
+    "audit.": "ai-coding audit --resume",
+    "maintain.": "ai-coding maintain --resume",
+    "quality.gates": "ai-coding audit --resume",
+    "report.audit": "ai-coding audit --resume",
 }
 
 

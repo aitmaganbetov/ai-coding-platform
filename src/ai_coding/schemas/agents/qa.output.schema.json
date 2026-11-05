@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-coding.dev/schemas/agents/qa.output.schema.json",
+  "title": "QA Agent output: traceable test cases and coverage gaps",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "test_cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "criteria": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "minItems": 1,
+            "maxItems": 20
+          },
+          "level": {
+            "enum": [
+              "unit",
+              "integration",
+              "e2e"
+            ]
+          },
+          "kind": {
+            "enum": [
+              "positive",
+              "negative",
+              "boundary",
+              "regression"
+            ]
+          },
+          "file": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300,
+            "pattern": "^(?![/\\\\])(?!.*(^|/)\\.\\.(/|$))[^\\\\:*?\"<>|]+$"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "minItems": 1,
+            "maxItems": 30
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "criteria",
+          "level",
+          "kind",
+          "file",
+          "steps",
+          "expected"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 200
+    },
+    "coverage_gaps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300,
+            "pattern": "^(?![/\\\\])(?!.*(^|/)\\.\\.(/|$))[^\\\\:*?\"<>|]+$"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
+        },
+        "required": [
+          "file",
+          "reason"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "test_run_assessment": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Self-assessed confidence; informative only, never replaces checks."
+    }
+  },
+  "required": [
+    "summary",
+    "test_cases",
+    "coverage_gaps"
+  ]
+}

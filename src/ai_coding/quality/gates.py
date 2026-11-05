@@ -135,7 +135,7 @@ class QualityGateEngine:
             self._tool_gate(
                 GateName.TESTS, self._cfg.tests.enabled, self._cfg.tests.blocking, runs
             ),
-            self._coverage(),
+            self._coverage(runs),
             self._review(),
         ]
         failed = any(o.result is GateResult.FAIL and o.blocking for o in outcomes)
@@ -164,7 +164,15 @@ class QualityGateEngine:
 
     @staticmethod
     def _relevant(runs: Sequence[ToolRun], gate: GateName) -> list[ToolRun]:
-        return [r for r in runs if r.category in _GATE_CATEGORIES[gate]]
+        """Runs that produced (or failed to produce) a result; skipped tools don't count."""
+        return [r for r in runs if r.category in _GATE_CATEGORIES[gate] and not r.skipped]
+
+    @staticmethod
+    def _skip_reason(runs: Sequence[ToolRun], gate: GateName, default: str) -> str:
+        skipped = [r for r in runs if r.category in _GATE_CATEGORIES[gate] and r.skipped]
+        if not skipped:
+            return default
+        return "tools not applicable: " + "; ".join(f"{r.tool}: {r.error}" for r in skipped)
 
     def _broken(self, gate: GateName, blocking: bool, runs: list[ToolRun]) -> GateOutcome | None:
         failed = [r for r in runs if not r.succeeded]
@@ -188,7 +196,8 @@ class QualityGateEngine:
             )
         relevant = self._relevant(runs, gate)
         if not relevant:
-            return GateOutcome(gate, GateResult.SKIPPED, cfg.blocking, "no security tool ran")
+            return GateOutcome(gate, GateResult.SKIPPED, cfg.blocking,
+                               self._skip_reason(runs, gate, "no security tool ran"))  # fmt: skip
         broken = self._broken(gate, cfg.blocking, relevant)
         if broken:
             return broken
@@ -223,8 +232,8 @@ class QualityGateEngine:
             )
         relevant = self._relevant(runs, gate)
         if not relevant:
-            return GateOutcome(gate, GateResult.SKIPPED, cfg.blocking,
-                               "no linter/type checker applies to the project stacks")  # fmt: skip
+            return GateOutcome(gate, GateResult.SKIPPED, cfg.blocking, self._skip_reason(
+                runs, gate, "no linter/type checker applies to the project stacks"))  # fmt: skip
         broken = self._broken(gate, cfg.blocking, relevant)
         if broken:
             return broken
@@ -248,8 +257,8 @@ class QualityGateEngine:
             return GateOutcome(gate, GateResult.SKIPPED, blocking, "gate disabled in configuration")
         relevant = self._relevant(runs, gate)
         if not relevant:
-            return GateOutcome(gate, GateResult.SKIPPED, blocking,
-                               f"no {gate.value} tool ran (stack adapters: S7)")  # fmt: skip
+            return GateOutcome(gate, GateResult.SKIPPED, blocking, self._skip_reason(
+                runs, gate, f"no {gate.value} tool applies to the project stacks"))  # fmt: skip
         broken = self._broken(gate, blocking, relevant)
         if broken:
             return broken
@@ -259,13 +268,26 @@ class QualityGateEngine:
                                f"{len(failures)} failure(s)", _evidence(failures))  # fmt: skip
         return GateOutcome(gate, GateResult.PASS, blocking, "all required checks passed")
 
-    def _coverage(self) -> GateOutcome:
+    def _coverage(self, runs: Sequence[ToolRun]) -> GateOutcome:
         cfg = self._cfg.coverage
+        gate = GateName.COVERAGE
         if not cfg.enabled:
-            return GateOutcome(GateName.COVERAGE, GateResult.SKIPPED, cfg.blocking,
+            return GateOutcome(gate, GateResult.SKIPPED, cfg.blocking,
                                "gate disabled in configuration")  # fmt: skip
-        return GateOutcome(GateName.COVERAGE, GateResult.SKIPPED, cfg.blocking,
-                           "no coverage report (test adapters: S7)")  # fmt: skip
+        measured = [r for r in runs if r.category is ToolCategory.TESTS and not r.skipped
+                    and r.succeeded and r.coverage is not None]  # fmt: skip
+        if not measured:
+            return GateOutcome(gate, GateResult.SKIPPED, cfg.blocking,
+                               "no test tool reported coverage")  # fmt: skip
+        lowest = min(measured, key=lambda r: r.coverage or 0.0)
+        value = float(lowest.coverage or 0.0)
+        details = ", ".join(f"{r.tool} {r.coverage:.1f}%" for r in measured)
+        if value < cfg.min_percent:
+            return GateOutcome(gate, GateResult.FAIL, cfg.blocking,
+                               f"coverage {value:.1f}% < {cfg.min_percent:.1f}% ({details})",
+                               (f"{lowest.tool}: {value:.1f}%",))  # fmt: skip
+        return GateOutcome(gate, GateResult.PASS, cfg.blocking,
+                           f"coverage ≥ {cfg.min_percent:.1f}% ({details})")  # fmt: skip
 
     def _review(self) -> GateOutcome:
         cfg = self._cfg.review

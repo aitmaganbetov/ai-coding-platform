@@ -10,17 +10,25 @@ from typing import Annotated
 import typer
 from rich.table import Table
 
+from ai_coding.cli.approvals import settle
 from ai_coding.cli.common import close_all, guard, load_project, open_orchestrator
 from ai_coding.cli.console import error, info, stdout
 from ai_coding.cli.exit_codes import ExitCode
+from ai_coding.config.models import AICodingConfig
 from ai_coding.domain.enums import ExecutionBackend, RunState
 from ai_coding.executors import docker_available
-from ai_coding.orchestrator import RunOptions, TaskPlanner
+from ai_coding.orchestrator import (
+    HandlerRegistry,
+    Orchestrator,
+    RunOptions,
+    RunStatus,
+    TaskPlanner,
+)
 from ai_coding.tools.semgrep import REGISTRY_CONFIG
 from ai_coding.workflows import AuditOptions, build_audit
 
 
-def audit(  # noqa: PLR0912 - option validation and output branches
+def audit(
     ctx: typer.Context,
     project: Annotated[
         Path, typer.Option("--project", "-C", help="Project directory.", show_default=False)
@@ -49,24 +57,25 @@ def audit(  # noqa: PLR0912 - option validation and output branches
         bool, typer.Option("--dry-run", help="Show the plan and policy decisions only.")
     ] = False,
     as_json: Annotated[bool, typer.Option("--json", help="Print the JSON report.")] = False,
+    triage: Annotated[
+        bool,
+        typer.Option("--triage", help="Advisory Security Agent triage of new findings (needs ai)."),
+    ] = False,
+    resume: Annotated[
+        str | None,
+        typer.Option("--resume", help="Continue a waiting audit run (e.g. after an approval)."),
+    ] = None,
 ) -> None:
-    """Read-only audit: secrets, SAST and lint in a sandbox → Quality Gates → report.
+    """Read-only audit: secrets, SAST, dependencies and stack tools in a sandbox → gates.
 
     Exit codes: 0 PASS, 1 FAIL (blocking gate or failed run), 2 not found / unavailable.
     """
     ctx.call_on_close(close_all)
     root, config = load_project(project)
-    chosen = backend or config.execution.backend
-    if chosen is ExecutionBackend.GITHUB_ACTIONS:
-        error("the github-actions backend arrives in S4; use --backend local or docker")
-        raise typer.Exit(ExitCode.USAGE)
-    if semgrep_config is not None:
-        if REGISTRY_CONFIG.match(str(semgrep_config)) or not semgrep_config.is_file():
-            error("--semgrep-config must be a local rules file (audits run offline)")
-            raise typer.Exit(ExitCode.USAGE)
-        semgrep_config = semgrep_config.resolve()
-    options = AuditOptions(backend=chosen, tools=tuple(tool or ()), semgrep_config=semgrep_config,
-                           strict=strict)  # fmt: skip
+    if resume:
+        tool, triage = _resumed_selection(root, config, resume)
+    options = _options(config, backend, tool, semgrep_config, strict=strict, triage=triage)
+    chosen = options.backend
     try:
         registry, steps, adapters = build_audit(config, root, options)
     except KeyError as exc:
@@ -76,21 +85,45 @@ def audit(  # noqa: PLR0912 - option validation and output branches
     orch = open_orchestrator(root, config, registry)
 
     if dry_run:
-        table = Table("step", "phase", "handler", "policy")
-        for p in orch.preview(plan, RunOptions()):
-            table.add_row(p.key, p.phase.value, p.handler or f"[red]{p.route_error}[/]", "allow")
-        stdout.print(table)
-        info(
-            f"backend: {chosen.value}; tools: {', '.join(a.spec.name for a in adapters) or 'none'}"
-        )
-        info("dry run: nothing was executed or stored")
+        _dry_run(orch.preview(plan, RunOptions()), chosen, [a.spec.name for a in adapters])
         return
     if chosen is ExecutionBackend.DOCKER and not docker_available():
         error("Docker daemon is not reachable; start Docker or use --backend local")
         raise typer.Exit(ExitCode.NOT_FOUND)
 
-    run_id = guard(lambda: orch.create_run(plan, goal="audit"))
-    status = guard(lambda: asyncio.run(orch.execute(run_id)))
+    if resume:
+        run_id = guard(lambda: orch.resolve_run_id(resume))
+        status = guard(lambda: asyncio.run(orch.resume(run_id)))
+    else:
+        run_id = guard(lambda: orch.create_run(plan, goal="audit"))
+        status = guard(lambda: asyncio.run(orch.execute(run_id)))
+    _emit(orch, root, status, chosen, output, as_json=as_json)
+
+
+def _dry_run(preview: list, backend: ExecutionBackend, tools: list[str]) -> None:  # type: ignore[type-arg]
+    table = Table("step", "phase", "handler", "policy")
+    for p in preview:
+        table.add_row(p.key, p.phase.value, p.handler or f"[red]{p.route_error}[/]", "allow")
+    stdout.print(table)
+    info(f"backend: {backend.value}; tools: {', '.join(tools) or 'none'}")
+    info("dry run: nothing was executed or stored")
+
+
+def _emit(
+    orch: Orchestrator,
+    root: Path,
+    status: RunStatus,
+    chosen: ExecutionBackend,
+    output: Path | None,
+    *,
+    as_json: bool,
+) -> None:
+    """Report a finished run (or how to continue a waiting one) and exit."""
+    run_id = status.id
+    if status.state is RunState.AWAITING_APPROVAL:  # e.g. triage with an external model
+        hint = f"ai-coding audit --resume {run_id} -C {root} -b {chosen.value}"
+        settle(orch, run_id, status, interactive=False, project=root, resume_hint=hint)
+        raise typer.Exit(ExitCode.PENDING)
     if status.state is not RunState.COMPLETED:
         error(f"audit run {status.id} ended in {status.state.value}: {status.error or ''}")
         for t in status.tasks:
@@ -113,6 +146,44 @@ def audit(  # noqa: PLR0912 - option validation and output branches
     raise typer.Exit(ExitCode.OK if report["verdict"] == "PASS" else ExitCode.INVALID)
 
 
+def _resumed_selection(root: Path, config: AICodingConfig, run: str) -> tuple[list[str], bool]:
+    """Tools and triage of an existing audit run, so the resumed run has its handlers."""
+    orch = open_orchestrator(root, config, HandlerRegistry([]))
+    status = guard(lambda: orch.status(guard(lambda: orch.resolve_run_id(run))))
+    keys = [str(t["key"]) for t in status.tasks]
+    if "report.audit" not in keys:
+        error(f"run {run} is not an audit run")
+        raise typer.Exit(ExitCode.USAGE)
+    tools = [k.removeprefix("scan.") for k in keys if k.startswith("scan.")]
+    return tools, "audit.triage" in keys
+
+
+def _options(
+    config: AICodingConfig,
+    backend: ExecutionBackend | None,
+    tool: list[str] | None,
+    semgrep_config: Path | None,
+    *,
+    strict: bool,
+    triage: bool,
+) -> AuditOptions:
+    """Validated audit options (exits with USAGE on a bad combination)."""
+    chosen = backend or config.execution.backend
+    if chosen is ExecutionBackend.GITHUB_ACTIONS:
+        error("the github-actions backend arrives in S4; use --backend local or docker")
+        raise typer.Exit(ExitCode.USAGE)
+    if semgrep_config is not None:
+        if REGISTRY_CONFIG.match(str(semgrep_config)) or not semgrep_config.is_file():
+            error("--semgrep-config must be a local rules file (audits run offline)")
+            raise typer.Exit(ExitCode.USAGE)
+        semgrep_config = semgrep_config.resolve()
+    if triage and not config.ai.enabled:
+        error("--triage needs `ai` enabled in .ai-coding.yml (a local Ollama/vLLM model works)")
+        raise typer.Exit(ExitCode.USAGE)
+    return AuditOptions(backend=chosen, tools=tuple(tool or ()), semgrep_config=semgrep_config,
+                        strict=strict, triage=triage)  # fmt: skip
+
+
 def _print_summary(report: dict, output: Path | None) -> None:  # type: ignore[type-arg]
     verdict = report["verdict"]
     colour = "green" if verdict == "PASS" else "red"
@@ -125,11 +196,23 @@ def _print_summary(report: dict, output: Path | None) -> None:  # type: ignore[t
     stdout.print(gates)
     tools = Table("tool", "version", "status", "findings")
     for t in report["tools"]:
-        status = "ok" if t["succeeded"] else f"error: {t['error']}"
+        status = (
+            f"skipped: {t['error']}" if t.get("skipped")
+            else "ok" if t["succeeded"] else f"error: {t['error']}"
+        )  # fmt: skip
         tools.add_row(t["tool"], t.get("version") or "?", status, str(len(t["findings"])))
     stdout.print(tools)
     summary = ", ".join(f"{k}: {v}" for k, v in report["summary"].items())
     info(f"new findings — {summary}; baselined: {report['baseline']['suppressed']}")
     info(f"integrity: repository unchanged = {report['integrity']['unchanged']}")
+    triage = report.get("triage")
+    if triage:
+        info(f"security triage (advisory): {triage.get('status')}"
+             + (f" — {len(triage['result']['assessments'])} assessed" if triage.get("result")
+                else f" — {triage.get('reason', '')}"))  # fmt: skip
+    suppressions = report.get("suppressions") or {}
+    if suppressions.get("files") or suppressions.get("inline"):
+        info(f"tool-level suppressions: {len(suppressions.get('files') or [])} ignore file(s), "
+             f"{sum((suppressions.get('inline') or {}).values())} inline marker(s)")  # fmt: skip
     if output is not None:
         info(f"reports: {output / 'audit-report.json'}, {output / 'audit-report.md'}")

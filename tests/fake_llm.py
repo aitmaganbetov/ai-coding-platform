@@ -23,7 +23,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "planner": agent_samples.PLAN,
 }
 _AGENT = re.compile(
-    r"You are the (Requirements|Architect|Planner|Developer|Reviewer|Database) Agent"
+    r"You are the (Requirements|Architect|Planner|Developer|Reviewer|Database|Security|QA|"
+    r"Performance|DevOps|Maintenance) Agent"
     r"( \(modernization\))?"
 )
 APPROVE: dict[str, Any] = {"summary": "Looks good.", "verdict": "approve", "findings": []}

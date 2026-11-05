@@ -21,6 +21,7 @@ class ToolCategory(StrEnum):
     DEPENDENCIES = "dependencies"
     TESTS = "tests"
     BUILD = "build"
+    PERFORMANCE = "performance"
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +108,9 @@ class ToolRun:
     duration_seconds: float
     error: str | None = None
     raw_output: str = ""
+    skipped: bool = False  # not applicable here (reason in ``error``); not a failure
+    coverage: float | None = None  # line coverage % reported by a test tool
+    metadata: dict[str, Any] = field(default_factory=dict)  # e.g. vulnerability DB version
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ToolRun:
@@ -122,6 +126,9 @@ class ToolRun:
             duration_seconds=float(data.get("duration_seconds", 0.0)),
             error=data.get("error"),
             raw_output=str(data.get("raw_output", "")),
+            skipped=bool(data.get("skipped", False)),
+            coverage=data.get("coverage"),
+            metadata=dict(data.get("metadata") or {}),
         )
 
     def to_dict(self, *, include_raw: bool = False) -> dict[str, Any]:
@@ -135,6 +142,9 @@ class ToolRun:
             "succeeded": self.succeeded,
             "duration_seconds": self.duration_seconds,
             "error": self.error,
+            "skipped": self.skipped,
+            "coverage": self.coverage,
+            "metadata": self.metadata,
             "findings": [f.to_dict() for f in self.findings],
         }
         if include_raw:
@@ -167,6 +177,14 @@ class ToolAdapter(Protocol):
     def parse(self, stdout: str, *, target: str) -> list[Finding]:
         """Turn tool output into findings with repository-relative paths."""
         ...
+
+
+def skipped_run(spec: ToolSpec, backend: str, reason: str) -> ToolRun:
+    """A tool that does not apply here (missing manifest, dependencies or cache)."""
+    return ToolRun(
+        tool=spec.name, category=spec.category, version=None, backend=backend, exit_code=0,
+        succeeded=False, findings=(), duration_seconds=0.0, error=reason, skipped=True,
+    )  # fmt: skip
 
 
 def relative_path(path: str | None, target: str) -> str | None:

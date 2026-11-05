@@ -1,0 +1,2 @@
+pkg/__init__.py:6: error: Argument 1 to "add" has incompatible type "str"; expected "int"  [arg-type]
+pkg/__init__.py:9: error: Function is missing a type annotation  [no-untyped-def]

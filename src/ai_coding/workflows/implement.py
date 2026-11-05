@@ -48,6 +48,7 @@ from ai_coding.orchestrator.context import ContextManager
 from ai_coding.orchestrator.errors import PermanentError
 from ai_coding.orchestrator.policy import Decision, Verdict
 from ai_coding.orchestrator.registry import StepContext
+from ai_coding.security import redact
 from ai_coding.tools.testrun import SandboxTestRunner, TestRun, TestStatus, plan_tests
 from ai_coding.workflows.agent_runtime import run_agent
 
@@ -107,6 +108,15 @@ def apply_changes(root: Path, changes: Sequence[Mapping[str, Any]]) -> None:
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(str(c["content"]).encode("utf-8"))
+
+
+def merge_changes(
+    first: Sequence[Mapping[str, Any]], second: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    """``first`` then ``second``; a later change of the same path wins."""
+    merged = {str(c["path"]): dict(c) for c in first}
+    merged.update({str(c["path"]): dict(c) for c in second})
+    return list(merged.values())
 
 
 def unified_diff(base: Path, changes: Sequence[Mapping[str, Any]]) -> str:
@@ -242,25 +252,35 @@ class ImplementLoop:
         items = [{"path": i.path, "content": i.text, "truncated": i.truncated}
                  for i in bundle.items]  # fmt: skip
         known = {i["path"] for i in items if not i["truncated"]}
-        for path in extra:
+        for path in extra:  # hints may come from agent-made plans: same rules as the index
             file = base / path
-            if path in known or not file.is_file() or unsafe_path(path):
+            if (path in known or unsafe_path(path) or manager.is_excluded(path)
+                    or file.is_symlink() or not file.is_file()):  # fmt: skip
                 continue
             items = [i for i in items if i["path"] != path]
-            items.append({"path": path, "content": file.read_text(encoding="utf-8",
-                                                                  errors="replace"),
-                          "truncated": False})  # fmt: skip
+            text = redact(file.read_text(encoding="utf-8", errors="replace"))
+            items.append({"path": path, "content": text, "truncated": False})
         return items
 
     async def run(
-        self, base_ref: str, issue: Mapping[str, Any], *, hint_files: Sequence[str] = ()
+        self,
+        base_ref: str,
+        issue: Mapping[str, Any],
+        *,
+        hint_files: Sequence[str] = (),
+        seed: Sequence[Mapping[str, Any]] = (),
     ) -> ImplementResult:
-        """Iterate until accepted or ``max_iterations`` is exhausted."""
+        """Iterate until accepted or ``max_iterations`` is exhausted.
+
+        ``seed`` are deterministic changes (e.g. a package manager's lock file update)
+        applied before the first iteration; they are part of the accepted change set.
+        """
         repo = LocalGitRepository.open(self.ctx.project_root)
         runner = test_runner(self.ctx, self.executor)
         with tempfile.TemporaryDirectory(prefix="ai-coding-base-") as tmp:
             base = Path(tmp) / "base"
             repo.export(base_ref, base)
+            apply_changes(base, seed)
             files = repo.list_files(base_ref)
             query = f"{issue.get('title', '')}\n{issue.get('body', '')}"
             context = self._context(base, query, hint_files)
@@ -291,7 +311,8 @@ class ImplementLoop:
                                        "application/json")  # fmt: skip
                 if accepted:
                     return ImplementResult(
-                        changes=changes, summary=dev.output["summary"], plan=dev.output["plan"],
+                        changes=merge_changes(seed, changes), summary=dev.output["summary"],
+                        plan=dev.output["plan"],
                         tests=record["tests"], review=record["review"],
                         database=record["database"], diff=record.pop("_diff"),
                         iterations=history, models=list(dict.fromkeys(models)),

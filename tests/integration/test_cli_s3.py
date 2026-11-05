@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,8 @@ from typer.testing import CliRunner
 from ai_coding.cli.app import app
 from ai_coding.cli.exit_codes import ExitCode
 from ai_coding.git import LocalGitRepository
+from ai_coding.tools import default_tool_registry
+from ai_coding.tools.testrun import RUNTIME_IMAGES
 
 pytestmark = pytest.mark.integration
 runner = CliRunner()
@@ -43,12 +46,16 @@ def test_project_add_errors(tmp_path: Path) -> None:
 
 def test_tools_list_and_pull_without_docker(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("ai_coding.cli.commands.tools.docker_available", lambda: False)
-    listing = runner.invoke(app, ["tools", "list"])
-    assert listing.exit_code == 0
-    for tool in ("gitleaks", "ruff", "semgrep", "python-runtime", "node-runtime"):
-        assert tool in listing.output
-    # One "(docker unavailable)" per row; Rich may wrap it inside the cell.
-    assert listing.output.count("unavailable") == 5 and "present" not in listing.output
+    assert runner.invoke(app, ["tools", "list"]).exit_code == 0
+    listing = runner.invoke(app, ["tools", "list", "--json"])
+    assert listing.exit_code == 0, listing.output
+    data = json.loads(listing.output)
+    rows = {r["tool"]: r for r in data["tools"]}
+    assert set(rows) == {*default_tool_registry().names(), *RUNTIME_IMAGES}
+    assert {r["image_state"] for r in rows.values()} == {"docker unavailable"}
+    assert rows["trivy"]["offline_data"] in {"ready", "missing"}
+    assert rows["phpstan"]["runs"] == "project toolchain (sandbox)"
+    assert rows["gitleaks"]["offline_data"] == "-" and data["cache"]
     assert runner.invoke(app, ["tools", "pull"]).exit_code == ExitCode.NOT_FOUND
 
 

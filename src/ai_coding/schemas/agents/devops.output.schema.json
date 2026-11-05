@@ -1,0 +1,203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-coding.dev/schemas/agents/devops.output.schema.json",
+  "title": "DevOps Agent output: CI/CD pipeline, release plan, rollback",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "pipeline": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,39}$"
+          },
+          "purpose": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "commands": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "minItems": 1,
+            "maxItems": 30
+          },
+          "needs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "minItems": 0,
+            "maxItems": 20
+          },
+          "environment": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "manual_approval": {
+            "type": "boolean"
+          },
+          "secrets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
+            },
+            "minItems": 0,
+            "maxItems": 30
+          },
+          "on": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "pull_request",
+                "push_main",
+                "tag",
+                "manual",
+                "schedule"
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 5
+          }
+        },
+        "required": [
+          "name",
+          "purpose",
+          "commands",
+          "needs",
+          "on"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 40
+    },
+    "ci_files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300,
+            "pattern": "^(?![/\\\\])(?!.*(^|/)\\.\\.(/|$))[^\\\\:*?\"<>|]+$"
+          },
+          "action": {
+            "enum": [
+              "create",
+              "modify"
+            ]
+          },
+          "purpose": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "path",
+          "action",
+          "purpose"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "versioning": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "minItems": 1,
+          "maxItems": 30
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "minItems": 0,
+          "maxItems": 20
+        }
+      },
+      "required": [
+        "versioning",
+        "steps"
+      ]
+    },
+    "rollback": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "trigger": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "minItems": 1,
+          "maxItems": 30
+        },
+        "data_considerations": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        }
+      },
+      "required": [
+        "trigger",
+        "steps"
+      ]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Self-assessed confidence; informative only, never replaces checks."
+    }
+  },
+  "required": [
+    "summary",
+    "pipeline",
+    "ci_files",
+    "release",
+    "rollback"
+  ]
+}

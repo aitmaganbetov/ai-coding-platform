@@ -12,7 +12,7 @@
 
 Ключевые принципы: GitHub и LLM **опциональны**; детерминированные Quality Gates (PASS/FAIL/SKIPPED) не зависят от AI; изменения только в отдельных git worktree/ветках; секреты никогда не попадают в конфигурацию, логи и prompts; опасные операции — только с human approval.
 
-> **Статус: Sprints S1–S6 завершены.** S1 — архитектура, схема конфигурации, CLI, Git. S2 — оркестратор (конечный автомат, DAG, checkpoints, retry, политики, approvals, аудит), восстановление после падения worker'а. S3 — исполнители Local и Docker-песочница, реестр инструментов (Gitleaks, Semgrep, Ruff), Quality Gates и baseline, **`ai-coding audit`** — безопасный офлайн read-only аудит. S4 — GitHub: PR под политикой и approval (без merge), check runs и PR-комментарии без дублей, отчёты SARIF/JUnit, GitHub Actions executor, reusable workflows и пилоты на двух стеках ([github.md](docs/github.md)). S5 — LLM-адаптеры (OpenAI, Anthropic, Ollama, vLLM) с маршрутизацией, fallback и кэшем; агенты Requirements, Architect, Planner, Bootstrap; **`ai-coding create`** — новый проект из описания: согласованная версия ТЗ, ADR, backlog, каркас и PR ([create.md](docs/create.md)). S6 — **`ai-coding develop`** (issue → изменения с тестами → тесты в Docker-песочнице → AI review → ветка → PR), **`ai-coding modernize`** (baseline, план шагов, малые PR, откат), **`ai-coding review`** и reusable `ai-review.yml`; агенты Developer, Reviewer, Database ([develop.md](docs/develop.md)). AUDIT/MAINTAIN, остальные агенты и API — S7–S9, см. [backlog](docs/backlog.md).
+> **Статус: Sprints S1–S7 завершены.** S1 — архитектура, схема конфигурации, CLI, Git. S2 — оркестратор (конечный автомат, DAG, checkpoints, retry, политики, approvals, аудит), восстановление после падения worker'а. S3 — исполнители Local и Docker-песочница, реестр инструментов (Gitleaks, Semgrep, Ruff), Quality Gates и baseline, **`ai-coding audit`** — безопасный офлайн read-only аудит. S4 — GitHub: PR под политикой и approval (без merge), check runs и PR-комментарии без дублей, отчёты SARIF/JUnit, GitHub Actions executor, reusable workflows и пилоты на двух стеках ([github.md](docs/github.md)). S5 — LLM-адаптеры (OpenAI, Anthropic, Ollama, vLLM) с маршрутизацией, fallback и кэшем; агенты Requirements, Architect, Planner, Bootstrap; **`ai-coding create`** — новый проект из описания: согласованная версия ТЗ, ADR, backlog, каркас и PR ([create.md](docs/create.md)). S6 — **`ai-coding develop`** (issue → изменения с тестами → тесты в Docker-песочнице → AI review → ветка → PR), **`ai-coding modernize`** (baseline, план шагов, малые PR, откат), **`ai-coding review`** и reusable `ai-review.yml`; агенты Developer, Reviewer, Database ([develop.md](docs/develop.md)). S7 — полный **`ai-coding audit`** для стеков (Trivy, OSV-Scanner, PHPStan, Pint, ESLint, tsc, mypy, go test, golangci-lint, cargo test, Clippy) с офлайн-БД, воспроизводимостью и рекомендательным triage; **`ai-coding maintain`** (план → approval → обновление зависимостей пакетным менеджером → исправление с регрессионным тестом → PR); все 12 агентов; тесты prompt injection (AC-07) ([audit.md](docs/audit.md), [maintain.md](docs/maintain.md)). API, RBAC и Web UI — S8, hardening и релиз — S9, см. [backlog](docs/backlog.md).
 
 ## Быстрый старт
 
@@ -46,12 +46,14 @@ uv run ai-coding audit -C /path/to/project --backend docker -o reports/
 
 - [Архитектура](docs/architecture/overview.md) и [модули/зависимости](docs/architecture/modules.md)
 - [ADR](docs/adr/README.md) — архитектурные решения
-- [Аудит](docs/audit.md) — `ai-coding audit`, бэкенды, гейты, baseline
+- [Аудит](docs/audit.md) — `ai-coding audit`, инструменты стеков, гейты, baseline, triage
+- [Сопровождение](docs/maintain.md) — `ai-coding maintain`, обновление зависимостей
+- [CREATE](docs/create.md) · [DEVELOP и MODERNIZE](docs/develop.md) · [GitHub](docs/github.md)
 - [Оркестратор](docs/orchestrator.md) — компоненты, жизненный цикл run, как писать обработчики
 - [Разработка](docs/development.md) — окружение, правила, тесты
 - [Backlog](docs/backlog.md) — все требования ТЗ по спринтам
 - [Замечания к ТЗ](docs/tz-notes.md) — сверка PDF и `.md`, интерпретации
-- Отчёты: [S1](docs/sprints/S1-report.md), [S2](docs/sprints/S2-report.md), [S3](docs/sprints/S3-report.md)
+- Отчёты: [S1](docs/sprints/S1-report.md), [S2](docs/sprints/S2-report.md), [S3](docs/sprints/S3-report.md), [S4](docs/sprints/S4-report.md), [S5](docs/sprints/S5-report.md), [S6](docs/sprints/S6-report.md), [S7](docs/sprints/S7-report.md)
 - [Политика безопасности](SECURITY.md)
 - Техническое задание: [AI_Coding_Platform_v2_1_TZ.pdf](AI_Coding_Platform_v2_1_TZ.pdf) (основной документ) · [Markdown-версия](AI_Coding_Platform_v2_1_TZ.md), сгенерированная из PDF
 

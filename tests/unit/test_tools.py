@@ -160,9 +160,48 @@ def test_versions_and_args() -> None:
 
 def test_registry_rules_and_selection() -> None:
     reg = default_tool_registry()
-    assert reg.names() == ["gitleaks", "ruff", "semgrep"]
-    assert [a.spec.name for a in reg.select([Stack.GO])] == ["gitleaks", "semgrep"]
-    assert [a.spec.name for a in reg.select([Stack.PYTHON])] == ["gitleaks", "ruff", "semgrep"]
+    assert reg.names() == [
+        "cargo-test",
+        "clippy",
+        "eslint",
+        "gitleaks",
+        "go-test",
+        "golangci-lint",
+        "mypy",
+        "osv-scanner",
+        "phpstan",
+        "pint",
+        "ruff",
+        "semgrep",
+        "trivy",
+        "tsc",
+    ]
+    assert [a.spec.name for a in reg.select([Stack.GO])] == [
+        "gitleaks",
+        "go-test",
+        "golangci-lint",
+        "osv-scanner",
+        "semgrep",
+        "trivy",
+    ]
+    assert [a.spec.name for a in reg.select([Stack.PYTHON])] == [
+        "gitleaks",
+        "mypy",
+        "osv-scanner",
+        "ruff",
+        "semgrep",
+        "trivy",
+    ]
+    assert [a.spec.name for a in reg.select([Stack.LARAVEL, Stack.REACT])] == [
+        "eslint",
+        "gitleaks",
+        "osv-scanner",
+        "phpstan",
+        "pint",
+        "semgrep",
+        "trivy",
+        "tsc",
+    ]
     assert [a.spec.name for a in reg.select([Stack.GO], only=["ruff"])] == []
     with pytest.raises(KeyError, match="unknown tool"):
         reg.get("nope")

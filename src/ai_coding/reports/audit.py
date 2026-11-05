@@ -29,7 +29,10 @@ class AuditReport:
     integrity: dict[str, Any]
     discovery: dict[str, Any]
     notes: list[str] = field(default_factory=list)
-    schema_version: str = "1"
+    suppressions: dict[str, Any] = field(default_factory=dict)
+    triage: dict[str, Any] | None = None
+    reproducibility: list[dict[str, Any]] = field(default_factory=list)
+    schema_version: str = "2"
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-serialisable form (stable key order)."""
@@ -47,6 +50,9 @@ class AuditReport:
             "baseline": self.baseline,
             "integrity": self.integrity,
             "discovery": self.discovery,
+            "suppressions": self.suppressions,
+            "triage": self.triage,
+            "reproducibility": self.reproducibility,
             "notes": self.notes,
         }
 
@@ -90,7 +96,10 @@ def render_markdown(report: AuditReport) -> str:
     lines += ["", "## Tools", "", "| Tool | Version | Status | Findings | Duration |",
               "| --- | --- | --- | --- | --- |"]  # fmt: skip
     for t in report.tools:
-        status = "ok" if t["succeeded"] else f"error: {_cell(t.get('error'))}"
+        status = (
+            f"skipped: {_cell(t.get('error'))}" if t.get("skipped")
+            else "ok" if t["succeeded"] else f"error: {_cell(t.get('error'))}"
+        )  # fmt: skip
         lines.append(
             f"| {t['tool']} | {t.get('version') or '?'} | {status} | {len(t['findings'])} | "
             f"{t['duration_seconds']}s |"
@@ -129,6 +138,75 @@ def render_markdown(report: AuditReport) -> str:
         f"Repository unchanged by the audit: **{report.integrity.get('unchanged')}** "
         f"({_cell(report.integrity.get('method'))}).",
     ]
+    lines += _triage_section(report) + _suppressions_section(report)
+    lines += _reproducibility_section(report)
     if report.notes:
         lines += ["", "## Notes", ""] + [f"- {_cell(n)}" for n in report.notes]
     return redact("\n".join(lines)) + "\n"
+
+
+def _triage_section(report: AuditReport) -> list[str]:
+    triage = report.triage
+    if triage is None:
+        return []
+    lines = ["", "## Security triage (advisory)", ""]
+    if triage.get("status") != "done":
+        return [*lines, f"Not available: {_cell(triage.get('reason'))}."]
+    result = triage["result"]
+    lines += [
+        _cell(result.get("summary")),
+        "",
+        f"Triaged {triage.get('triaged')} of {triage.get('total')} new finding(s) with "
+        f"{', '.join(triage.get('models') or []) or 'the configured model'}. The verdicts "
+        "do not change the gates; dismissing a finding needs a baseline entry.",
+        "",
+        "| Finding | Verdict | Severity | Recommendation |",
+        "| --- | --- | --- | --- |",
+    ]
+    lines += [f"| `{_cell(a['finding_id'])}` | {a['verdict']} | {a['severity']} | "
+              f"{_cell(a['recommendation'])} |" for a in result.get("assessments", [])]  # fmt: skip
+    risks = result.get("additional_risks") or []
+    if risks:
+        lines += ["", "Additional risks noticed by the agent:", ""]
+        lines += [f"- {r['severity']}: `{_cell(r['file'])}:{r.get('line') or '-'}` "
+                  f"{_cell(r['message'])}" for r in risks]  # fmt: skip
+    return lines
+
+
+def _suppressions_section(report: AuditReport) -> list[str]:
+    s = report.suppressions
+    if not s:
+        return []
+    lines = [
+        "",
+        "## Tool-level suppressions",
+        "",
+        "These bypass the platform baseline (no owner, reason or expiry); review them.",
+    ]
+    files = s.get("files") or []
+    inline = s.get("inline") or {}
+    if not files and not inline:
+        lines.append("- no ignore files or inline suppression markers found")
+    lines += [f"- `{_cell(f['path'])}` ({f['tool']}): {f['entries']} entr(y/ies)" for f in files]
+    lines += [f"- inline {tool} markers: {n}" for tool, n in inline.items()]
+    lines += [f"- {_cell(n)}" for n in s.get("notes") or []]
+    return lines
+
+
+def _reproducibility_section(report: AuditReport) -> list[str]:
+    if not report.reproducibility:
+        return []
+    lines = [
+        "",
+        "## Reproducibility",
+        "",
+        "| Tool | Version | Sandbox image | Data snapshot |",
+        "| --- | --- | --- | --- |",
+    ]
+    for r in report.reproducibility:
+        data = r.get("data") or {}
+        snapshot = ", ".join(f"{k}={v}" for k, v in sorted(data.items()) if v) or "-"
+        image = "not run (skipped)" if r.get("skipped") else f"`{_cell(r.get('image') or 'host')}`"
+        lines.append(f"| {r['tool']} | {r.get('version') or '-'} | "
+                     f"{image} | {_cell(snapshot)} |")  # fmt: skip
+    return lines

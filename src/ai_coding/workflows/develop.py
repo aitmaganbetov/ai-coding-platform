@@ -101,6 +101,16 @@ def pr_body(output: Mapping[str, Any], issue_number: int | None) -> str:
             "", f"## Шаг модернизации {step['id']}: {step['title']}", "",
             f"Проверка: {step['verification']}", "", f"Откат: {step['rollback']}",
         ]  # fmt: skip
+    if output.get("item"):
+        item = output["item"]
+        test = item["regression_test"]
+        lines += [
+            "", f"## Задача сопровождения {item['id']} [{item['priority']}]: {item['title']}",
+            "", item["plan"], "", f"Источники: {', '.join(item['sources'])}",
+            f"Регрессионный тест: `{test['file']}` — {test['description']}",
+        ]  # fmt: skip
+        lines += [f"Обновление: {u['source']} → {u['to_version']} (lock-файл обновлён "
+                  "пакетным менеджером)" for u in item.get("upgrades", [])]  # fmt: skip
     lines += ["", f"Итераций: {output['iterations']}. Merge выполняет человек."]
     if issue_number:
         lines += ["", f"Closes #{issue_number}"]
@@ -138,12 +148,17 @@ class ImplementHandler:
         """Additional output fields (overridden by MODERNIZE)."""
         return {}
 
+    def seed_changes(self, ctx: StepContext) -> list[dict[str, Any]]:
+        """Deterministic changes the loop starts from (overridden by MAINTAIN)."""
+        return []
+
     async def run(self, ctx: StepContext) -> StepResult:
         data = ctx.input
         issue, hints, settings = self.prepare(ctx)
         loop = ImplementLoop(ctx, settings=settings, executor=self._executor,
                              transport=self._transport, env=self._env)  # fmt: skip
-        result = await loop.run(data["base"], issue, hint_files=hints)
+        result = await loop.run(data["base"], issue, hint_files=hints,
+                                seed=self.seed_changes(ctx))  # fmt: skip
         authorize_change_set(ctx, result.changes)
         repo = LocalGitRepository.open(ctx.project_root)
         run_tag = str(ctx.run_id)
