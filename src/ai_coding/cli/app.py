@@ -7,9 +7,11 @@ from typing import Annotated
 import typer
 
 from ai_coding import __version__
+from ai_coding.cli.commands import agents as agents_cmd
 from ai_coding.cli.commands import audit as audit_cmd
 from ai_coding.cli.commands import baseline as baseline_cmd
 from ai_coding.cli.commands import config as config_cmd
+from ai_coding.cli.commands import create as create_cmd
 from ai_coding.cli.commands import github as github_cmd
 from ai_coding.cli.commands import init as init_cmd
 from ai_coding.cli.commands import pr as pr_cmd
@@ -39,6 +41,8 @@ app.add_typer(tools_cmd.app, name="tools")
 app.add_typer(report_cmd.app, name="report")
 app.add_typer(github_cmd.app, name="github")
 app.add_typer(pr_cmd.app, name="pr")
+app.command("create")(create_cmd.create)
+app.add_typer(agents_cmd.app, name="agents")
 
 
 def _version(value: bool) -> None:

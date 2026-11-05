@@ -58,6 +58,7 @@ class LLMResponse:
     usage: TokenUsage = TokenUsage()
     cost_usd: float = 0.0
     parsed: Mapping[str, Any] | None = None  # set by the guard after schema validation
+    cached: bool = False  # served from the response cache
 
 
 @runtime_checkable

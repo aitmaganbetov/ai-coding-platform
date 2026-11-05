@@ -118,6 +118,7 @@ class ApprovalOperation(StrEnum):
     DEPENDENCY_UPDATE = "dependency_update"
     EXTERNAL_LLM = "external_llm"
     HOST_COMMAND = "host_command"
+    SPEC_APPROVAL = "spec_approval"  # CREATE: the requirements version must be approved (FR-03)
 
     @classmethod
     def mandatory(cls) -> frozenset[ApprovalOperation]:

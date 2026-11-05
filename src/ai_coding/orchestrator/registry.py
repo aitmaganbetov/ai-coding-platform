@@ -66,6 +66,7 @@ class StepContext:
     budget: BudgetTracker
     record_usage: Callable[[ProviderName, str, TokenUsage, float], None]
     record_findings: Callable[[Sequence[Finding]], int]
+    project_id: uuid.UUID | None = None
 
     @property
     def cancelled(self) -> bool:

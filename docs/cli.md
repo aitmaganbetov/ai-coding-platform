@@ -14,7 +14,7 @@
 | `ai-coding run status RUN` | Состояние, задачи, approvals, артефакты | S2 |
 | `ai-coding run events RUN` | Журнал переходов состояния | S2 |
 | `ai-coding run audit RUN [-o FILE]` | Экспорт audit trail в JSON (AC-10) | S2 |
-| `ai-coding run resume RUN [--force] [--yes]` | Продолжить с последнего подтверждённого шага (отказывает, если для оставшихся шагов нужны обработчики другой команды, например `pr resume`) | S2 |
+| `ai-coding run resume RUN [--force] [--yes]` | Продолжить с последнего подтверждённого шага (отказывает, если для оставшихся шагов нужны обработчики другой команды: `pr resume`, `create --resume`) | S2 |
 | `ai-coding run cancel RUN [--reason] [--yes] [--dry-run]` | Отменить (кооперативно, если run выполняется) | S2 |
 | `ai-coding run approve RUN [--approval ID] [--note] [--resume]` | Подтвердить (только Owner/Maintainer) | S2 |
 | `ai-coding run reject RUN [--approval ID] [--note]` | Отклонить; run будет отменён при возобновлении | S2 |
@@ -29,6 +29,9 @@
 | `ai-coding github protection [-b BRANCH] [--json] [-R owner/repo]` | Проверка защиты ветки (rulesets); exit 1 при пробелах | S4 |
 | `ai-coding pr open -b BRANCH -t TITLE [--body-file F] [--base B] [--draft] [--remote R] [-R owner/repo] [-C DIR] [--require-approval] [--dry-run]` | Push рабочей ветки и PR под политикой и approval `pr_create`; без merge/auto-merge ([github.md](github.md)) | S4 |
 | `ai-coding pr resume RUN [-R owner/repo] [-C DIR]` | Продолжить PR-прогон после approval (обработчики PR) | S4 |
+| `ai-coding create [IDEA] [--idea-file F] --dest DIR [--config F] [--name N] [--constraint C]… [--branch B] [--base B] [--pr [-R owner/repo] [--pr-title T]] [--interactive/--no-interactive] [--dry-run] [--require-approval]` | CREATE: требования → approval версии → ADR → backlog → каркас в ветке → (PR) ([create.md](create.md)) | S5 |
+| `ai-coding create --resume RUN --dest DIR` / `--revise RUN --answers F --dest DIR` | Продолжить CREATE-прогон / новая версия ТЗ с ответами на вопросы | S5 |
+| `ai-coding agents list [-C DIR] [--json]` | 12 агентов ТЗ §6: статус, вход → выход, нужен ли LLM, цепочка моделей | S5 |
 
 `RUN` — полный UUID, короткий id (последние 12 символов, их показывает `run list`) или уникальный префикс. Префикс UUIDv7 — это метка времени, поэтому для коротких id используется случайный хвост. Состояние хранится в `.ai-coding/state.db` проекта; каталог `.ai-coding/` сам себя исключает из git. Другую БД можно указать через `AI_CODING_DATABASE_URL`.
 
@@ -68,4 +71,4 @@
 
 ## Запланировано (ТЗ §14)
 
-`create` (S5), `develop` (S6), `modernize` (S6), `maintain` (S7), `agents list` (S5); `audit` расширяется адаптерами стеков в S7. Все изменяющие команды получат `--dry-run` и `--require-approval`.
+`develop` (S6), `modernize` (S6), `maintain` (S7); `audit` расширяется адаптерами стеков в S7. Все изменяющие команды получат `--dry-run` и `--require-approval`.

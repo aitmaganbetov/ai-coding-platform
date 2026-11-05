@@ -1,8 +1,8 @@
-"""LLM provider port, guard and usage accounting (ADR-0009).
+"""LLM port, provider adapters, guard, routing and response cache (ADR-0009, ADR-0023).
 
-Concrete provider adapters (OpenAI, Anthropic, Ollama, vLLM) arrive in S5; this
-package defines the contract every adapter implements and the guard that every
-call goes through.
+Every call goes through :class:`GuardedLLM` (policy, budget, redaction, schema
+validation); :class:`RoutedLLM` chains guarded calls across the configured primary
+model and its fallbacks.
 """
 
 from ai_coding.llm.base import (
@@ -12,6 +12,7 @@ from ai_coding.llm.base import (
     Message,
     TokenUsage,
 )
+from ai_coding.llm.cache import ResponseCache
 from ai_coding.llm.guard import (
     GuardedLLM,
     InvalidModelOutputError,
@@ -19,8 +20,29 @@ from ai_coding.llm.guard import (
     LLMBudgetExceededError,
     LLMPolicyDeniedError,
 )
+from ai_coding.llm.providers import (
+    AnthropicProvider,
+    OllamaProvider,
+    OpenAIProvider,
+    ProviderRequestError,
+    ProviderUnavailableError,
+    TruncatedOutputError,
+    VLLMProvider,
+    make_provider,
+)
+from ai_coding.llm.router import (
+    AllRoutesFailedError,
+    AllRoutesUnavailableError,
+    Attempt,
+    Route,
+    RoutedLLM,
+)
 
 __all__ = [
+    "AllRoutesFailedError",
+    "AllRoutesUnavailableError",
+    "AnthropicProvider",
+    "Attempt",
     "GuardedLLM",
     "InvalidModelOutputError",
     "LLMApprovalRequiredError",
@@ -30,5 +52,15 @@ __all__ = [
     "LLMRequest",
     "LLMResponse",
     "Message",
+    "OllamaProvider",
+    "OpenAIProvider",
+    "ProviderRequestError",
+    "ProviderUnavailableError",
+    "ResponseCache",
+    "Route",
+    "RoutedLLM",
     "TokenUsage",
+    "TruncatedOutputError",
+    "VLLMProvider",
+    "make_provider",
 ]

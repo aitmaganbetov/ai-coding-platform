@@ -6,8 +6,8 @@ Order of checks for each call:
    require approval (``external_llm``);
 2. budget pre-check with an estimate of the request size;
 3. redaction of every message (secrets never leave the process);
-4. the provider call;
-5. usage accounting (``model_usage``) and budget update;
+4. the provider call, or a cached answer for an identical redacted request;
+5. usage accounting (``model_usage``) and budget update (a cache hit costs nothing);
 6. structured-output validation against ``response_schema`` — invalid output is an
    error, never a success (ТЗ §6);
 7. redaction of the response text before it is returned or logged.
@@ -25,6 +25,7 @@ from jsonschema import Draft202012Validator
 from ai_coding.domain.enums import ProviderName
 from ai_coding.domain.errors import PermanentError
 from ai_coding.llm.base import LLMProvider, LLMRequest, LLMResponse, TokenUsage
+from ai_coding.llm.cache import ResponseCache, cache_key
 from ai_coding.security import Redactor, default_redactor
 
 
@@ -92,8 +93,10 @@ class GuardedLLM:
         budget: Budget,
         record_usage: UsageRecorder | None = None,
         redactor: Redactor = default_redactor,
+        cache: ResponseCache | None = None,
     ) -> None:
         self._provider = provider
+        self._cache = cache
         self._policy = policy
         self._budget = budget
         self._record = record_usage
@@ -121,10 +124,18 @@ class GuardedLLM:
             response_schema=request.response_schema,
             metadata=request.metadata,
         )
-        response = await self._provider.complete(safe)
-        self._budget.add(tokens=response.usage.total, cost_usd=response.cost_usd)
-        if self._record is not None:
-            self._record(self._provider.name, response.model, response.usage, response.cost_usd)
+        key: str | None = None
+        cached = None
+        if self._cache is not None and self._cache.applies(safe):
+            key = cache_key(self._provider.name.value, self._provider.base_url, safe)
+            cached = self._cache.get(key)
+        if cached is not None:
+            response = ResponseCache.as_response(cached)
+        else:
+            response = await self._provider.complete(safe)
+            self._budget.add(tokens=response.usage.total, cost_usd=response.cost_usd)
+            if self._record is not None:
+                self._record(self._provider.name, response.model, response.usage, response.cost_usd)
 
         text = self._redactor.redact(response.text)
         parsed: dict[str, Any] | None = None
@@ -144,10 +155,14 @@ class GuardedLLM:
                     f"model output violates schema at {where}: {first.message}"
                 )
             parsed = candidate
-        return LLMResponse(
+        result = LLMResponse(
             text=text,
             model=response.model,
             usage=response.usage,
             cost_usd=response.cost_usd,
             parsed=parsed,
+            cached=cached is not None,
         )
+        if key is not None and cached is None and self._cache is not None:
+            self._cache.put(key, result)  # only validated answers are cached
+        return result

@@ -89,6 +89,31 @@
           },
           "title": "Routing",
           "type": "object"
+        },
+        "timeout_seconds": {
+          "default": 300,
+          "maximum": 3600,
+          "minimum": 5,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        },
+        "cache": {
+          "default": true,
+          "description": "Reuse responses for identical redacted requests at temperature 0.",
+          "title": "Cache",
+          "type": "boolean"
+        },
+        "pricing": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ModelPrice"
+          },
+          "description": "USD per million tokens by model name; unpriced external models are limited by the token budget only.",
+          "propertyNames": {
+            "maxLength": 200,
+            "minLength": 1
+          },
+          "title": "Pricing",
+          "type": "object"
         }
       },
       "title": "AIConfig",
@@ -139,7 +164,8 @@
         "pr_create",
         "dependency_update",
         "external_llm",
-        "host_command"
+        "host_command",
+        "spec_approval"
       ],
       "title": "ApprovalOperation",
       "type": "string"
@@ -386,9 +412,31 @@
       "title": "Mode",
       "type": "string"
     },
+    "ModelPrice": {
+      "additionalProperties": false,
+      "description": "Price of a model in USD per million tokens (used for cost budgets).",
+      "properties": {
+        "input_per_mtok": {
+          "minimum": 0,
+          "title": "Input Per Mtok",
+          "type": "number"
+        },
+        "output_per_mtok": {
+          "minimum": 0,
+          "title": "Output Per Mtok",
+          "type": "number"
+        }
+      },
+      "required": [
+        "input_per_mtok",
+        "output_per_mtok"
+      ],
+      "title": "ModelPrice",
+      "type": "object"
+    },
     "ModelRoute": {
       "additionalProperties": false,
-      "description": "Optional per-agent model override (FR-15 routing).",
+      "description": "Per-agent model override or fallback entry (FR-15 routing).\n\n``base_url``/``api_key_env`` default to the top-level ``ai`` values when the\nprovider is the same, so a route only needs them for a different endpoint.",
       "properties": {
         "provider": {
           "$ref": "#/$defs/ProviderName"
@@ -398,6 +446,34 @@
           "minLength": 1,
           "title": "Model",
           "type": "string"
+        },
+        "base_url": {
+          "anyOf": [
+            {
+              "maxLength": 2048,
+              "pattern": "^https?://",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Base Url"
+        },
+        "api_key_env": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "pattern": "^[A-Z_][A-Z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Api Key Env"
         }
       },
       "required": [

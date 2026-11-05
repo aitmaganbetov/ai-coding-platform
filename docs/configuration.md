@@ -27,8 +27,41 @@ JSON Schema: [`src/ai_coding/schemas/ai-coding.schema.json`](../src/ai_coding/sc
 | `ai.model`, `ai.base_url` | Модель, URL для Ollama/vLLM | — |
 | `ai.api_key_env` | **Имя** переменной окружения с ключом | — |
 | `ai.max_output_tokens`, `ai.temperature` | Лимиты генерации | 4096, 0.0 |
-| `ai.fallback` | Цепочка `{provider, model}` (до 5) | `[]` |
-| `ai.routing` | `{<agent>: {provider, model}}` | `{}` |
+| `ai.fallback` | Цепочка `{provider, model, base_url?, api_key_env?}` (до 5); используется при недоступности, отказе или невалидном ответе предыдущей модели | `[]` |
+| `ai.routing` | `{<agent>: {provider, model, base_url?, api_key_env?}}` — модель для конкретного агента | `{}` |
+| `ai.timeout_seconds` | Таймаут одного запроса к модели | 300 |
+| `ai.cache` | Повторно использовать ответ на идентичный (после redaction) запрос при `temperature: 0` | `true` |
+| `ai.pricing` | `{<model>: {input_per_mtok, output_per_mtok}}` — цена в USD за 1 млн токенов для бюджета стоимости; модели без цены ограничиваются только бюджетом токенов | `{}` |
+
+В маршруте `base_url` и `api_key_env` наследуются от `ai`, если провайдер тот же. Для `openai` и `anthropic` нужен `api_key_env`, для `vllm` — `base_url`. Ключ читается из окружения в момент запуска; маршрут без ключа пропускается (это видно в `ai-coding agents list`).
+
+Пример — полностью офлайн (локальная модель) с запасной моделью на своём vLLM:
+
+```yaml
+ai:
+  enabled: true
+  provider: ollama
+  model: qwen2.5-coder:14b
+  fallback:
+    - {provider: vllm, model: Qwen/Qwen2.5-Coder-32B-Instruct, base_url: "http://localhost:8000/v1"}
+```
+
+Пример — внешний провайдер с локальным запасным вариантом (нужны `security.network: allowlist` с хостом провайдера и, по умолчанию, approval `external_llm`):
+
+```yaml
+ai:
+  enabled: true
+  provider: anthropic
+  model: claude-sonnet-5-5
+  api_key_env: ANTHROPIC_API_KEY
+  pricing:
+    claude-sonnet-5-5: {input_per_mtok: 3, output_per_mtok: 15}  # пример: возьмите цены из прайс-листа провайдера
+  fallback:
+    - {provider: ollama, model: qwen2.5-coder:14b}
+security:
+  network: allowlist
+  egress_allowlist: [api.anthropic.com]
+```
 | `agents.enabled` | Подмножество 12 агентов | все |
 | `security.network` | `local-only` \| `allowlist` \| `open` | `local-only` |
 | `security.egress_allowlist` | Хосты (`*.example.com`, `host:port`) | `[]` |

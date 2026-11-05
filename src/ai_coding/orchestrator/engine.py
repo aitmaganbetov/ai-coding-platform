@@ -193,6 +193,7 @@ class _TaskOutcome:
 @dataclass(slots=True)
 class _RunContext:
     run_id: uuid.UUID
+    project_id: uuid.UUID
     policy: PolicyEngine
     budget: BudgetTracker
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
@@ -451,6 +452,17 @@ class Orchestrator:
                 ),
                 summary=ResultAggregator.summarize(session, run_id),
             )
+
+    def task_output(self, run_id: uuid.UUID, key: str) -> dict[str, Any] | None:
+        """Stored (redacted) output of a succeeded task, or ``None``."""
+        with self.db.session() as session:
+            self._get_run(session, run_id)
+            task = session.scalars(
+                select(Task).where(Task.run_id == run_id, Task.key == key)
+            ).first()
+            if task is None or task.status != TaskStatus.SUCCEEDED.value:
+                return None
+            return dict(task.output or {})
 
     def list_runs(self, limit: int = 20) -> list[dict[str, Any]]:
         """Most recent runs of this project."""
@@ -739,6 +751,7 @@ class Orchestrator:
             run = self._get_run(session, run_id)
             policy = self._policy_for(session, run)
             started = run.started_at or utcnow()
+            project_id = run.project_id
             tokens, cost = session.execute(
                 select(
                     func.coalesce(func.sum(ModelUsage.input_tokens + ModelUsage.output_tokens), 0),
@@ -747,6 +760,7 @@ class Orchestrator:
             ).one()
         rc = _RunContext(
             run_id=run_id,
+            project_id=project_id,
             policy=policy,
             budget=BudgetTracker(
                 self.config.budgets, started_at=started, tokens=int(tokens), cost_usd=float(cost)
@@ -1063,6 +1077,7 @@ class Orchestrator:
                     budget=rc.budget,
                     record_usage=self._usage_recorder(rc, task_id),
                     record_findings=self._findings_recorder(rc),
+                    project_id=rc.project_id,
                 )
                 try:
                     result = await asyncio.wait_for(handler.run(ctx), timeout=timeout)

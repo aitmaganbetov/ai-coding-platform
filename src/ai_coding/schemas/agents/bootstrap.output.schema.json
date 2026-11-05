@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-coding.dev/schemas/agents/bootstrap.output.schema.json",
+  "title": "Bootstrap Agent output: generated project skeleton (deterministic)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "stack": {
+      "enum": [
+        "python",
+        "node"
+      ]
+    },
+    "package": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,39}$"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300,
+            "pattern": "^(?!/)(?!.*\\.\\.)[A-Za-z0-9._/@-]+$"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 200000
+          }
+        },
+        "required": [
+          "path",
+          "sha256",
+          "bytes"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 400
+    },
+    "commands": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "install": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "test": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "lint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "install",
+        "test",
+        "lint"
+      ]
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      },
+      "minItems": 0,
+      "maxItems": 20
+    }
+  },
+  "required": [
+    "stack",
+    "package",
+    "files",
+    "commands",
+    "notes"
+  ]
+}

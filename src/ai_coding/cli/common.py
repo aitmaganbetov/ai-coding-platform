@@ -33,10 +33,15 @@ def close_all() -> None:
         _OPENED.pop().close()
 
 
+STATE_CONFIG = ".ai-coding/config.yml"
+
+
 def load_project(project: Path) -> tuple[Path, AICodingConfig]:
     """Resolve the project directory and load its valid configuration (or exit)."""
     root = project.resolve()
     config_path = find_config(root)
+    if config_path is None and (root / STATE_CONFIG).is_file():
+        config_path = root / STATE_CONFIG  # written by `ai-coding create` for its runs
     if config_path is None:
         error(f"configuration not found in {root} (run `ai-coding init`)")
         raise typer.Exit(ExitCode.NOT_FOUND)

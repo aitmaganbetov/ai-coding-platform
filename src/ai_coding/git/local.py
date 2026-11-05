@@ -312,6 +312,22 @@ class LocalGitRepository:
             raise GitCommandError(["commit"], 1, "HEAD missing after commit")
         return sha
 
+    def create_root_commit(self, message: str) -> str:
+        """Empty first commit of a brand-new repository (gives work branches a base).
+
+        Allowed only while the repository has no commits, so it can never rewrite or
+        extend an existing protected branch.
+        """
+        if self.head_commit() is not None:
+            raise GitCommandError(["commit"], 1, "repository already has commits")
+        if not message.strip():
+            raise GitCommandError(["commit"], 1, "commit message must not be empty")
+        self._git("commit", "--quiet", "--no-verify", "--allow-empty", "-m", message)
+        sha = self.head_commit()
+        if sha is None:  # pragma: no cover
+            raise GitCommandError(["commit"], 1, "HEAD missing after commit")
+        return sha
+
     def find_commits_by_trailer(self, key: str, value: str, *, ref: str = "--all") -> list[str]:
         """SHAs of commits carrying trailer ``key: value`` (newest first)."""
         if not _TRAILER_KEY.match(key):
@@ -372,6 +388,19 @@ class LocalGitRepository:
         return line[0].split()[0] if line else None
 
     # ------------------------------------------------------------ diffs/patches --
+    def list_files(self, ref: str) -> list[str]:
+        """Paths tracked in the tree of ``ref`` (POSIX, sorted)."""
+        self._check_start_point(ref)
+        out = self._git("ls-tree", "-r", "-z", "--name-only", "--full-tree", ref).stdout
+        return sorted(p for p in out.split("\0") if p)
+
+    def file_at(self, ref: str, path: str) -> str:
+        """Content of ``path`` in ``ref`` (text)."""
+        self._check_start_point(ref)
+        if path.startswith(("-", "/")) or ".." in path.split("/") or ":" in path:
+            raise GitCommandError(["show"], 1, f"invalid path {path!r}")
+        return self._git("show", f"{ref}:{path}").stdout
+
     def diff(self, base: str, head: str = "HEAD", *, paths: Sequence[str] = ()) -> str:
         """Unified diff ``base..head`` (B-035)."""
         self._check_start_point(base)
