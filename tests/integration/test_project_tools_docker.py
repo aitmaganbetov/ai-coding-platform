@@ -4,16 +4,19 @@ issues with file paths, never write the repository, and give reproducible result
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
 
 from ai_coding.executors import DockerSandboxExecutor
+from ai_coding.tools.deps import Upgrade, apply_upgrades
 from ai_coding.tools.golang import GO_IMAGE, GOLANGCI_IMAGE, GolangciLintAdapter, GoTestAdapter
-from ai_coding.tools.prepare import is_prepared
+from ai_coding.tools.prepare import is_prepared, network_executor
 from ai_coding.tools.project import ProjectToolRunner
 from ai_coding.tools.runner import ToolRunner
 from ai_coding.tools.rust import RUST_IMAGE, CargoTestAdapter, ClippyAdapter
+from ai_coding.tools.testrun import NODE_IMAGE
 from ai_coding.tools.trivy import TRIVY_IMAGE, TrivyAdapter
 from ai_coding.workflows.audit import snapshot_digest
 from tests.integration.conftest import require_images
@@ -109,3 +112,24 @@ async def test_trivy_offline_is_reproducible(tmp_path: Path) -> None:
     assert sorted(f.fingerprint for f in first.findings) == sorted(
         f.fingerprint for f in second.findings
     )
+
+
+async def test_npm_upgrade_writes_a_real_lock_file(tmp_path: Path) -> None:
+    """MAINTAIN dependency upgrade with the real package manager (networked sandbox)."""
+    require_images(NODE_IMAGE)
+    proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or ""
+    if "127.0.0.1" in proxy or "localhost" in proxy:
+        pytest.skip("registry egress goes through a host-loopback proxy unreachable from Docker")
+    root = make(tmp_path / "web", {"package.json": json.dumps(
+        {"name": "app", "version": "1.0.0", "dependencies": {"lodash": "4.17.15"}}),
+        "package-lock.json": json.dumps(LOCK)})  # fmt: skip
+    changes = await apply_upgrades(network_executor(), root,
+                                   [Upgrade("npm", "lodash", "4.17.21")],
+                                   network_allowed=lambda _h: True,
+                                   sandbox_network=True)  # fmt: skip
+    files = {c["path"]: c["content"] for c in changes}
+    lock = json.loads(files["package-lock.json"])
+    assert lock["packages"]["node_modules/lodash"]["version"] == "4.17.21"
+    assert lock["packages"]["node_modules/lodash"]["integrity"].startswith("sha512-")
+    assert json.loads(files["package.json"])["dependencies"]["lodash"] == "4.17.21"
+    assert json.loads((root / "package-lock.json").read_text(encoding="utf-8")) == LOCK

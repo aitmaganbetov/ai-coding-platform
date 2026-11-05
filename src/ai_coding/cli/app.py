@@ -15,6 +15,7 @@ from ai_coding.cli.commands import create as create_cmd
 from ai_coding.cli.commands import develop as develop_cmd
 from ai_coding.cli.commands import github as github_cmd
 from ai_coding.cli.commands import init as init_cmd
+from ai_coding.cli.commands import maintain as maintain_cmd
 from ai_coding.cli.commands import modernize as modernize_cmd
 from ai_coding.cli.commands import pr as pr_cmd
 from ai_coding.cli.commands import project as project_cmd
@@ -47,6 +48,7 @@ app.add_typer(pr_cmd.app, name="pr")
 app.command("create")(create_cmd.create)
 app.command("develop")(develop_cmd.develop)
 app.command("modernize")(modernize_cmd.modernize)
+app.command("maintain")(maintain_cmd.maintain)
 app.command("review")(review_cmd.review)
 app.add_typer(agents_cmd.app, name="agents")
 

@@ -109,6 +109,15 @@ def apply_changes(root: Path, changes: Sequence[Mapping[str, Any]]) -> None:
         target.write_bytes(str(c["content"]).encode("utf-8"))
 
 
+def merge_changes(
+    first: Sequence[Mapping[str, Any]], second: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    """``first`` then ``second``; a later change of the same path wins."""
+    merged = {str(c["path"]): dict(c) for c in first}
+    merged.update({str(c["path"]): dict(c) for c in second})
+    return list(merged.values())
+
+
 def unified_diff(base: Path, changes: Sequence[Mapping[str, Any]]) -> str:
     """Unified diff of the change set against the base tree."""
     out: list[str] = []
@@ -253,14 +262,24 @@ class ImplementLoop:
         return items
 
     async def run(
-        self, base_ref: str, issue: Mapping[str, Any], *, hint_files: Sequence[str] = ()
+        self,
+        base_ref: str,
+        issue: Mapping[str, Any],
+        *,
+        hint_files: Sequence[str] = (),
+        seed: Sequence[Mapping[str, Any]] = (),
     ) -> ImplementResult:
-        """Iterate until accepted or ``max_iterations`` is exhausted."""
+        """Iterate until accepted or ``max_iterations`` is exhausted.
+
+        ``seed`` are deterministic changes (e.g. a package manager's lock file update)
+        applied before the first iteration; they are part of the accepted change set.
+        """
         repo = LocalGitRepository.open(self.ctx.project_root)
         runner = test_runner(self.ctx, self.executor)
         with tempfile.TemporaryDirectory(prefix="ai-coding-base-") as tmp:
             base = Path(tmp) / "base"
             repo.export(base_ref, base)
+            apply_changes(base, seed)
             files = repo.list_files(base_ref)
             query = f"{issue.get('title', '')}\n{issue.get('body', '')}"
             context = self._context(base, query, hint_files)
@@ -291,7 +310,8 @@ class ImplementLoop:
                                        "application/json")  # fmt: skip
                 if accepted:
                     return ImplementResult(
-                        changes=changes, summary=dev.output["summary"], plan=dev.output["plan"],
+                        changes=merge_changes(seed, changes), summary=dev.output["summary"],
+                        plan=dev.output["plan"],
                         tests=record["tests"], review=record["review"],
                         database=record["database"], diff=record.pop("_diff"),
                         iterations=history, models=list(dict.fromkeys(models)),

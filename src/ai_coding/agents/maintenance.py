@@ -63,12 +63,11 @@ class MaintenanceAgent(LLMAgent):
     def check(self, output: Mapping[str, Any], ctx: AgentContext) -> list[str]:
         known = _sources(ctx.inputs)
         deps = {str(d["id"]): d for d in ctx.inputs.get("dependencies") or []}
-        files = set(ctx.inputs.get("files") or [])
         items = output.get("items", [])
         problems = [f"duplicate item id {i}" for i in duplicates(i["id"] for i in items)]
         handled: list[str] = []
         for item in items:
-            problems += self._check_item(item, known, deps, files)
+            problems += self._check_item(item, known, deps)
             handled += item["sources"]
         deferred = [d["source"] for d in output.get("deferred", [])]
         problems += [f"deferred unknown source {s}" for s in deferred if s not in known]
@@ -79,18 +78,14 @@ class MaintenanceAgent(LLMAgent):
         return problems
 
     @staticmethod
-    def _check_item(
-        item: Mapping[str, Any], known: set[str], deps: Mapping[str, Any], files: set[str]
-    ) -> list[str]:
+    def _check_item(item: Mapping[str, Any], known: set[str], deps: Mapping[str, Any]) -> list[str]:
         iid = item["id"]
         problems = [f"{iid} references unknown source {s}" for s in item["sources"]
                     if s not in known]  # fmt: skip
-        for path in item["files"]:
+        for path in item["files"]:  # new files are allowed: an item may create code
             why = unsafe_path(path)
             if why:
                 problems.append(f"{iid}: {path} {why}")
-            elif files and path not in files and not is_test_path(path):
-                problems.append(f"{iid}: {path} does not exist")
         if len(item["files"]) > MAX_FILES_PER_ITEM:
             problems.append(f"{iid} touches {len(item['files'])} files: split it")
         test = item["regression_test"]["file"]

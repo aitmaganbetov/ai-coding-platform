@@ -327,7 +327,7 @@ PR = tuple[RepositoryHost, Callable[[], str | None], str]
 
 
 @dataclass(frozen=True, slots=True)
-class _PRSpec:
+class PRSpec:
     branch: str
     base: str
     title: str
@@ -335,7 +335,11 @@ class _PRSpec:
     after: str  # push only after this step
 
 
-def _with_pr(handlers: list[Any], steps: list[StepSpec], spec: _PRSpec, pull_request: PR) -> None:
+def with_pull_request(
+    handlers: list[Any], steps: list[StepSpec], spec: PRSpec, pull_request: PR
+) -> None:
+    """Append push → PR → verify steps after ``spec.after``; the body comes from
+    ``spec.source``'s ``pr_body``."""
     host, token, api_host = pull_request
     branch, base, title, source, after = spec.branch, spec.base, spec.title, spec.source, spec.after
     pr_registry, pr_steps = build_pull_request(
@@ -409,8 +413,9 @@ def build_modernize(
     ]  # fmt: skip
     if pull_request is not None:
         title = f"Modernize ({step_id}): {request.goal}"
-        _with_pr(handlers, steps,
-                 _PRSpec(branch, request.base, title, "modernize.step", "modernize.verify"),
+        with_pull_request(handlers, steps,
+                          PRSpec(branch, request.base, title, "modernize.step",
+                                 "modernize.verify"),
                  pull_request)  # fmt: skip
     return HandlerRegistry(handlers), steps
 
@@ -444,7 +449,7 @@ def build_rollback(
     ]  # fmt: skip
     if pull_request is not None:
         title = f"Rollback of modernization run {request.target_run[-12:]}"
-        _with_pr(handlers, steps,
-                 _PRSpec(request.revert_branch, request.base, title, "rollback.revert",
+        with_pull_request(handlers, steps,
+                 PRSpec(request.revert_branch, request.base, title, "rollback.revert",
                          "rollback.revert"), pull_request)  # fmt: skip
     return HandlerRegistry(handlers), steps

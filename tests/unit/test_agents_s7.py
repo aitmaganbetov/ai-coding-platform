@@ -259,7 +259,7 @@ def test_maintenance_accounts_for_every_source_and_real_versions() -> None:
     found = problems(MaintenanceAgent(), MAINT_INPUTS, out, schema_valid=False)
     assert "M2: guzzlehttp/psr7 9.9.9 is not a known fixed version (1.8.4, 2.1.1)" in found
     assert "M2 upgrades unknown dependency D7" in found
-    assert "M1: app/Missing.php does not exist" in found
+    assert not any("Missing.php" in p for p in found)  # an item may create files
     assert "M1: /etc/passwd must be a relative POSIX path" in found
     assert "M1: regression test app/Repo.php is not a test file" in found
     assert "M1 references unknown source X5" in found
