@@ -47,7 +47,16 @@
 | gitleaks `dir` | no leaks found |
 | Wheel | собран; содержит `schemas/agents/*.json`; `ai-coding agents list` и загрузка схем из установленного wheel работают |
 
-Результаты CI (Windows и macOS, sandbox, пилоты) будут в PR.
+CI на GitHub (PR #7, коммит `cf7b0bd`): **20 из 20 проверок успешны**:
+
+- Lint & type-check;
+- тесты на ubuntu-24.04, windows-2025 и macos-15 × py3.12/3.13 (6 jobs);
+- Sandbox & self-audit (Docker);
+- сборка и smoke-тест wheel;
+- gitleaks;
+- pip-audit;
+- actionlint и zizmor;
+- пилоты Python и Node (тесты и аудиты) и опубликованные ими check runs.
 
 ## 4. Найденные и исправленные проблемы
 
