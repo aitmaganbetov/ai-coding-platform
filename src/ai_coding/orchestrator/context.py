@@ -95,6 +95,10 @@ class ContextManager:
     def _is_excluded(self, rel: str) -> bool:
         return any(fnmatch.fnmatchcase(rel, p) for p in self._excludes)
 
+    def is_excluded(self, rel: str) -> bool:
+        """Whether ``rel`` may never reach a model (secret-bearing or dependency file)."""
+        return self._is_excluded(rel)
+
     def _candidate_paths(self) -> list[str]:
         git = shutil.which("git")
         if git and (self.root / ".git").exists():
