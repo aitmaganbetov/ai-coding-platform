@@ -11,6 +11,8 @@
 | ``AI_CODING_SERVER_TRUSTED_PROXIES`` | empty: ``X-Forwarded-For`` is ignored |
 | ``AI_CODING_SERVER_METRICS_TOKEN`` | empty: ``/metrics`` requires an authenticated admin |
 | ``AI_CODING_SERVER_RETENTION_DAYS`` | ``0``: no automatic purge |
+| ``AI_CODING_SERVER_DB_POOL_SIZE`` | ``10`` database connections kept per process (PostgreSQL) |
+| ``AI_CODING_SERVER_DB_MAX_OVERFLOW`` | ``10`` extra connections per process under load |
 """
 
 from __future__ import annotations
@@ -51,6 +53,8 @@ class ServerSettings:
     trusted_proxies: frozenset[str] = field(default_factory=frozenset)
     metrics_token: str | None = None
     retention_days: int = 0
+    db_pool_size: int = 10
+    db_max_overflow: int = 10
     token_ttl_days: int = 30
     agent_token_ttl_hours: int = 24
     max_request_bytes: int = 1_000_000
@@ -79,4 +83,6 @@ class ServerSettings:
             trusted_proxies=proxies,
             metrics_token=env.get(PREFIX + "METRICS_TOKEN") or None,
             retention_days=_int(env, "RETENTION_DAYS", 0, low=0, high=36_500),
+            db_pool_size=_int(env, "DB_POOL_SIZE", 10, low=1, high=200),
+            db_max_overflow=_int(env, "DB_MAX_OVERFLOW", 10, low=0, high=200),
         )

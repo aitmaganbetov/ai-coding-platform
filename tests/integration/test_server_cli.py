@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import httpx
@@ -81,8 +82,8 @@ def _free_port() -> int:
         return int(s.getsockname()[1])
 
 
-@pytest.fixture
-def live_server(env: dict[str, str], tmp_path: Path) -> Iterator[str]:
+@contextmanager
+def _serve(env: dict[str, str], tmp_path: Path, *serve_args: str) -> Iterator[str]:
     runner.invoke(app, ["server", "migrate"])
     runner.invoke(
         app, ["server", "user", "add", "root", "--admin", "--password-stdin"], input=PASSWORD + "\n"
@@ -104,7 +105,7 @@ def live_server(env: dict[str, str], tmp_path: Path) -> Iterator[str]:
             "serve",
             "--port",
             str(port),
-            "--with-worker",
+            *serve_args,
         ],
         env={**os.environ, **env},
         stdout=log,
@@ -130,6 +131,28 @@ def live_server(env: dict[str, str], tmp_path: Path) -> Iterator[str]:
         log.close()
         output = log_path.read_text(encoding="utf-8", errors="replace")
         print("--- server output (tail) ---\n" + output[-20000:])  # shown on failure
+
+
+@pytest.fixture
+def live_server(env: dict[str, str], tmp_path: Path) -> Iterator[str]:
+    with _serve(env, tmp_path, "--with-worker") as url:
+        yield url
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the server profile is Linux (NFR-01)")
+def test_several_api_processes_serve_one_port(env: dict[str, str], tmp_path: Path) -> None:
+    """serve --workers N (B-800): each process builds the app from the environment."""
+    refused = runner.invoke(app, ["server", "serve", "--workers", "2", "--with-worker"])
+    assert refused.exit_code == ExitCode.USAGE and "--with-worker" in refused.output
+    with _serve(env, tmp_path, "--workers", "2") as url, httpx.Client(base_url=url) as c:
+        for _ in range(6):  # spread over both processes
+            login = c.post("/api/v1/auth/login",
+                           json={"username": "root", "password": PASSWORD})  # fmt: skip
+            assert login.status_code == 201, login.text
+            me = c.get("/api/v1/me",
+                       headers={"Authorization": f"Bearer {login.json()['token']}"})  # fmt: skip
+            assert me.json()["username"] == "root"
+        assert c.get("/metrics", headers={"Authorization": "Bearer metrics-secret-xyz"}).is_success
 
 
 def test_real_server_process_runs_a_discovery(live_server: str, env: dict[str, str]) -> None:

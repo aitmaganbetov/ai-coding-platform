@@ -581,3 +581,19 @@ def _install_handlers(app: FastAPI) -> None:
                 "error": {"code": "invalid", "message": "invalid request", "details": details}
             },
         )
+
+
+UI_DIR_ENV = "AI_CODING_SERVER_UI_DIR"
+
+
+def app_from_env() -> FastAPI:
+    """Application factory for ``serve --workers N``: each API process builds its own
+    server from the environment (uvicorn imports it by name in every process)."""
+    import os  # noqa: PLC0415
+
+    from ai_coding.api.settings import ServerSettings  # noqa: PLC0415
+    from ai_coding.observability import configure_logging  # noqa: PLC0415
+
+    configure_logging(json=True, level="INFO")
+    ui = os.environ.get(UI_DIR_ENV)
+    return create_app(Server(ServerSettings.from_env()), ui_dir=Path(ui) if ui else None)

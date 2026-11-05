@@ -196,6 +196,40 @@ jobs:
       - name: The built UI has no inline scripts (strict CSP)
         run: "! grep -E '<script>|<script type=\"module\">[^<]' dist/index.html"
 
+  load:
+    name: Load test (k6, API + workers on PostgreSQL)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+      - run: uv sync
+      - name: Pull the digest-pinned k6 and PostgreSQL images
+        run: |
+          uv run python - <<'PY' | xargs -n1 docker pull -q
+          import importlib.util
+          spec = importlib.util.spec_from_file_location("h", "loadtest/run_load.py")
+          h = importlib.util.module_from_spec(spec); spec.loader.exec_module(h)
+          print(h.K6_IMAGE); print(h.POSTGRES_IMAGE)
+          PY
+      - name: "Load test — thresholds: >=10 parallel runs, all complete, p95 reads, no errors"
+        run: uv run python loadtest/run_load.py --out load-out
+      - name: Results in the job summary
+        if: always()
+        run: if [ -f load-out/summary.md ]; then cat load-out/summary.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Upload load test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: load-test
+          path: load-out/
+          retention-days: 30
+
   server-image:
     name: Server image (Docker build & smoke test)
     runs-on: ubuntu-24.04

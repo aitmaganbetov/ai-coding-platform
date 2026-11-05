@@ -104,7 +104,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S603", "S607", "PLR2004", "S105", "S106", "S311", "SIM300"]
 "src/ai_coding/git/local.py" = ["S603"]
-"src/ai_coding/cli/commands/*.py" = ["PLR0917"]  # Typer maps options to parameters  # subprocess with argv list, no shell, validated input
+"src/ai_coding/cli/commands/*.py" = ["PLR0917"]
+"loadtest/*.py" = ["S603"]  # the harness starts fixed argv: docker, ai-coding, k6  # Typer maps options to parameters  # subprocess with argv list, no shell, validated input
 
 [tool.mypy]
 python_version = "3.12"
