@@ -66,7 +66,7 @@
 
 ## 5. CI на GitHub
 
-Заполняется по результатам запуска workflow после push (см. сообщение-отчёт к PR/коммиту).
+**Ещё не запускался.** Workflows срабатывают на `pull_request` и push в `main`; ручной `workflow_dispatch` GitHub разрешает только для workflow, уже присутствующих в default branch (попытка запуска вернула 404). Первый прогон матрицы Linux/Windows/macOS произойдёт при открытии PR из ветки `claude/cool-sagan-ho737s`. До этого Windows/macOS-совместимость подтверждена только проектированием (pathlib, argv без shell, `os.devnull`), не запуском.
 
 ## 6. Незавершённые задачи S1
 
