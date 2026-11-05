@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-coding.dev/schemas/agents/database.output.schema.json",
+  "title": "Database Agent output: migrations, indexes and transactions analysis",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "migrations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300,
+            "pattern": "^(?![/\\\\])(?!.*(^|/)\\.\\.(/|$))[^\\\\:*?\"<>|]+$"
+          },
+          "operations": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            },
+            "minItems": 0,
+            "maxItems": 50
+          },
+          "reversible": {
+            "type": "boolean"
+          },
+          "locking_risk": {
+            "enum": [
+              "none",
+              "low",
+              "medium",
+              "high"
+            ]
+          },
+          "notes": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
+        },
+        "required": [
+          "file",
+          "operations",
+          "reversible",
+          "locking_risk"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300,
+            "pattern": "^(?![/\\\\])(?!.*(^|/)\\.\\.(/|$))[^\\\\:*?\"<>|]+$"
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "severity": {
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low",
+              "info"
+            ]
+          },
+          "category": {
+            "enum": [
+              "migration",
+              "index",
+              "transaction",
+              "query",
+              "schema"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "recommendation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
+        },
+        "required": [
+          "file",
+          "severity",
+          "category",
+          "message",
+          "recommendation"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Self-assessed confidence; informative only, never replaces checks."
+    }
+  },
+  "required": [
+    "summary",
+    "migrations",
+    "findings"
+  ]
+}

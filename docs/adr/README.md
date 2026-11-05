@@ -29,3 +29,5 @@
 | [0022](0022-reusable-workflows.md) | Reusable workflows: права, форки, установка платформы, SHA-pinning, пилоты | Принято | S4 |
 | [0023](0023-llm-adapters-routing-cache.md) | LLM-адаптеры на httpx, маршрутизация с fallback, кэш ответов | Принято | S5 |
 | [0024](0024-agents-and-create-mode.md) | Агенты CREATE (порт, цикл исправления, детерминированный bootstrap) и сценарий CREATE | Принято | S5 |
+| [0025](0025-develop-loop-sandbox-tests-review.md) | DEVELOP: цикл реализация→тесты→review, тесты в Docker-песочнице, рекомендательный review | Принято | S6 |
+| [0026](0026-modernize-and-rollback.md) | MODERNIZE: baseline, план шагов, малые PR, откат через git revert | Принято | S6 |

@@ -115,6 +115,17 @@ class PolicyEngine:
             f"requirements version {version} must be approved before architecture work",
         )
 
+    def plan_approval(self, version: str) -> Decision:
+        """MODERNIZE: the migration plan version must be approved before any step (FR-05).
+
+        Uses the same non-configurable gate as the CREATE specification.
+        """
+        return self._approval(
+            ApprovalOperation.SPEC_APPROVAL,
+            "modernize.plan",
+            f"migration plan {version} must be approved before changes are made",
+        )
+
     def agent(self, name: AgentName | str) -> Decision:
         """Whether an agent may be scheduled."""
         enabled = {a.value for a in self._cfg.agents.enabled}

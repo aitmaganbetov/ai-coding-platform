@@ -1,0 +1,87 @@
+# Reusable workflow: advisory AI review of a pull request (Reviewer Agent, ТЗ §10, B-507).
+# Call with `uses: aitmaganbetov/ai-coding-platform/.github/workflows/ai-review.yml@<sha>`.
+# Security (ТЗ §9, ADR-0022):
+#   * the LLM key is a secret of the `environment` (add required reviewers to gate runs);
+#   * only same-repository PRs by default — a fork PR needs `allow-forks: true` *and*
+#     passes the environment approval; it gets no write access (no comment/check);
+#   * inputs reach shell steps only through environment variables;
+#   * the review is advisory: neutral check unless the project's approved policy
+#     (`quality_gates.review.ai_review_blocking`) says otherwise.
+name: ai-review (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: Project directory containing .ai-coding.yml
+        type: string
+        default: "."
+      platform-spec:
+        description: pip/uv spec of the AI Coding Platform to install ("." = this checkout)
+        type: string
+        default: "git+https://github.com/aitmaganbetov/ai-coding-platform@main"
+      environment:
+        description: Environment that holds the LLM secret (protect it with reviewers)
+        type: string
+        default: "ai-review"
+      allow-forks:
+        description: Also review PRs from forks (after the environment approval)
+        type: boolean
+        default: false
+      api-key-env:
+        description: Variable name the project's ai.api_key_env expects
+        type: string
+        default: "AI_CODING_LLM_API_KEY"
+    secrets:
+      llm-api-key:
+        description: API key of the LLM provider (not needed for local models)
+        required: false
+
+permissions: {}
+
+jobs:
+  review:
+    name: AI review (advisory)
+    if: >-
+      github.event_name == 'pull_request' &&
+      (github.event.pull_request.head.repo.full_name == github.repository || inputs.allow-forks)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+    env:
+      WORKDIR: ${{ inputs.working-directory }}
+      PLATFORM_SPEC: ${{ inputs.platform-spec }}
+      API_KEY_ENV: ${{ inputs.api-key-env }}
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+      - name: Install the AI Coding Platform
+        run: uv tool install "$PLATFORM_SPEC"
+      - name: AI review
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LLM_KEY: ${{ secrets.llm-api-key }}
+        run: |
+          if [[ ! "$API_KEY_ENV" =~ ^[A-Z_][A-Z0-9_]{0,127}$ ]]; then
+            echo "invalid api-key-env" >&2; exit 1
+          fi
+          if [ -n "$LLM_KEY" ]; then export "$API_KEY_ENV=$LLM_KEY"; fi
+          unset LLM_KEY
+          args=(--project "$WORKDIR" --base "origin/$BASE_REF" --head HEAD
+                --skip-if-disabled --output "$RUNNER_TEMP/ai-review.md")
+          if [ "$SAME_REPO" = "true" ]; then args+=(--pr "$PR_NUMBER" --comment --check); fi
+          ai-coding review "${args[@]}"
+          if [ -f "$RUNNER_TEMP/ai-review.md" ]; then cat "$RUNNER_TEMP/ai-review.md" >> "$GITHUB_STEP_SUMMARY"; fi

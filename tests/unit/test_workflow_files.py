@@ -18,6 +18,7 @@ REUSABLE = [
     "test-go",
     "test-rust",
     "release",
+    "ai-review",
 ]
 SHA_PIN = re.compile(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$")
 
@@ -85,3 +86,17 @@ def test_workflow_linters_run_in_ci() -> None:
     ignored = yaml.safe_load((WORKFLOWS.parent / "zizmor.yml").read_text(encoding="utf-8"))
     # Suppressions stay narrow: one rule, one file.
     assert ignored["rules"] == {"self-repository": {"ignore": ["pilots.yml"]}}
+
+
+def test_ai_review_secret_scope_and_fork_gating() -> None:
+    wf = load("ai-review")
+    job = wf["jobs"]["review"]
+    assert job["environment"] == "${{ inputs.environment }}"  # secret behind approval
+    assert "head.repo.full_name == github.repository" in job["if"]
+    assert "inputs.allow-forks" in job["if"]
+    assert job["permissions"] == {"contents": "read", "pull-requests": "write",
+                                  "checks": "write"}  # fmt: skip
+    script = job["steps"][-1]["run"]
+    assert '"$SAME_REPO" = "true"' in script  # forks never get comment/check writes
+    assert "--skip-if-disabled" in script and "unset LLM_KEY" in script
+    assert wf["on"]["workflow_call"]["secrets"]["llm-api-key"]["required"] is False

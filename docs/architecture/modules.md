@@ -17,16 +17,16 @@ ai-coding-platform/
 │   ├── workflows/{quality,security,test-php,test-node,test-python,
 │   │             test-go,test-rust,release}.yml   ✅ S4 reusable (workflow_call)
 │   ├── workflows/pilots.yml            ✅ S4 пилоты AC-09 (examples/)
-│   ├── workflows/ai-review.yml         ⏳ S6 (нужны LLM-адаптеры)
+│   ├── workflows/ai-review.yml         ✅ S6 рекомендательный AI review (environment, без форков)
 │   └── dependabot.yml                  ✅
 ├── docs/
 │   ├── architecture/                   ✅ обзор, модули
-│   ├── adr/                            ✅ ADR-0001…0024
+│   ├── adr/                            ✅ ADR-0001…0026
 │   ├── installation.md, development.md, configuration.md, cli.md   ✅
-│   ├── audit.md (S3), github.md (S4), create.md (S5)   ✅
+│   ├── audit.md (S3), github.md (S4), create.md (S5), develop.md (S6)   ✅
 │   ├── backlog.md                      ✅ полный backlog по ТЗ
 │   ├── tz-notes.md                     ✅ замечания к ТЗ
-│   └── sprints/S1…S5-report.md         ✅
+│   └── sprints/S1…S6-report.md         ✅
 ├── examples/pilot-python, pilot-node   ✅ S4 пилотные проекты (AC-09)
 ├── src/ai_coding/
 │   ├── domain/        ✅ перечисления ТЗ, TaskStatus/Phase, ApprovalStatus, базовые ошибки
@@ -48,13 +48,13 @@ ai-coding-platform/
 │   ├── observability/ ✅ S2 structlog JSON + redaction + run_id/trace_id
 │   ├── executors/     ✅ S3 port, local (allow-list, env allow-list, rlimits, kill tree), docker
 │   │                       (hardened sandbox, --pull never); ⏳ S4 github_actions
-│   ├── tools/         ✅ S3 реестр, runner, gitleaks, semgrep (офлайн-правила), ruff; ⏳ S7 trivy, osv,
+│   ├── tools/         ✅ S3 реестр, runner, gitleaks, semgrep (офлайн-правила), ruff; ✅ S6 testrun (тесты в песочнице); ⏳ S7 trivy, osv,
 │   │                       phpstan, pint, eslint, tsc, mypy, go, golangci-lint, cargo, clippy, playwright, k6
 │   ├── quality/       ✅ S3 движок гейтов PASS/FAIL/SKIPPED, fail-closed, strict, baseline
 │   ├── reports/       ✅ S3 JSON, Markdown; ✅ S4 SARIF 2.1.0, JUnit
 │   ├── integrations/  ✅ S4 порт RepositoryHost; github/: клиент, App/token, PR, checks, rulesets, Actions executor
-│   ├── agents/        ✅ S5 порт Agent, requirements, architect, planner, bootstrap, каталог; ⏳ S6–S7 остальные 8
-│   ├── workflows/     ✅ S3 audit; ✅ S4 pull_request; ✅ S5 create; ⏳ S6 develop, modernize; S7 maintain
+│   ├── agents/        ✅ S5 requirements, architect, planner, bootstrap; ✅ S6 developer, reviewer, database, planner.migration; ⏳ S7 остальные 5
+│   ├── workflows/     ✅ S3 audit; ✅ S4 pull_request; ✅ S5 create; ✅ S6 develop, modernize, review, implement-цикл; ⏳ S7 maintain
 │   ├── api/           ⏳ S8 FastAPI
 │   └── worker/        ⏳ S8 серверный worker
 ├── tests/

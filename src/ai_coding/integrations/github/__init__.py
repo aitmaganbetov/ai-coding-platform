@@ -12,7 +12,7 @@ from ai_coding.integrations.github.client import (
     RateLimitError,
     parse_repo_slug,
 )
-from ai_coding.integrations.github.host import GitHubHost, PullRequest
+from ai_coding.integrations.github.host import GitHubHost, Issue, PullRequest
 
 __all__ = [
     "AppAuth",
@@ -20,6 +20,7 @@ __all__ = [
     "GitHubAuth",
     "GitHubClient",
     "GitHubHost",
+    "Issue",
     "PullRequest",
     "RateLimitError",
     "TokenAuth",

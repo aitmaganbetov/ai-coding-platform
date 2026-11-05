@@ -282,7 +282,26 @@ class BuildGate(_Gate):
 
 
 class TestsGate(_Gate):
-    """Fails when required tests fail."""
+    """Fails when required tests fail.
+
+    Tests run in the Docker sandbox. Without ``command`` the platform picks a default
+    for the detected stack (Python: pytest, Node.js: ``npm test`` / ``node --test``).
+    ``install`` is the only step that may use the network, and only when
+    ``execution.docker.network`` is ``bridge`` and the hosts are allowed by
+    ``security`` (egress policy); otherwise tests that need it are SKIPPED.
+    """
+
+    command: str | None = Field(default=None, min_length=1, max_length=500)
+    install: str | None = Field(default=None, min_length=1, max_length=500)
+    install_hosts: list[Annotated[str, Field(min_length=1, max_length=253)]] = Field(
+        default_factory=list, description="Hosts the install step needs (egress policy)."
+    )
+    image: str | None = Field(
+        default=None,
+        pattern=r"^[a-z0-9][a-z0-9._/:-]*@sha256:[0-9a-f]{64}$",
+        description="Digest-pinned runtime image (default: per stack).",
+    )
+    timeout_seconds: int = Field(default=900, ge=10, le=7200)
 
 
 class StaticGate(_Gate):

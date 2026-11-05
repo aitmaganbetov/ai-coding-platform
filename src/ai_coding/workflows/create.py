@@ -28,7 +28,6 @@ import asyncio
 import hashlib
 import json
 import shutil
-import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -36,33 +35,24 @@ from typing import Any
 import httpx
 
 from ai_coding.agents import (
-    Agent,
-    AgentContext,
-    AgentError,
-    AgentOutputError,
     ArchitectAgent,
     BootstrapAgent,
-    LLMUnavailableError,
     PlannerAgent,
     RequirementsAgent,
-    build_llm,
 )
 from ai_coding.agents.architect import render_markdown as architecture_markdown
 from ai_coding.agents.planner import render_markdown as plan_markdown
 from ai_coding.agents.requirements import render_markdown as requirements_markdown
-from ai_coding.contracts.agent import AgentScope, AgentTask
 from ai_coding.domain.enums import ApprovalOperation
 from ai_coding.git import LocalGitRepository
 from ai_coding.integrations.host import RepositoryHost
-from ai_coding.llm import LLMApprovalRequiredError, LLMBudgetExceededError
 from ai_coding.orchestrator.errors import (
-    ApprovalRequiredError,
-    BudgetExceededError,
     PermanentError,
 )
 from ai_coding.orchestrator.planner import StepSpec
 from ai_coding.orchestrator.policy import Decision, Verdict
 from ai_coding.orchestrator.registry import HandlerRegistry, StepContext, StepResult
+from ai_coding.workflows.agent_runtime import AgentStepHandler
 from ai_coding.workflows.pull_request import PullRequestRequest, build_pull_request
 
 RUN_TRAILER = "AI-Coding-Run"
@@ -93,92 +83,6 @@ def spec_version(spec: Mapping[str, Any], previous_version: str | None) -> str:
         json.dumps(spec, sort_keys=True, ensure_ascii=False).encode()
     ).hexdigest()
     return f"v{n}-{digest[:8]}"
-
-
-# ------------------------------------------------------------- agent steps --
-InputBuilder = Callable[[StepContext], dict[str, Any]]
-
-
-class AgentStepHandler:
-    """Runs one agent under the orchestrator's policy, budget and audit."""
-
-    cost_usd = 0.0
-
-    def __init__(
-        self,
-        agent: Agent,
-        inputs: InputBuilder,
-        *,
-        transport: httpx.AsyncBaseTransport | None = None,
-        env: Mapping[str, str] | None = None,
-    ) -> None:
-        self.agent = agent
-        self.name = f"agent.{agent.name.value}"
-        self.capabilities = frozenset({f"agent.{agent.name.value}"})
-        self._inputs = inputs
-        self._transport = transport
-        self._env = env
-
-    def is_available(self) -> bool:
-        return True
-
-    def _llm(self, ctx: StepContext) -> Any:
-        try:
-            llm = build_llm(
-                ctx.config,
-                self.agent.name,
-                policy=ctx.policy,
-                budget=ctx.budget,
-                record_usage=ctx.record_usage,
-                cache_dir=ctx.project_root / ".ai-coding" / "cache" / "llm",
-                env=self._env,
-                transport=self._transport,
-            )
-        except LLMUnavailableError as exc:
-            raise PermanentError(f"{self.agent.title}: {exc}") from exc
-        primary = llm.primary.provider
-        decision = ctx.policy.external_llm(primary.name, base_url=primary.base_url)
-        if decision.verdict is Verdict.REQUIRE_APPROVAL:
-            ctx.authorize(decision)  # pause for a human instead of silently falling back
-        return llm
-
-    async def execute(self, ctx: StepContext) -> tuple[AgentContext, Any]:
-        """Run the agent; returns its context (models used) and contract result."""
-        ctx.authorize(ctx.policy.agent(self.agent.name))
-        llm = self._llm(ctx) if self.agent.requires_llm else None
-        agent_ctx = AgentContext(
-            inputs=self._inputs(ctx),
-            llm=llm,
-            max_output_tokens=ctx.config.ai.max_output_tokens,
-            temperature=ctx.config.ai.temperature,
-            log=ctx.log,
-        )
-        task = AgentTask(
-            task_id=ctx.task_id,
-            agent=self.agent.name,
-            input_refs=[f"task:{k}" for k in ctx.dependencies],
-            scope=AgentScope(project_id=ctx.project_id or uuid.UUID(int=0), run_id=ctx.run_id),
-            max_cost=ctx.config.budgets.max_cost_usd_per_run,
-            max_duration=max(60, ctx.config.budgets.max_duration_minutes * 60),
-            output_schema=dict(self.agent.output_schema),
-        )
-        try:
-            result = await self.agent.run(task, agent_ctx)
-        except LLMApprovalRequiredError as exc:
-            raise ApprovalRequiredError(str(exc), ApprovalOperation.EXTERNAL_LLM) from exc
-        except LLMBudgetExceededError as exc:
-            raise BudgetExceededError(str(exc)) from exc
-        except (AgentError, AgentOutputError) as exc:
-            raise PermanentError(str(exc)) from exc
-        return agent_ctx, result
-
-    async def run(self, ctx: StepContext) -> StepResult:
-        agent_ctx, result = await self.execute(ctx)
-        return StepResult(
-            output={"result": result.output, "models": list(dict.fromkeys(agent_ctx.models))},
-            evidence_refs=list(result.evidence_refs),
-            confidence=result.confidence,
-        )
 
 
 def _save(ctx: StepContext, name: str, text: str, mime: str) -> str:
@@ -459,7 +363,7 @@ def build_create(
                         "create.architecture"),
             input={"branch": request.branch, "base": request.base,
                    "project_name": request.project_name},
-            max_attempts=3,  # a retry after the commit reuses it (effect ledger + trailer)
+            max_attempts=2,  # a retry after the commit reuses it (effect ledger + trailer)
         ),
         # Checked before anything is pushed, hence in the execution phase.
         StepSpec(key="create.verify", capability="create.verify",

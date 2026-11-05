@@ -167,6 +167,10 @@ _RESUME_HINTS = {
     "github.pr": "ai-coding pr resume",
     "agent.": "ai-coding create --resume",
     "create.": "ai-coding create --resume",
+    "develop.": "ai-coding develop --resume",
+    "modernize.": "ai-coding modernize --resume",
+    "rollback.": "ai-coding modernize --resume",
+    "review.": "ai-coding review",
 }
 
 

@@ -90,6 +90,16 @@ class PushHandler(_Handler):
         return StepResult(output={"branch": branch, "sha": result["sha"], "remote": remote})
 
 
+def _body(ctx: StepContext) -> str:
+    """Static body, or ``pr_body`` produced by an upstream step (``body_from``)."""
+    source = ctx.input.get("body_from")
+    if source and source in ctx.dependencies:
+        produced = ctx.dependencies[source].get("pr_body")
+        if isinstance(produced, str) and produced.strip():
+            return produced
+    return str(ctx.input.get("body") or "")
+
+
 class OpenPullRequestHandler(_Handler):
     """Opens (or reuses) the PR; never merges."""
 
@@ -110,7 +120,7 @@ class OpenPullRequestHandler(_Handler):
                 head=str(data["branch"]),
                 base=str(data["base"]),
                 title=str(data["title"]),
-                body=str(data["body"]),
+                body=_body(ctx),
                 draft=bool(data["draft"]),
             )
             return {"number": pr.number, "url": pr.url, "created": pr.created}

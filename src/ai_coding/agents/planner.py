@@ -108,3 +108,51 @@ def render_markdown(plan: Mapping[str, Any]) -> str:
 
 def _cell(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ")
+
+
+class MigrationPlannerAgent(PlannerAgent):
+    """MODERNIZE role of the Planner: impact analysis and a stepwise plan (FR-05).
+
+    Inputs: ``goal``, ``files`` (repository paths), ``context`` (relevant files),
+    ``baseline`` (test result before any change). Each step must be small enough for
+    one reviewable PR and carry its own verification and rollback.
+    """
+
+    schema_name = "planner.migration"
+    title = "Planner Agent (modernization)"
+    mission = (
+        "You plan a modernization (refactoring, dependency upgrade or migration) as a "
+        "sequence of small, independently verifiable and reversible steps, after an "
+        "impact analysis of the current code."
+    )
+
+    def prompt_inputs(self, ctx: AgentContext) -> list[tuple[str, Any]]:
+        return [
+            ("goal", ctx.inputs.get("goal")),
+            ("repository_files", ctx.inputs.get("files")),
+            ("relevant_files", ctx.inputs.get("context")),
+            ("baseline_tests", ctx.inputs.get("baseline")),
+        ]
+
+    def task_prompt(self, ctx: AgentContext) -> str:
+        return (
+            "Analyse the impact of the goal on the repository, then split the work into "
+            "at most 20 steps. Each step: one small PR that keeps the tests green, lists "
+            "the files it touches, how to verify it and how to roll it back."
+        )
+
+    def check(self, output: Mapping[str, Any], ctx: AgentContext) -> list[str]:
+        problems: list[str] = []
+        existing = set(ctx.inputs.get("files") or [])
+        steps = output.get("steps", [])
+        problems += [f"duplicate step id {d}" for d in duplicates(s["id"] for s in steps)]
+        if existing:
+            problems += [
+                f"impact lists {f}, which does not exist"
+                for f in output.get("impact", {}).get("files", [])
+                if f not in existing
+            ]
+        for step in steps:
+            if len(step["files"]) > 25:
+                problems.append(f"{step['id']} touches {len(step['files'])} files: split it")
+        return problems

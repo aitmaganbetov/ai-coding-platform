@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import subprocess
+import tarfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -400,6 +401,58 @@ class LocalGitRepository:
         if path.startswith(("-", "/")) or ".." in path.split("/") or ":" in path:
             raise GitCommandError(["show"], 1, f"invalid path {path!r}")
         return self._git("show", f"{ref}:{path}").stdout
+
+    def export(self, ref: str, dest: Path) -> None:
+        """Write the tree of ``ref`` (tracked files only, no ``.git``) into ``dest``."""
+        self._check_start_point(ref)
+        dest.mkdir(parents=True, exist_ok=True)
+        archive = dest / ".ai-coding-export.tar"
+        try:
+            self._git("archive", "--format=tar", f"--output={archive}", ref)
+            with tarfile.open(archive) as tar:
+                tar.extractall(dest, filter="data")  # rejects absolute/.. paths and devices
+        finally:
+            archive.unlink(missing_ok=True)
+
+    def commits_with_trailer(self, key: str, value: str, ref: str) -> list[str]:
+        """Commits reachable from ``ref`` carrying ``key: value`` (newest first)."""
+        self._check_start_point(ref)
+        out = self._git(
+            "log", "--format=%H", f"--grep=^{re.escape(key)}: {re.escape(value)}$",
+            "--extended-regexp", ref,
+        ).stdout  # fmt: skip
+        return [line for line in out.splitlines() if line]
+
+    def is_merge(self, commit: str) -> bool:
+        """Whether ``commit`` has more than one parent."""
+        self._check_start_point(commit)
+        parents = self._git("rev-list", "--parents", "-n", "1", commit).stdout.split()
+        return len(parents) > 2
+
+    def revert(self, commit: str, *, mainline: int | None = None, no_commit: bool = False) -> str:
+        """``git revert`` ``commit`` on the current, non-protected branch.
+
+        Returns the new HEAD; with ``no_commit`` the inverse change is only staged (to be
+        committed together with other reverts, e.g. with trailers).
+        """
+        self._check_start_point(commit)
+        branch = self.current_branch()
+        if branch is None:
+            raise ProtectedBranchError("refusing to revert on a detached HEAD")
+        self.ensure_not_protected(branch)
+        args = ["-c", f"core.hooksPath={os.devnull}", "revert", "--no-edit"]  # no hooks
+        if mainline is not None:
+            args += ["-m", str(int(mainline))]
+        if no_commit:
+            args.append("--no-commit")
+        proc = self._git(*args, commit, check=False)
+        if proc.returncode != 0:
+            self._git("revert", "--abort", check=False)
+            raise GitCommandError(["revert"], proc.returncode, (proc.stderr or proc.stdout)[-500:])
+        sha = self.head_commit()
+        if sha is None:  # pragma: no cover
+            raise GitCommandError(["revert"], 1, "HEAD missing after revert")
+        return sha
 
     def diff(self, base: str, head: str = "HEAD", *, paths: Sequence[str] = ()) -> str:
         """Unified diff ``base..head`` (B-035)."""

@@ -126,7 +126,7 @@ def _show_spec(output: dict[str, Any]) -> None:
         f"открытых вопросов: {len(spec.get('open_questions', []))}"
     )
     for r in spec["functional_requirements"]:
-        info(f"  {escape(r['id'])} [{escape(r['priority'])}] {escape(r['text'])}")
+        info(escape(f"  {r['id']} [{r['priority']}] {r['text']}"))
     for q in spec.get("open_questions", []):
         info(f"  ? {escape(q['id'])} {escape(q['question'])} "
              f"(по умолчанию: {escape(q['default_assumption'])})")  # fmt: skip
