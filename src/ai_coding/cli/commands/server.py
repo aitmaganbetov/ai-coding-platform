@@ -36,7 +36,7 @@ app.add_typer(tokens, name="token")
 
 def _server(*, level: str = "WARNING") -> Server:
     """Server from the environment; logs go to stderr (JSON), never into command output."""
-    configure_logging(json=True, level=level, stream=sys.stderr)
+    configure_logging(json=True, level=level)  # stderr, resolved at write time
     try:
         from ai_coding.api.services import Server  # noqa: PLC0415 - optional extra
         from ai_coding.api.settings import ServerSettings  # noqa: PLC0415
