@@ -82,7 +82,9 @@ tests/fixtures/tools/                 # реальный вывод инстру
 1. `test_npm_upgrade_writes_a_real_lock_file` — egress здесь идёт через прокси на loopback хоста, а из контейнера он недоступен. Та же команда `npm install … --package-lock-only` проверена вручную с сетью хоста: lock-файл с `integrity sha512-…` создан. В CI тест выполняется.
 2. `test_cli.py` (console script) — в venv для 3.13 не установлен entry point. В окружении 3.12 тест прошёл.
 
-CI на GitHub: результаты добавляются после прогона PR (раздел обновляется).
+CI на GitHub после merge в `main` (run [42056384080](https://github.com/aitmaganbetov/ai-coding-platform/actions/runs/42056384080)):
+- зелёные: lint, тесты на всех ОС и версиях Python, wheel, пилоты;
+- **job sandbox упал на подготовке офлайн-данных OSV.** Данные скачивались, но были недоступны пользователю runner'а: каталоги 0750 от uid песочницы. Исправлено в S8, разбор — в [S8-report §6.5](S8-report.md).
 
 ## 6. Найденные и исправленные проблемы
 

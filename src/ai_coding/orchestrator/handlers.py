@@ -13,7 +13,7 @@ from collections import Counter
 from pathlib import PurePosixPath
 from typing import Any
 
-from ai_coding.config.loader import find_config
+from ai_coding.config.loader import find_project_config
 from ai_coding.config.validator import validate_file
 from ai_coding.detection import detect_stacks
 from ai_coding.domain.enums import TaskPhase
@@ -39,7 +39,7 @@ class ConfigDiscoveryHandler(_Builtin):
     capabilities = frozenset({"discovery.config"})
 
     async def run(self, ctx: StepContext) -> StepResult:
-        path = find_config(ctx.project_root)
+        path = find_project_config(ctx.project_root)
         if path is None:
             raise PermanentError("configuration file not found")
         report = await asyncio.to_thread(validate_file, path)

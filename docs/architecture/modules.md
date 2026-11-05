@@ -40,29 +40,29 @@ ai-coding-platform/
 │   ├── cli/           ✅ init, config validate|schema; ✅ S2 run discover|list|status|events|audit|
 │   │                       resume|cancel|approve|reject
 │   ├── persistence/   ✅ S2 SQLAlchemy-модели (15 сущностей ТЗ + run_events, effects), Alembic,
-│   │                       append-only аудит, артефакты по SHA-256; ⏳ S8 PostgreSQL, MinIO
+│   │                       append-only аудит, артефакты по SHA-256; ✅ S8 PostgreSQL, S3/MinIO, серверные таблицы
 │   ├── orchestrator/  ✅ S2 planner, registry, router, engine (workflow executor), context, state,
 │   │                       checkpoint, policy, approval, aggregator, audit, retry, effects, budget,
 │   │                       встроенные discovery-обработчики
 │   ├── llm/           ✅ S2 порт LLMProvider, GuardedLLM; ✅ S5 адаптеры openai/anthropic/ollama/vllm, router+fallback, кэш
 │   ├── observability/ ✅ S2 structlog JSON + redaction + run_id/trace_id
 │   ├── executors/     ✅ S3 port, local (allow-list, env allow-list, rlimits, kill tree), docker
-│   │                       (hardened sandbox, --pull never); ⏳ S4 github_actions
-│   ├── tools/         ✅ S3 реестр, runner, gitleaks, semgrep (офлайн-правила), ruff; ✅ S6 testrun (тесты в песочнице); ⏳ S7 trivy, osv,
-│   │                       phpstan, pint, eslint, tsc, mypy, go, golangci-lint, cargo, clippy, playwright, k6
+│   │                       (hardened sandbox, --pull never); ✅ S4 github_actions
+│   ├── tools/         ✅ S3 реестр, runner, gitleaks, semgrep (офлайн-правила), ruff; ✅ S6 testrun (тесты в песочнице); ✅ S7 trivy, osv,
+│   │                       phpstan, pint, eslint, tsc, mypy, go, golangci-lint, cargo, clippy; ⏳ S9 playwright, k6
 │   ├── quality/       ✅ S3 движок гейтов PASS/FAIL/SKIPPED, fail-closed, strict, baseline
 │   ├── reports/       ✅ S3 JSON, Markdown; ✅ S4 SARIF 2.1.0, JUnit
 │   ├── integrations/  ✅ S4 порт RepositoryHost; github/: клиент, App/token, PR, checks, rulesets, Actions executor
-│   ├── agents/        ✅ S5 requirements, architect, planner, bootstrap; ✅ S6 developer, reviewer, database, planner.migration; ⏳ S7 остальные 5
-│   ├── workflows/     ✅ S3 audit; ✅ S4 pull_request; ✅ S5 create; ✅ S6 develop, modernize, review, implement-цикл; ⏳ S7 maintain
-│   ├── api/           ⏳ S8 FastAPI
-│   └── worker/        ⏳ S8 серверный worker
+│   ├── agents/        ✅ S5 requirements, architect, planner, bootstrap; ✅ S6 developer, reviewer, database, planner.migration; ✅ S7 security, qa, performance, devops, maintenance
+│   ├── workflows/     ✅ S3 audit; ✅ S4 pull_request; ✅ S5 create; ✅ S6 develop, modernize, review, implement-цикл; ✅ S7 maintain
+│   └── api/           ✅ S8 services (auth, RBAC, изоляция), app (FastAPI), worker (очередь в БД, пул),
+│                           kinds, lifecycle (экспорт, retention), metrics, limits (ADR-0030)
 ├── tests/
 │   ├── unit/          ✅
 │   ├── integration/   ✅ (реальный git)
 │   └── fixtures/      ✅
-├── web/               ⏳ S8 React + TypeScript + Vite
-└── deploy/            ⏳ S8 Dockerfile, docker-compose (API, worker, PostgreSQL, MinIO, Redis, proxy)
+├── web/               ✅ S8 React + TypeScript + Vite (ADR-0031)
+└── deploy/            ✅ S8 Dockerfile (non-root), docker-compose (Caddy, API, worker, PostgreSQL), backup.sh
 ```
 
 ## Граф зависимостей модулей
@@ -92,8 +92,8 @@ flowchart BT
     workflows --> agents
     cli --> config & detection & git
     cli -.-> workflows
-    api -.S8.-> workflows & persistence
-    worker -.S8.-> orchestrator
+    api --> workflows & orchestrator & persistence
+    cli --> api
 ```
 
 Сплошные стрелки — существующие зависимости (проверяются import-linter), пунктир — плановые.

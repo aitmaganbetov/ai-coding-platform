@@ -1,6 +1,6 @@
 # ADR-0005: Хранение данных — SQLAlchemy 2 + Alembic, SQLite / PostgreSQL
 
-- Статус: Принято; реализовано в S2 (SQLite). PostgreSQL-профиль и MinIO — S8.
+- Статус: Принято; реализовано в S2 (SQLite), PostgreSQL-профиль и MinIO — в S8 (ADR-0030, ADR-0031).
 - Дата: 2026-11-05
 
 ## Контекст

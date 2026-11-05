@@ -1,0 +1,14 @@
+# TLS termination (automatic certificates) in front of the API (NFR-04).
+{$AI_CODING_DOMAIN} {
+	encode zstd gzip
+	request_body {
+		max_size 1MB
+	}
+	reverse_proxy api:8000 {
+		header_up X-Forwarded-Proto {scheme}
+	}
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	}
+}

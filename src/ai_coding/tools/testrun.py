@@ -32,7 +32,6 @@ import re
 import shlex
 import shutil
 import stat
-import tempfile
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -43,6 +42,7 @@ from typing import Any
 from ai_coding.config.models import TestsGate
 from ai_coding.executors.base import CommandSpec, Executor, ExecutorError, Mount
 from ai_coding.security import redact
+from ai_coding.tools.scratch import sandbox_scratch
 
 # Official Docker Hub images served by Google's mirror (no Docker Hub rate limits);
 # the digest fixes the content whatever the registry (NFR-05).
@@ -247,9 +247,13 @@ def copy_tree(
             shutil.copy2(src, dest / name)
 
 
-def open_permissions(root: Path) -> None:
-    """The sandbox user (1000) must be able to write into the scratch copy."""
-    for path in [root, *root.rglob("*")]:
+def open_permissions(root: Path, *, recursive: bool = True) -> None:
+    """The sandbox user (1000) must be able to write into the scratch copy.
+
+    Only for host-owned trees: entries the sandbox user created cannot be changed by
+    the host user (use ``recursive=False`` for a directory that already holds them).
+    """
+    for path in [root, *root.rglob("*")] if recursive else [root]:
         mode = path.stat().st_mode
         extra = (
             stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO
@@ -299,7 +303,9 @@ class SandboxTestRunner:
         if blocker:
             return TestRun(TestStatus.SKIPPED, blocker, command)
         started = time.monotonic()
-        with tempfile.TemporaryDirectory(prefix="ai-coding-tests-") as tmp:
+        async with sandbox_scratch(self.executor, "ai-coding-tests-") as scratch:
+            tmp = scratch.path
+            scratch.used(plan.image)
             work, deps = Path(tmp) / "work", Path(tmp) / "deps"
             copy_tree(source, work)
             deps.mkdir()

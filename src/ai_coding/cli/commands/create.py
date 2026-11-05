@@ -23,10 +23,10 @@ from rich.markup import escape
 
 from ai_coding.cli.commands.github import make_host, resolve_repo
 from ai_coding.cli.commands.run import _finish, _resolve
-from ai_coding.cli.common import STATE_CONFIG, close_all, guard, open_orchestrator
+from ai_coding.cli.common import close_all, guard, open_orchestrator
 from ai_coding.cli.console import error, info
 from ai_coding.cli.exit_codes import ExitCode
-from ai_coding.config.loader import find_config
+from ai_coding.config.loader import STATE_CONFIG, find_config
 from ai_coding.config.models import AICodingConfig
 from ai_coding.config.validator import validate_file
 from ai_coding.domain.enums import ApprovalOperation, ApprovalStatus, Mode, RunState

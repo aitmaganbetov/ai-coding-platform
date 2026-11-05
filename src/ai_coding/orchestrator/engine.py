@@ -70,7 +70,7 @@ from ai_coding.orchestrator.registry import HandlerRegistry, StepContext, StepRe
 from ai_coding.orchestrator.retry import ErrorClass, RetryPolicy, classify
 from ai_coding.orchestrator.router import AgentRouter
 from ai_coding.orchestrator.states import TERMINAL_STATES, StateManager
-from ai_coding.persistence.artifacts import ArtifactRef, LocalArtifactStore
+from ai_coding.persistence.artifacts import ArtifactRef, ArtifactStore, LocalArtifactStore
 from ai_coding.persistence.db import Database
 from ai_coding.persistence.models import (
     AgentExecution,
@@ -87,6 +87,7 @@ from ai_coding.persistence.models import (
     User,
 )
 from ai_coding.persistence.models import Finding as FindingRow
+from ai_coding.persistence.s3 import S3ArtifactStore
 from ai_coding.persistence.types import utcnow
 from ai_coding.security import redact
 from ai_coding.tools.base import Finding
@@ -136,10 +137,13 @@ class RunOptions:
     """Per-run options (CLI flags)."""
 
     require_approval: bool = False
+    # Caller data stored with the run (the server keeps the run kind and parameters
+    # here so any worker can rebuild the handlers); not part of the plan digest.
+    extra: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """JSON form stored on the run."""
-        return {"require_approval": self.require_approval}
+        return {**dict(self.extra), "require_approval": self.require_approval}
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,6 +204,15 @@ class _RunContext:
     lease_lost: bool = False
 
 
+def make_artifact_store(config: AICodingConfig, project_root: Path) -> ArtifactStore:
+    """Local store under ``artifacts.path`` or, with ``store: minio``, an S3 bucket
+    (credentials from ``AI_CODING_S3_*``; one prefix per project)."""
+    if config.artifacts.store == "minio":
+        return S3ArtifactStore.from_env(prefix=f"projects/{config.project.name}")
+    root = Path(config.artifacts.path)
+    return LocalArtifactStore(root if root.is_absolute() else project_root / root)
+
+
 class Orchestrator:
     """Facade over planner, state, policy, approvals, execution and recovery."""
 
@@ -215,8 +228,12 @@ class Orchestrator:
         lease_ttl: float = 30.0,
         retry_policy: RetryPolicy | None = None,
         poll_interval: float = 0.2,
+        local_owner: bool = True,
     ) -> None:
         self.db = db
+        # Local mode: the single local user owns the project. The server passes False:
+        # projects, users and roles are managed explicitly and never granted implicitly.
+        self.local_owner = local_owner
         self.config = config
         self.project_root = project_root.resolve()
         self.registry = registry
@@ -230,10 +247,7 @@ class Orchestrator:
         self.approvals = ApprovalManager(self.audit)
         self.checkpoints = CheckpointManager()
         self.base_policy = PolicyEngine(config)
-        artifacts_root = Path(config.artifacts.path)
-        if not artifacts_root.is_absolute():
-            artifacts_root = self.project_root / artifacts_root
-        self.artifacts = LocalArtifactStore(artifacts_root)
+        self.artifacts = make_artifact_store(config, self.project_root)
 
     def close(self) -> None:
         """Release database connections."""
@@ -241,8 +255,16 @@ class Orchestrator:
 
     # ------------------------------------------------------------ project --
     def ensure_project(self, session: Session) -> Project:
-        """Project row for this configuration; the local actor is its Owner."""
+        """Project row for this configuration; the local actor is its Owner.
+
+        With ``local_owner=False`` (server) the project must exist and nothing is
+        created or granted here.
+        """
         project = session.scalar(select(Project).where(Project.name == self.config.project.name))
+        if not self.local_owner:
+            if project is None:
+                raise RunNotFoundError(f"project '{self.config.project.name}' is not registered")
+            return project
         if project is None:
             project = Project(name=self.config.project.name, root_path=str(self.project_root))
             session.add(project)

@@ -8,7 +8,9 @@ as the non-root sandbox user, with only the cache (and a seed directory) mounted
 
 from __future__ import annotations
 
+import os
 import re
+import stat
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -61,6 +63,38 @@ def failure_reason(output: str, limit: int = 600) -> str:
     return text[:limit]
 
 
+def _listing(root: Path, limit: int = 8) -> str:
+    """A few cache entries with their modes (diagnostics when data is not found)."""
+    entries: list[str] = []
+    errors: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(root, onerror=lambda e: errors.append(str(e))):
+        for name in [*dirnames, *filenames]:
+            path = Path(dirpath) / name
+            try:
+                st = path.lstat()
+                entries.append(f"{path.relative_to(root)} {stat.filemode(st.st_mode)} {st.st_size}")
+            except OSError as exc:
+                errors.append(str(exc))
+            if len(entries) >= limit:
+                break
+        if len(entries) >= limit:
+            break
+    return (
+        "cache: " + ("; ".join(entries) or "empty") + (f" (errors: {errors[:2]})" if errors else "")
+    )
+
+
+_READABLE = (
+    'rc=0; for p in "$1"/* "$1"/.[!.]*; do [ -e "$p" ] || continue; '
+    'chmod -R a+rX "$p" || rc=1; done; exit $rc'
+)
+
+
+def readable_argv(target: str) -> tuple[str, ...]:
+    """Make everything under ``target`` (not ``target`` itself) world-readable."""
+    return ("sh", "-c", _READABLE, "sh", target)
+
+
 def network_executor() -> DockerSandboxExecutor:
     """Executor allowed to use the network (preparation only)."""
     return DockerSandboxExecutor(docker_config=DockerConfig(network="bridge"))
@@ -101,8 +135,20 @@ async def prepare(adapter: Any, executor: Executor | None = None) -> None:
             env={**dict(spec.env), **dict(env)}, timeout_seconds=1800.0,
             ok_exit_codes=frozenset(range(256)),
         ))  # fmt: skip
+        # Tools create their data as the sandbox user, sometimes with private modes
+        # (e.g. 0750 directories). Make it readable for everyone so the host user
+        # can verify it and any sandbox user can read it; no network for this step.
+        # The mount root belongs to the host user, and BusyBox ``chmod -R`` stops at
+        # the first directory it cannot change, so only its entries are changed.
+        modes = await executor.run(CommandSpec(
+            argv=readable_argv(mounts[0].target), cwd=cache, image=spec.image,
+            mounts=mounts[:1], network=False, timeout_seconds=300.0,
+            ok_exit_codes=frozenset(range(256)),
+        ))  # fmt: skip
     if not is_prepared(adapter):
-        raise RuntimeError(
-            f"{spec.name}: preparation failed (exit {result.exit_code}): "
-            f"{failure_reason(result.stderr + chr(10) + result.stdout)}"
+        output = result.stderr if result.stderr.strip() else result.stdout
+        output += (
+            f" | chmod exit {modes.exit_code} {modes.stderr.strip()[:200]} | {_listing(cache)}"
         )
+        reason = failure_reason(output, limit=1500)
+        raise RuntimeError(f"{spec.name}: preparation failed (exit {result.exit_code}): {reason}")

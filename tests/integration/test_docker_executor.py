@@ -59,3 +59,27 @@ async def test_missing_image_is_not_pulled(sandbox: DockerSandboxExecutor, tmp_p
     with pytest.raises(ExecutorUnavailableError, match="not present locally"):
         await sandbox.run(CommandSpec(argv=("true",), cwd=tmp_path, image=ghost))
     assert not sandbox.image_present(ghost)
+
+
+async def test_scratch_cleanup_removes_what_the_sandbox_user_protected(
+    sandbox: DockerSandboxExecutor, tmp_path: Path
+) -> None:
+    """Go's module cache is read-only, npm/cargo create private directories; the cleanup
+    script (run as the sandbox user) must remove them below a host-owned directory."""
+    from ai_coding.tools.scratch import SCRATCH, clean_argv  # noqa: PLC0415
+
+    deps = tmp_path / "deps"
+    deps.mkdir()
+    tmp_path.chmod(0o777)
+    deps.chmod(0o777)
+    make = (
+        "mkdir -p /s/deps/mod/x@v1/sub /s/deps/cache/e2 /s/.hidden && "
+        "touch /s/deps/mod/x@v1/sub/f.go /s/deps/cache/e2/blob /s/top && "
+        "chmod -R a-w /s/deps/mod && chmod 700 /s/deps/cache /s/deps/cache/e2"
+    )
+    mount = (Mount(tmp_path, "/s", read_only=False),)
+    assert (await sandbox.run(sh(make, tmp_path, mounts=mount))).exit_code == 0
+    clean = CommandSpec(argv=clean_argv(), cwd=tmp_path, image=ALPINE,
+                        mounts=(Mount(tmp_path, SCRATCH, read_only=False),))  # fmt: skip
+    assert (await sandbox.run(clean)).exit_code == 0
+    assert list(tmp_path.iterdir()) == []

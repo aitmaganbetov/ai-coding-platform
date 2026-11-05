@@ -39,7 +39,7 @@ GitHub и LLM — **опциональны**: детерминированный
 | Профиль | Компоненты | Хранилище | Очередь |
 | --- | --- | --- | --- |
 | Local Lite | CLI + in-process orchestrator + Local/Docker executor + git worktree; LLM опционально | SQLite `.ai-coding/state.db`, артефакты на диске | in-process scheduler поверх БД-очереди |
-| Self-Hosted | FastAPI + worker(ы) + PostgreSQL + MinIO + Web UI + Docker executor, reverse proxy с TLS | PostgreSQL, MinIO | БД-очередь (SKIP LOCKED) или Redis |
+| Self-Hosted | FastAPI + worker(ы) + PostgreSQL + MinIO + Web UI + Docker executor, reverse proxy с TLS | PostgreSQL, MinIO | БД-очередь (SKIP LOCKED); Redis — опционально, не реализован (ADR-0030) |
 | GitHub Hybrid | Self-Hosted или CLI + GitHub App/token + reusable workflows + Rulesets | как у базового профиля | + GitHub Actions executor |
 
 ## 3. Слои и компоненты
@@ -48,13 +48,12 @@ GitHub и LLM — **опциональны**: детерминированный
 flowchart TB
     subgraph Entry[Точки входа — composition root]
         cli[cli]:::done
-        api[api]:::todo
-        worker[worker]:::todo
+        api[api + worker]:::done
     end
     subgraph App[Прикладной слой]
         workflows[workflows<br/>AUDIT ✓; CREATE/DEVELOP/MODERNIZE/MAINTAIN]:::done
         orchestrator[orchestrator<br/>planner, registry, router, executor,<br/>context, state, checkpoint, policy,<br/>approval, aggregator, audit, retry]:::done
-        agents[agents x12]:::todo
+        agents[agents x12]:::done
         quality[quality gates]:::done
         reports[reports JSON/MD]:::done
     end
@@ -66,8 +65,8 @@ flowchart TB
         persistence[persistence]:::done
         executors[executors local+docker]:::done
         llm[llm port + guard]:::done
-        tools[tools gitleaks/semgrep/ruff]:::done
-        github[integrations.github]:::todo
+        tools[tools: анализаторы и инструменты стеков]:::done
+        github[integrations.github]:::done
     end
     security[security]:::done
     domain[domain]:::done

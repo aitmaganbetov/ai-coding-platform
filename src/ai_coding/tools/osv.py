@@ -96,7 +96,7 @@ class OSVScannerAdapter:
     def prepare_args(self, cache: str, seed: str) -> Sequence[str]:
         """Networked download of the offline databases (``ai-coding tools pull``)."""
         return ["scan", "source", "--offline-vulnerabilities", "--download-offline-databases",
-                "--format", "json", "--recursive", seed]  # fmt: skip
+                "--no-call-analysis=all", "--format", "json", "--recursive", seed]  # fmt: skip
 
     def version_args(self) -> Sequence[str]:
         return ["--version"]
@@ -106,8 +106,9 @@ class OSVScannerAdapter:
         return match.group(1) if match else None
 
     def scan_args(self, target: str, *, extra: dict[str, str]) -> Sequence[str]:
-        return ["scan", "source", "--offline-vulnerabilities", "--format", "json",
-                "--recursive", target]  # fmt: skip
+        # Call analysis would need the project's toolchains (Go, Cargo) in this image.
+        return ["scan", "source", "--offline-vulnerabilities", "--no-call-analysis=all",
+                "--format", "json", "--recursive", target]  # fmt: skip
 
     def ok_exit_codes(self) -> frozenset[int]:
         return frozenset({0, 1, 128})  # 1: vulnerabilities found, 128: no packages found

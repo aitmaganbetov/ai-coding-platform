@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any, Protocol
 
 _DIGEST_LEN = 64
 
@@ -78,6 +80,12 @@ class LocalArtifactStore:
             return True
         return False
 
+    def clear(self) -> int:
+        """Delete every blob of this store (project deletion); the number removed."""
+        blobs = [p for p in (self.root / "sha256").glob("*/*") if p.is_file()]
+        shutil.rmtree(self.root, ignore_errors=True)
+        return len(blobs)
+
     def purge_older_than(self, days: int, *, keep: set[str] | None = None) -> list[str]:
         """Delete blobs older than the retention period (NFR-08); returns deleted digests."""
         cutoff = datetime.now(UTC) - timedelta(days=days)
@@ -94,3 +102,15 @@ class LocalArtifactStore:
                 path.unlink()
                 deleted.append(path.name)
         return deleted
+
+
+class ArtifactStore(Protocol):
+    """Content-addressed blob store (local filesystem or S3-compatible)."""
+
+    root: Any
+
+    def put(self, data: bytes) -> ArtifactRef: ...
+    def get(self, digest: str) -> bytes: ...
+    def exists(self, digest: str) -> bool: ...
+    def delete(self, digest: str) -> bool: ...
+    def clear(self) -> int: ...
