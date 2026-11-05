@@ -100,17 +100,27 @@ tests/unit/         test_server_services.py test_s3_store.py
 
 | Проверка | Результат |
 | --- | --- |
-| `pytest --cov`, Python 3.13 (Docker: все образы инструментов, PostgreSQL) | RESULT_313 |
-| `pytest`, Python 3.12 (отдельное окружение) | RESULT_312 |
+| `pytest --cov`, Python 3.13 (Docker: все образы инструментов, PostgreSQL) | **849 passed**, 1 skipped по окружению (npm-registry через прокси на loopback хоста недоступен из контейнера; в CI тест выполняется), покрытие **93.8%** |
+| `pytest`, Python 3.12 (отдельное окружение) | **849 passed**, 1 skipped по окружению (то же) |
 | Новые тесты S8 | сервисы 9, API 8, worker 7, PostgreSQL 4, CLI сервера 3, экспорт и retention 5, S3 4, AC-08 1, временные каталоги 4 + 1 в Docker, API не блокируется встроенным worker'ом 1; изменены тесты подготовки инструментов |
 | ruff, ruff format, mypy strict (164 файла), import-linter (2 контракта) | без замечаний |
 | Дрейф схемы конфигурации; `uv lock --check` | нет / OK |
 | actionlint; zizmor `--offline` | без замечаний |
 | Web UI: `tsc --noEmit`, Vitest, `vite build` | OK, 5 passed, сборка 156 КБ JS |
+| Тесты песочницы от uid 1001 (как runner CI): go test/golangci-lint, cargo test/Clippy | на старом коде падают с `PermissionError`, на новом — 2 passed, временных каталогов не осталось |
+| Зависание сервера при заполненном канале вывода (Linux, буфер 4 КБ) | воспроизведено: сервер замолкает после 4 прогонов |
 | e2e smoke (Playwright, живой сервер с worker'ом и UI) | вход → проект → запуск discovery → прогон COMPLETED → 1 артефакт, без ошибок в консоли |
 | Подпись SigV4 | совпадает с эталоном AWS `34b48302…6dc6f7` |
 
-CI на GitHub (run [42062746703](https://github.com/aitmaganbetov/ai-coding-platform/actions/runs/42062746703), коммит `4099162`): CI_RESULT
+CI на GitHub (run [42072857755](https://github.com/aitmaganbetov/ai-coding-platform/actions/runs/42072857755), коммит `32e5937`) — **все 11 jobs зелёные**:
+- lint и type-check;
+- тесты на Ubuntu, macOS и Windows × Python 3.12/3.13 (например, ubuntu py3.12: 832 passed; windows py3.13: 830 passed; пропуски — Docker-тесты, которые идут в job sandbox);
+- **sandbox**: 209 passed без пропусков — Docker-инструменты, PostgreSQL, офлайн-данные OSV подготовлены. Самоаудит: 0 находок;
+- образ сервера (сборка, запуск read-only от uid 10001, вход, `/me`);
+- wheel;
+- Web UI.
+
+Промежуточные прогоны CI нашли проблемы 5, 7, 11 и 12 из §6.
 
 ## 6. Найденные и исправленные проблемы
 
