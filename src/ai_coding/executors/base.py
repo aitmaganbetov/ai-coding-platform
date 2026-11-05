@@ -43,6 +43,9 @@ class CommandSpec:
     mounts: tuple[Mount, ...] = ()
     workdir: str | None = None  # working directory inside the sandbox
     network: bool = False  # sandbox network access (policy must allow it)
+    # With ``network``: the only hosts the step may reach (egress allowlist proxy,
+    # B-205); ``None`` means unrestricted (explicit operator actions only).
+    egress: tuple[str, ...] | None = None
     ok_exit_codes: frozenset[int] = frozenset({0})
 
     def __post_init__(self) -> None:

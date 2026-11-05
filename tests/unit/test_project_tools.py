@@ -17,7 +17,7 @@ from ai_coding.tools.golang import GolangciLintAdapter, GoTestAdapter
 from ai_coding.tools.mypy import MypyAdapter
 from ai_coding.tools.node import ESLintAdapter, TypeScriptAdapter
 from ai_coding.tools.osv import OSVScannerAdapter
-from ai_coding.tools.php import PHPStanAdapter, PintAdapter
+from ai_coding.tools.php import COMPOSER_HOSTS, PHPStanAdapter, PintAdapter
 from ai_coding.tools.prepare import (
     cache_name,
     is_prepared,
@@ -257,6 +257,7 @@ async def test_install_runs_networked_on_a_scratch_copy(tmp_path: Path) -> None:
     assert run.succeeded and len(run.findings) == 2
     install, *rest = ex.seen
     assert install.argv[0] == "composer" and install.network
+    assert install.egress == COMPOSER_HOSTS  # only the registry hosts (B-205)
     assert all(not c.network for c in rest)  # only the install step is networked
     work = next(m for m in install.mounts if m.target == WORK)
     assert work.source != root.resolve() and not work.read_only
@@ -344,6 +345,7 @@ async def test_prepare_trivy_db_is_networked_and_verified() -> None:
     spec, fix_modes = ex.seen
     assert fix_modes.argv == readable_argv(fix_modes.mounts[0].target) and not fix_modes.network
     assert spec.network and spec.argv[0] == "trivy" and is_prepared(TrivyAdapter())
+    assert spec.egress is None  # `tools pull` is an explicit operator download
     with pytest.raises(RuntimeError, match="preparation failed"):
         await prepare(OSVScannerAdapter(), FakeExecutor(results={"osv-scanner": result(1)}))
 

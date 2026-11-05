@@ -225,7 +225,8 @@ async def _run(
     open_permissions(scratch.path, recursive=False)
     open_permissions(deps, recursive=False)
     result = await executor.run(CommandSpec(
-        argv=cmd.argv, cwd=work, image=cmd.image, workdir=WORK, network=True, env=dict(cmd.env),
+        argv=cmd.argv, cwd=work, image=cmd.image, workdir=WORK, network=True,
+        egress=tuple(cmd.hosts), env=dict(cmd.env),  # only the registry (B-205)
         mounts=(Mount(work, WORK, read_only=False), Mount(deps, DEPS, read_only=False)),
         timeout_seconds=timeout, ok_exit_codes=frozenset(range(256)),
     ))  # fmt: skip

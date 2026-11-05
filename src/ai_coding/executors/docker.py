@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import uuid
+from dataclasses import replace
 from pathlib import Path
 
 from ai_coding.config.models import DockerConfig, ResourceLimits
@@ -24,6 +25,8 @@ from ai_coding.executors.base import (
     ExecutorUnavailableError,
     Mount,
 )
+from ai_coding.executors.egress import PROXY_ENV
+from ai_coding.executors.egress import egress_gateway as _gateway
 from ai_coding.executors.process import run_process
 from ai_coding.security import redact
 
@@ -69,14 +72,22 @@ class DockerSandboxExecutor:
         """Whether the Docker daemon is reachable."""
         return docker_available(self._docker)
 
-    def build_argv(self, spec: CommandSpec, name: str) -> list[str]:
-        """``docker run`` argv for ``spec`` (exposed for review and tests)."""
+    def build_argv(
+        self, spec: CommandSpec, name: str, *, egress: tuple[str, str] | None = None
+    ) -> list[str]:
+        """``docker run`` argv for ``spec`` (exposed for review and tests).
+
+        ``egress`` is ``(internal network, proxy URL)`` for a step limited to an
+        allowlist: the container gets no route outside, only the proxy.
+        """
         image = spec.image or self._cfg.image
         if self._require_digest and not _DIGEST_REF.match(image):
             raise ExecutorError(f"image '{image}' must be pinned by digest (name@sha256:…)")
         network = "bridge" if spec.network else "none"
         if spec.network and self._cfg.network == "none":
             raise ExecutorError("sandbox network is disabled by execution.docker.network")
+        if egress is not None:
+            network = egress[0]
         argv = [
             "run", "--rm", "--name", name,
             "--pull", "never",  # images come from `ai-coding tools pull`: no hidden egress
@@ -97,6 +108,16 @@ class DockerSandboxExecutor:
             if not _ENV_KEY.match(key):
                 raise ExecutorError(f"invalid environment variable name {key!r}")
             argv += ["--env", f"{key}={value}"]
+        if egress is not None:
+            argv += ["--dns", "0.0.0.0"]  # noqa: S104 - no resolver: only the proxy resolves names
+            for key in PROXY_ENV:
+                argv += ["--env", f"{key}={egress[1]}"]
+            argv += [
+                "--env",
+                "NO_PROXY=localhost,127.0.0.1",
+                "--env",
+                "no_proxy=localhost,127.0.0.1",
+            ]
         for mount in spec.mounts:
             argv += ["--mount", self._mount_arg(mount)]
         if spec.workdir:
@@ -149,7 +170,20 @@ class DockerSandboxExecutor:
         if docker is None:
             raise ExecutorUnavailableError("docker CLI not found")
         name = f"ai-coding-{uuid.uuid4().hex[:16]}"
-        argv = [docker, *self.build_argv(spec, name)]
+        if spec.network and spec.egress is not None:
+            async with _gateway(docker, name, spec.egress, _docker_env()) as gateway:
+                result = await self._run(docker, name, spec, gateway.route)
+            denied = gateway.denied()
+            if denied:  # make the reason of a failed install visible in the step's output
+                note = "\negress denied by policy: " + "; ".join(denied[:10]) + "\n"
+                result = replace(result, stderr=result.stderr + note)
+            return result
+        return await self._run(docker, name, spec, None)
+
+    async def _run(
+        self, docker: str, name: str, spec: CommandSpec, egress: tuple[str, str] | None
+    ) -> ExecutionResult:
+        argv = [docker, *self.build_argv(spec, name, egress=egress)]
 
         def kill() -> None:
             subprocess.run(  # noqa: S603 - fixed argv

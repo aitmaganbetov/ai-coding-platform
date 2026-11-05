@@ -314,7 +314,8 @@ class SandboxTestRunner:
             if plan.install:
                 result = await self.executor.run(CommandSpec(
                     argv=plan.install, cwd=work, image=plan.image, mounts=mounts, workdir="/work",
-                    network=True, env=dict(plan.env), timeout_seconds=plan.timeout_seconds,
+                    network=True, egress=tuple(plan.install_hosts), env=dict(plan.env),
+                    timeout_seconds=plan.timeout_seconds,
                 ))  # fmt: skip
                 if result.exit_code != 0:
                     tail = redact((result.stdout + result.stderr)[-_OUTPUT_TAIL:])

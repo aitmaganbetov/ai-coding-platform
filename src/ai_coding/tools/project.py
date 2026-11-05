@@ -183,15 +183,20 @@ class ProjectToolRunner:
             if plan.toolchain is not None:
                 mounts += (Mount(tool_cache(plan.toolchain), TOOLCHAIN, read_only=False),)
 
-            def command(argv: tuple[str, ...], *, network: bool = False) -> CommandSpec:
+            def command(
+                argv: tuple[str, ...], *, egress: tuple[str, ...] | None = None
+            ) -> CommandSpec:
                 return CommandSpec(
                     argv=argv, cwd=work, image=spec.image, mounts=mounts, workdir=WORK,
-                    network=network, env={**dict(spec.env), **dict(plan.env)},
+                    network=egress is not None, egress=egress,
+                    env={**dict(spec.env), **dict(plan.env)},
                     timeout_seconds=self.timeout, ok_exit_codes=frozenset(range(256)),
                 )  # fmt: skip
 
-            if plan.install is not None:
-                inst = await self.executor.run(command(plan.install.argv, network=True))
+            if plan.install is not None:  # only the install hosts are reachable (B-205)
+                inst = await self.executor.run(
+                    command(plan.install.argv, egress=tuple(plan.install.hosts))
+                )
                 if inst.exit_code != 0:
                     return "dependency install failed: " + _short(inst.stderr or inst.stdout)
             version = None
