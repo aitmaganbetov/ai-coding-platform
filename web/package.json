@@ -1,7 +1,7 @@
 {
   "name": "ai-coding-web",
   "private": true,
-  "version": "0.1.0",
+  "version": "2.1.0",
   "type": "module",
   "description": "Web UI of the AI Coding Platform server (B-706)",
   "scripts": {

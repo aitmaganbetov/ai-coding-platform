@@ -129,8 +129,8 @@
 | B-202 | DockerSandboxExecutor: `--network none`, `--read-only`, `--cap-drop ALL`, no-new-privileges, non-root, pids/cpu/memory, без Docker socket | §12 | P0 | ✅ S3 |
 | B-203 | Образы инструментов с закреплёнными digest | NFR-05 | P0 | ✅ S3 |
 | B-204 | Импорт Git URL: clone в sandbox, проверка доступа и состояния | FR-01 | P0 | ✅ S3 (`project add`; клонирование на хост в изолированный каталог, без hooks/submodules) |
-| B-205 | Egress allowlist в sandbox (прокси/сеть по политике) | §12 | P1 | ↪ S9 (сеть песочницы выключена; установка зависимостей — `network: bridge` по политике, S7) |
-| B-206 | Лимиты Local Executor на Windows (Job Objects) | §5 | P2 | ⬜ S9 |
+| B-205 | Egress allowlist в sandbox (прокси/сеть по политике) | §12 | P1 | ✅ S9 (ADR-0033) |
+| B-206 | Лимиты Local Executor на Windows (Job Objects) | §5 | P2 | ✅ S9 |
 
 ### E10 Tool registry
 | ID | Задача | Трассировка | Pri | Статус |
@@ -258,16 +258,16 @@
 
 | ID | Задача | Трассировка | Pri |
 | --- | --- | --- | --- |
-| B-800 | Нагрузочные тесты (k6) API/worker | NFR-02 | P0 |
-| B-603 | Адаптеры Playwright (E2E) и k6 для проектов пользователей (перенесено из S7) | §10 | P1 |
-| B-801 | Security-тесты: SAST/DAST API, fuzzing конфигурации, тесты sandbox escape | §12 | P0 |
-| B-802 | SBOM (CycloneDX), подписанные артефакты (Sigstore), provenance (SLSA) | §12 | P0 |
-| B-803 | Эксплуатационная инструкция, runbook восстановления | §19 | P0 |
-| B-804 | Приёмочные сценарии AC-01…AC-10 автоматизированы | §17 | P0 |
-| B-805 | Усиленная изоляция (gVisor) для Self-Hosted | §12 | P2 |
-| B-807 | Проверка `S3ArtifactStore` против настоящего MinIO в CI; rootless Docker/удалённый демон для worker'а; общий rate limiter (из S8) | §4, §12 | P1 |
-| B-205 | Egress allowlist в sandbox (перенесено из S3/S8) | §12 | P1 |
-| B-806 | Релиз v2.1: changelog, теги, публикация пакета | §16 | P0 |
+| B-800 | Нагрузочные тесты (k6) API/worker — ✅ `loadtest/`, CI-job «Load test» | NFR-02 | P0 |
+| B-603 | Адаптеры Playwright (E2E) и k6 для проектов пользователей (перенесено из S7) — ✅ `tools/e2e.py` | §10 | P1 |
+| B-801 | Security-тесты: SAST/DAST API, fuzzing конфигурации, тесты sandbox escape — ✅ `tests/security/` (сторонний DAST-сканер — §7 отчёта S9) | §12 | P0 |
+| B-802 | SBOM (CycloneDX), подписанные артефакты (Sigstore), provenance (SLSA) — ✅ `scripts/sbom.py`, `release-platform.yml` | §12 | P0 |
+| B-803 | Эксплуатационная инструкция, runbook восстановления — ✅ `docs/operations.md`, `docs/runbook.md` | §19 | P0 |
+| B-804 | Приёмочные сценарии AC-01…AC-10 автоматизированы — ✅ матрица в CI | §17 | P0 |
+| B-805 | Усиленная изоляция (gVisor) для Self-Hosted — ✅ `execution.docker.runtime` | §12 | P2 |
+| B-807 | Проверка `S3ArtifactStore` против настоящего S3-сервера в CI; rootless Docker/удалённый демон для worker'а; общий rate limiter (из S8) — ✅ ADR-0034 | §4, §12 | P1 |
+| B-205 | Egress allowlist в sandbox (перенесено из S3/S8) — ✅ ADR-0033 | §12 | P1 |
+| B-806 | Релиз v2.1: changelog, теги, публикация пакета — ✅ версия 2.1.0, CHANGELOG, workflow; тег и публикация — владелец (ADR-0035) | §16 | P0 |
 
 ---
 
