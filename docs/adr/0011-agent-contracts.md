@@ -12,7 +12,7 @@
 - `AgentScope` по умолчанию запрещает запись, shell и сеть.
 - Каждый агент (S5+) реализует порт `Agent`: `name`, `capabilities`, `default_output_schema`, `required_tools`, `run(task, context) -> AgentResult`; обработка ошибок — исключения классифицируются (transient/permanent/policy-violation); журналирование — через Audit Logger с redaction.
 - Выходные схемы агентов хранятся в `ai_coding/schemas/agents/<agent>.output.schema.json` (S5), например Reviewer — `findings[{file,line,severity,message,evidence}]`.
-- `confidence` информативна и **никогда** не заменяет результаты детерминированных проверок (ТЗ §4 Result Aggregator).
+- `confidence` информативна и **никогда** не заменяет результаты детерминированных проверок (ТЗ §5 Result Aggregator).
 
 ## Последствия
 Агенты взаимозаменяемы, их выход проверяем машинно; некорректный ответ LLM не может «пройти» как успех.

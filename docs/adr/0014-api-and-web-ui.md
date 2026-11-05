@@ -4,7 +4,7 @@
 - Дата: 2026-11-05
 
 ## Контекст
-ТЗ §12/§13: `POST /projects`, `POST /projects/{id}/runs`, `GET /runs/{id}`, `POST /runs/{id}/approve`, `POST /runs/{id}/cancel`, `GET /runs/{id}/artifacts`, `GET /projects/{id}/findings`, `GET /audit-events`; создание идемпотентно по `Idempotency-Key`. Web UI — React, необязателен для CLI MVP. NFR-04.
+ТЗ §13: `POST /projects`, `POST /projects/{id}/runs`, `GET /runs/{id}`, `POST /runs/{id}/approve`, `POST /runs/{id}/cancel`, `GET /runs/{id}/artifacts`, `GET /projects/{id}/findings`, `GET /audit-events`; создание идемпотентно по `Idempotency-Key`. Web UI — React, необязателен для CLI MVP (§4). NFR-04.
 
 ## Решение
 - FastAPI (`ai_coding.api`), версия API в пути `/api/v1`, OpenAPI 3.1 — контракт; Pydantic-схемы разделены на API DTO и доменные модели.

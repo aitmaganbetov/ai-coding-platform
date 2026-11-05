@@ -79,7 +79,7 @@ flowchart TB
 
 Зелёные — реализованы в S1, серые — запланированы. Правило зависимостей проверяется `import-linter` (ADR-0003).
 
-## 4. Жизненный цикл run (ТЗ §4)
+## 4. Жизненный цикл run (ТЗ §5)
 
 ```mermaid
 stateDiagram-v2
@@ -148,10 +148,10 @@ sequenceDiagram
 | Аудит | append-only `audit_events` (actor, project_id, run_id, timestamp, outcome) | §3, FR-16 |
 | Наблюдаемость | structlog JSON-логи с run_id/trace_id, метрики Prometheus (S8), OpenTelemetry — опционально | NFR-07 |
 | Воспроизводимость | закреплённые версии инструментов и образов (digest), версии в отчётах | NFR-05 |
-| Идемпотентность | Idempotency-Key в API, ключи эффектов в оркестраторе | §12, AC-04 |
+| Идемпотентность | Idempotency-Key в API, ключи эффектов в оркестраторе | §5, §13, AC-04 |
 | Экспорт/удаление | `report export`, удаление проекта по retention-политике | NFR-08 |
 
-## 7. Модель данных (ТЗ §12)
+## 7. Модель данных (ТЗ §13)
 
 ```mermaid
 erDiagram

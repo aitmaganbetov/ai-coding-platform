@@ -4,7 +4,7 @@
 - Дата: 2026-11-05
 
 ## Контекст
-ТЗ §4/§12: SQLite для single-user, PostgreSQL для multi-user; артефакты на локальном диске или MinIO. Сущности: users, projects, repositories, runs, tasks, task_dependencies, agents, agent_executions, approvals, artifacts, findings, policies, model_usage, audit_events, checkpoints. UUID, время UTC, optimistic concurrency (version) для состояния задач. NFR-03: сбой исполнителя не теряет подтверждённые состояния.
+ТЗ §4/§13: SQLite для single-user, PostgreSQL для multi-user; артефакты на локальном диске или MinIO. Сущности: users, projects, repositories, runs, tasks, task_dependencies, agents, agent_executions, approvals, artifacts, findings, policies, model_usage, audit_events, checkpoints. UUID, время UTC, optimistic concurrency (version) для состояния задач. NFR-03: сбой исполнителя не теряет подтверждённые состояния.
 
 ## Решение
 - SQLAlchemy 2.x (typed ORM, Core для горячих запросов) + Alembic; **одни миграции** для SQLite и PostgreSQL (без диалект-специфичных типов, JSON — через `JSON`/`JSONB` variant).

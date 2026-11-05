@@ -2,7 +2,7 @@
 
 Полный backlog по ТЗ v2.1. Каждый элемент трассируется к требованиям (FR/NFR/AC/P0, разделы ТЗ). Статусы: ✅ Done (S1, проверено тестами), 🔜 Next (S2), ⬜ Planned.
 
-**Definition of Done** (ТЗ §19–20): код, тесты, обновлённая документация, безопасные значения по умолчанию, прохождение CI, проверенный сценарий отказа (если применимо), отчёт и одобрение ответственного.
+**Definition of Done** (ТЗ §20): код, тесты, обновлённая документация, безопасные значения по умолчанию, прохождение CI, проверенный сценарий отказа (если применимо), отчёт и одобрение ответственного.
 
 Приоритеты: **P0** — блокирует Local MVP / ТЗ §19; **P1** — нужно для v2.1; **P2** — улучшение.
 
@@ -76,9 +76,9 @@
 ### E05 Persistence
 | ID | Задача | Трассировка | Pri |
 | --- | --- | --- | --- |
-| B-100 | SQLAlchemy-модели всех сущностей ТЗ §12 (users … checkpoints), UUIDv7, UTC | §12 | P0 |
+| B-100 | SQLAlchemy-модели всех сущностей ТЗ §13 (users … checkpoints), UUIDv7, UTC | §13 | P0 |
 | B-101 | Alembic, одни миграции для SQLite и PostgreSQL; тест миграций up/down | ADR-0005 | P0 |
-| B-102 | Optimistic concurrency (`version`) для runs/tasks; тест конфликта | §12 | P0 |
+| B-102 | Optimistic concurrency (`version`) для runs/tasks; тест конфликта | §13 | P0 |
 | B-103 | Append-only `audit_events` (actor, project_id, run_id, timestamp, outcome) | §3, FR-16 | P0 |
 | B-104 | `ArtifactStore` (локальный диск, SHA-256, retention) | §4, NFR-03, NFR-08 | P0 |
 | B-105 | SQLite WAL/foreign keys/busy_timeout; каталог `.ai-coding/` | ADR-0005 | P0 |
@@ -86,16 +86,16 @@
 ### E06 Orchestrator Engine
 | ID | Задача | Трассировка | Pri |
 | --- | --- | --- | --- |
-| B-110 | State Manager: таблица переходов, идемпотентные переходы, журнал; 100% ветвей тестами | §4, NFR-06 | P0 |
-| B-111 | Task Planner: DAG, проверка циклов, критерии успеха, бюджет шага | §4 | P0 |
+| B-110 | State Manager: таблица переходов, идемпотентные переходы, журнал; 100% ветвей тестами | §5, NFR-06 | P0 |
+| B-111 | Task Planner: DAG, проверка циклов, критерии успеха, бюджет шага | §5 | P0 |
 | B-112 | Workflow Executor: последовательное/параллельное исполнение, `max_parallel_tasks`, семафоры ресурсов | FR-08, NFR-02 | P0 |
-| B-113 | Checkpoint Manager: атомарная фиксация после верификации шага | §4, NFR-03 | P0 |
+| B-113 | Checkpoint Manager: атомарная фиксация после верификации шага | §5, NFR-03 | P0 |
 | B-114 | Retry & Recovery: backoff+jitter, классификация ошибок, тайм-аут, отмена | FR-09 | P0 |
 | B-115 | Восстановление после `kill -9` без дублирования коммитов (ключи эффектов) | AC-04 | P0 |
 | B-116 | Agent Registry (встроенные + entry points) | FR-08 | P0 |
-| B-117 | Agent Router: capability, права, стоимость, доступность | §4 | P0 |
-| B-118 | Context Manager: индекс репозитория, минимальный контекст, исключение секретов/игнорируемых путей | §4, FR-18 | P0 |
-| B-119 | Result Aggregator: итог со ссылками на evidence; AI не перекрывает статус теста | §4 | P0 |
+| B-117 | Agent Router: capability, права, стоимость, доступность | §5 | P0 |
+| B-118 | Context Manager: индекс репозитория, минимальный контекст, исключение секретов/игнорируемых путей | §5, FR-18 | P0 |
+| B-119 | Result Aggregator: итог со ссылками на evidence; AI не перекрывает статус теста | §5 | P0 |
 | B-120 | Audit Logger + structlog JSON-логи с run_id и redaction | FR-16, NFR-07 | P0 |
 | B-121 | CLI: `run status`, `run resume`, `run cancel` | §14 | P0 |
 
@@ -103,9 +103,9 @@
 | ID | Задача | Трассировка | Pri |
 | --- | --- | --- | --- |
 | B-130 | Policy Engine: policy-as-code (allowlist команд, пути записи, egress, бюджеты), решения с обоснованием | FR-11, §12 | P0 |
-| B-131 | Approval Manager: запросы, TTL, роль подтверждающего, CLI-подтверждение, `--require-approval` | §4, FR-17, AC-10 | P0 |
+| B-131 | Approval Manager: запросы, TTL, роль подтверждающего, CLI-подтверждение, `--require-approval` | §5, FR-17, AC-10 | P0 |
 | B-132 | `--dry-run` для всех изменяющих операций | §14, AC-10 | P0 |
-| B-133 | Критичные файлы (`approvals.critical_paths`) → approval | §4 | P0 |
+| B-133 | Критичные файлы (`approvals.critical_paths`) → approval | §5 | P0 |
 
 ### E08 LLM-порт и бюджеты
 | ID | Задача | Трассировка | Pri |
@@ -236,7 +236,7 @@
 
 | ID | Задача | Трассировка | Pri |
 | --- | --- | --- | --- |
-| B-700 | FastAPI: endpoints ТЗ §12, OpenAPI, Idempotency-Key | §12, §13 | P0 |
+| B-700 | FastAPI: endpoints ТЗ §13, OpenAPI, Idempotency-Key | §13 | P0 |
 | B-701 | Аутентификация, токены API, RBAC на сервере, межпроектная изоляция | §3, NFR-04, AC-08 | P0 |
 | B-702 | Rate limiting, security headers, TLS через reverse proxy | NFR-04 | P0 |
 | B-703 | PostgreSQL профиль, БД-очередь SKIP LOCKED, Redis-адаптер (опционально) | FR-13, ADR-0013 | P0 |

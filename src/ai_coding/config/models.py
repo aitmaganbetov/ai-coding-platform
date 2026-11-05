@@ -84,7 +84,7 @@ class ProjectConfig(_Strict):
 
 # ---------------------------------------------------------------- execution --
 class ResourceLimits(_Strict):
-    """Per-step resource limits enforced by every executor (ТЗ §4 Executor)."""
+    """Per-step resource limits enforced by every executor (ТЗ §5 Executor)."""
 
     cpus: float = Field(default=2.0, gt=0, le=64)
     memory_mb: int = Field(default=2048, ge=128, le=262144)
@@ -270,7 +270,7 @@ class BudgetsConfig(_Strict):
 
 # ---------------------------------------------------------------- approvals --
 class ApprovalsConfig(_Strict):
-    """Human-in-the-loop policy (ТЗ §4, FR-17)."""
+    """Human-in-the-loop policy (ТЗ §5, FR-17)."""
 
     required_for: list[ApprovalOperation] = Field(
         default_factory=lambda: sorted(
