@@ -92,6 +92,9 @@ def live_server(env: dict[str, str]) -> Iterator[str]:
         [
             sys.executable,
             "-c",
+            # Thread stacks every 15 s: if the server stops answering, the output shows
+            # where it waits (printed below when the test fails).
+            "import faulthandler, sys; faulthandler.dump_traceback_later(15, repeat=True); "
             "from ai_coding.cli.app import main; main()",
             "server",
             "serve",
@@ -119,7 +122,8 @@ def live_server(env: dict[str, str]) -> Iterator[str]:
         yield url
     finally:
         proc.terminate()
-        proc.communicate(timeout=30)  # reap the process and close its pipe
+        output = proc.communicate(timeout=30)[0]  # reap the process and close its pipe
+        print("--- server output (tail) ---\n" + output[-20000:])  # shown on failure
 
 
 def test_real_server_process_runs_a_discovery(live_server: str, env: dict[str, str]) -> None:
