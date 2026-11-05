@@ -34,3 +34,5 @@
 | [0027](0027-project-tools-and-offline-data.md) | Инструменты стеков в песочнице, офлайн-данные в кэше платформы, подавления, воспроизводимость | Принято | S7 |
 | [0028](0028-s7-agents-and-advisory-triage.md) | Агенты Security, QA, Performance, DevOps, Maintenance; рекомендательный triage; prompt injection | Принято | S7 |
 | [0029](0029-maintain-and-dependency-upgrades.md) | MAINTAIN: утверждённый план, обновление зависимостей пакетным менеджером, регрессионные тесты | Принято | S7 |
+| [0030](0030-server-api-rbac-queue.md) | Self-Hosted сервер: API, аутентификация, RBAC, изоляция проектов, idempotency, очередь в БД и worker'ы | Принято | S8 |
+| [0031](0031-server-deployment-storage-ui.md) | Развёртывание (образ, compose, TLS, backup, ротация), S3/MinIO, Web UI, метрики, экспорт и retention | Принято | S8 |

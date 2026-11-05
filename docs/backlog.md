@@ -81,8 +81,8 @@
 | B-102 | Optimistic concurrency (`version`) для runs/tasks; тест конфликта | §13 | P0 | ✅ S2 |
 | B-103 | Append-only `audit_events` (actor, project_id, run_id, timestamp, outcome) | §3, FR-16 | P0 | ✅ S2 |
 | B-104 | `ArtifactStore` (локальный диск, SHA-256, retention) | §4, NFR-03, NFR-08 | P0 | ✅ S2 |
-| B-106 | Слой репозиториев поверх ORM (ADR-0005; второй потребитель — API) | ADR-0005 | P1 | ⬜ S8 |
-| B-107 | CI-прогон тестов persistence на PostgreSQL (service container) | ADR-0005 | P0 | ⬜ S8 |
+| B-106 | Слой репозиториев поверх ORM (ADR-0005; второй потребитель — API) | ADR-0005 | P1 | ↪ S8: решено сервисным слоем `api.services.Server` поверх ORM (ADR-0030); отдельные репозитории не понадобились |
+| B-107 | CI-прогон тестов persistence на PostgreSQL (service container) | ADR-0005 | P0 | ✅ S8 (`test_postgres.py` на PostgreSQL по digest в CI-job sandbox: миграции, append-only, `SKIP LOCKED`, API) |
 | B-105 | SQLite WAL/foreign keys/busy_timeout; каталог `.ai-coding/` | ADR-0005 | P0 | ✅ S2 |
 
 ### E06 Orchestrator Engine
@@ -129,7 +129,7 @@
 | B-202 | DockerSandboxExecutor: `--network none`, `--read-only`, `--cap-drop ALL`, no-new-privileges, non-root, pids/cpu/memory, без Docker socket | §12 | P0 | ✅ S3 |
 | B-203 | Образы инструментов с закреплёнными digest | NFR-05 | P0 | ✅ S3 |
 | B-204 | Импорт Git URL: clone в sandbox, проверка доступа и состояния | FR-01 | P0 | ✅ S3 (`project add`; клонирование на хост в изолированный каталог, без hooks/submodules) |
-| B-205 | Egress allowlist в sandbox (прокси/сеть по политике) | §12 | P1 | ↪ S8 (в S3 сеть песочницы полностью выключена) |
+| B-205 | Egress allowlist в sandbox (прокси/сеть по политике) | §12 | P1 | ↪ S9 (сеть песочницы выключена; установка зависимостей — `network: bridge` по политике, S7) |
 | B-206 | Лимиты Local Executor на Windows (Job Objects) | §5 | P2 | ⬜ S9 |
 
 ### E10 Tool registry
@@ -246,11 +246,11 @@
 | B-700 | FastAPI: endpoints ТЗ §13, OpenAPI, Idempotency-Key | §13 | P0 |
 | B-701 | Аутентификация, токены API, RBAC на сервере, межпроектная изоляция | §3, NFR-04, AC-08 | P0 |
 | B-702 | Rate limiting, security headers, TLS через reverse proxy | NFR-04 | P0 |
-| B-703 | PostgreSQL профиль, БД-очередь SKIP LOCKED, Redis-адаптер (опционально) | FR-13, ADR-0013 | P0 |
+| B-703 | PostgreSQL профиль, БД-очередь SKIP LOCKED, Redis-адаптер (опционально) — **Redis-адаптер не реализован**: очередь в БД покрывает NFR-02, Redis в ТЗ опционален (ADR-0030) | FR-13, ADR-0013 | P0 |
 | B-704 | Worker(ы), ≥10 параллельных заданий, лимит конфигурируемый | NFR-02 | P0 |
 | B-705 | MinIO ArtifactStore | §4 | P1 |
 | B-706 | Web UI (React+TS+Vite): проекты, runs, approvals, findings, audit | §4 | P1 |
-| B-707 | Метрики Prometheus, trace/run_id, OpenTelemetry (опц.) | NFR-07 | P1 |
+| B-707 | Метрики Prometheus, trace/run_id, OpenTelemetry (опц.) — **OpenTelemetry не подключён** (опционален; `run_id` в логах и журнале, ADR-0031) | NFR-07 | P1 |
 | B-708 | docker-compose, Dockerfile (non-root, distroless/slim), backup БД, ротация ключей | §15 | P0 |
 | B-709 | Экспорт данных проекта и удаление по retention | NFR-08 | P0 |
 
@@ -265,6 +265,8 @@
 | B-803 | Эксплуатационная инструкция, runbook восстановления | §19 | P0 |
 | B-804 | Приёмочные сценарии AC-01…AC-10 автоматизированы | §17 | P0 |
 | B-805 | Усиленная изоляция (gVisor) для Self-Hosted | §12 | P2 |
+| B-807 | Проверка `S3ArtifactStore` против настоящего MinIO в CI; rootless Docker/удалённый демон для worker'а; общий rate limiter (из S8) | §4, §12 | P1 |
+| B-205 | Egress allowlist в sandbox (перенесено из S3/S8) | §12 | P1 |
 | B-806 | Релиз v2.1: changelog, теги, публикация пакета | §16 | P0 |
 
 ---
@@ -306,6 +308,6 @@
 | AC-05 | B-016, B-224 ✅ (аудит без egress), B-412 (локальная модель — S5) |
 | AC-06 | B-220, B-302 |
 | AC-07 | B-611 |
-| AC-08 | B-701 |
+| AC-08 | B-701 (`tests/integration/test_ac08.py`) |
 | AC-09 | B-310, B-313 |
 | AC-10 | B-131, B-132, B-321 (dry-run, approval, cancel, `run audit` — ✅ S2; `report export` — ✅ S4) |

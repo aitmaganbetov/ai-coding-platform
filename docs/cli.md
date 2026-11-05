@@ -37,6 +37,13 @@
 | `ai-coding modernize GOAL \| --continue RUN [--step M-NN] \| --rollback RUN [-C DIR] [--allow-red-baseline] [--pr] [--resume RUN] [--dry-run] [--require-approval]` | MODERNIZE: baseline → анализ влияния и план → approval → один шаг = одна ветка/PR; откат шага через `git revert` | S6 |
 | `ai-coding maintain [--report F] [--issue N]… [--issues-file F] [--telemetry F] \| --continue RUN [--item ID] [-C DIR] [--base B] [--max-iterations N] [--allow-red-baseline] [--pr [-R owner/repo]] [--resume RUN] [--interactive/--no-interactive] [--dry-run]` | MAINTAIN: источники → план Maintenance Agent → approval → одна задача: обновление зависимостей пакетным менеджером, исправление с регрессионным тестом, проверка, (PR) ([maintain.md](maintain.md)) | S7 |
 | `ai-coding review --base B [--head H] [-C DIR] [--pr N --comment] [--check] [-o FILE] [--json] [--skip-if-disabled]` | Рекомендательный AI review diff (комментарий, check run); ненулевой код только при блокирующей политике | S6 |
+| `ai-coding server migrate` | Создать/обновить схему серверной БД (SQLite или PostgreSQL) ([server.md](server.md)) | S8 |
+| `ai-coding server user add NAME [--admin] [--password-stdin]` / `user password NAME` | Пользователи сервера (argon2id, ≥ 12 символов) | S8 |
+| `ai-coding server token create NAME [--name L] [--project P] [--role R] [--ttl-hours N]` / `token revoke ID` | Токены API: область проекта, предельная роль, срок; токен показывается один раз | S8 |
+| `ai-coding server serve [--host H] [--port N] [--with-worker] [--ui DIR]` | REST API `/api/v1` и Web UI (за TLS reverse proxy в production) | S8 |
+| `ai-coding server worker [--concurrency N]` | Выполнять прогоны из очереди (≥10 параллельно; SIGTERM — дождаться текущих) | S8 |
+| `ai-coding server export PROJECT --user OWNER -o FILE` | ZIP с данными проекта (NFR-08, права `--user`) | S8 |
+| `ai-coding server purge` / `server settings` | Применить retention сейчас (для cron) / действующие настройки без секретов | S8 |
 
 `RUN` — полный UUID, короткий id (последние 12 символов, их показывает `run list`) или уникальный префикс. Префикс UUIDv7 — это метка времени, поэтому для коротких id используется случайный хвост. Состояние хранится в `.ai-coding/state.db` проекта; каталог `.ai-coding/` сам себя исключает из git. Другую БД можно указать через `AI_CODING_DATABASE_URL`.
 
