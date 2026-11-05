@@ -772,7 +772,7 @@
     },
     "TestsGate": {
       "additionalProperties": false,
-      "description": "Fails when required tests fail.",
+      "description": "Fails when required tests fail.\n\nTests run in the Docker sandbox. Without ``command`` the platform picks a default\nfor the detected stack (Python: pytest, Node.js: ``npm test`` / ``node --test``).\n``install`` is the only step that may use the network, and only when\n``execution.docker.network`` is ``bridge`` and the hosts are allowed by\n``security`` (egress policy); otherwise tests that need it are SKIPPED.",
       "properties": {
         "enabled": {
           "default": true,
@@ -783,6 +783,65 @@
           "default": true,
           "title": "Blocking",
           "type": "boolean"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Command"
+        },
+        "install": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Install"
+        },
+        "install_hosts": {
+          "description": "Hosts the install step needs (egress policy).",
+          "items": {
+            "maxLength": 253,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Install Hosts",
+          "type": "array"
+        },
+        "image": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9._/:-]*@sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Digest-pinned runtime image (default: per stack).",
+          "title": "Image"
+        },
+        "timeout_seconds": {
+          "default": 900,
+          "maximum": 7200,
+          "minimum": 10,
+          "title": "Timeout Seconds",
+          "type": "integer"
         }
       },
       "title": "TestsGate",

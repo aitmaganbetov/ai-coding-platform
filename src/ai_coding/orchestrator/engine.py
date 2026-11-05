@@ -1088,14 +1088,15 @@ class Orchestrator:
                     raise
                 except ApprovalRequiredError as exc:
                     self._finish_execution(execution_id, "needs_approval", _err(exc))
-                    self._set_task(task_id, status=TaskStatus.PENDING.value)
+                    # A pause is not a failure: it must not consume a retry attempt.
+                    self._set_task(task_id, status=TaskStatus.PENDING.value, attempts=attempt - 1)
                     op = getattr(exc, "operation", None)
                     if op is not None:
                         self._request_task_approval(rc, task_id, op, str(exc))
                     return _TaskOutcome(PhaseOutcome.APPROVAL, op, f"task {key}: {exc}")
                 except BudgetExceededError as exc:
                     self._finish_execution(execution_id, "budget", _err(exc))
-                    self._set_task(task_id, status=TaskStatus.PENDING.value)
+                    self._set_task(task_id, status=TaskStatus.PENDING.value, attempts=attempt - 1)
                     return _TaskOutcome(PhaseOutcome.BUDGET, reason=_err(exc))
                 except Exception as exc:
                     error = _err(exc)

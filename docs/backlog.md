@@ -210,16 +210,16 @@
 
 ## S6 — DEVELOP и MODERNIZE, AI review/fix, approvals (P0-09)
 
-| ID | Задача | Трассировка | Pri |
-| --- | --- | --- | --- |
-| B-500 | Developer Agent → patch/commit, пояснение, тесты | §6 | P0 |
-| B-501 | Reviewer Agent → замечания file/line/severity (рекомендательно) | §6, §10 | P0 |
-| B-502 | DEVELOP: Issue → план → ветка → patch → тесты → review → PR | FR-04, AC-03 | P0 |
-| B-503 | AI fix-loop с ограничением итераций и бюджета | FR-04 | P1 |
-| B-504 | MODERNIZE: baseline, impact analysis, малые PR, миграционные планы, rollback | FR-05 | P0 |
-| B-505 | Database Agent → анализ миграций, индексов, транзакций | §6 | P1 |
-| B-506 | `ai-coding develop`, `ai-coding modernize` | §14 | P0 |
-| B-507 | Reusable `ai-review.yml` (Reviewer Agent в PR; только same-repo PR или approval через environment) — перенесено из B-310 | §9, ADR-0022 | P0 |
+| ID | Задача | Трассировка | Pri | Статус |
+| --- | --- | --- | --- | --- |
+| B-500 | Developer Agent → patch/commit, пояснение, тесты | §6 | P0 | ✅ S6 |
+| B-501 | Reviewer Agent → замечания file/line/severity (рекомендательно) | §6, §10 | P0 | ✅ S6 (рекомендательный) |
+| B-502 | DEVELOP: Issue → план → ветка → patch → тесты → review → PR | FR-04, AC-03 | P0 | ✅ S6 |
+| B-503 | AI fix-loop с ограничением итераций и бюджета | FR-04 | P1 | ✅ S6 |
+| B-504 | MODERNIZE: baseline, impact analysis, малые PR, миграционные планы, rollback | FR-05 | P0 | ✅ S6 |
+| B-505 | Database Agent → анализ миграций, индексов, транзакций | §6 | P1 | ✅ S6 |
+| B-506 | `ai-coding develop`, `ai-coding modernize` | §14 | P0 | ✅ S6 |
+| B-507 | Reusable `ai-review.yml` (Reviewer Agent в PR; только same-repo PR или approval через environment) — перенесено из B-310 | §9, ADR-0022 | P0 | ✅ S6 |
 
 ## S7 — AUDIT/MAINTAIN, security tools, reports, QA
 

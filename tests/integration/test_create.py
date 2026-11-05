@@ -149,7 +149,7 @@ async def test_retry_after_commit_does_not_commit_twice(
     assert status.state is RunState.COMPLETED, status.error
     assert failed and len(project.find_commits_by_trailer("AI-Coding-Run", str(run_id))) == 1
     boot = next(t for t in status.tasks if t["key"] == "create.bootstrap")
-    assert boot["attempts"] == 3  # approval pause, failure after the commit, success
+    assert boot["attempts"] == 2  # failure after the commit, success (the pause is free)
 
 
 async def test_existing_branch_is_never_overwritten(

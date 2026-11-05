@@ -22,6 +22,7 @@ Every agent:
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import cache
@@ -131,11 +132,12 @@ class LLMAgent:
     mission: str
     requires_llm = True
     max_repairs = 2
+    schema_name: str | None = None  # a role variant with its own schema (e.g. planner.migration)
 
     @property
     def output_schema(self) -> Mapping[str, Any]:
         """Packaged schema for this agent."""
-        return load_output_schema(self.name.value)
+        return load_output_schema(self.schema_name or self.name.value)
 
     # ----------------------------------------------------------------- hooks --
     def prompt_inputs(self, ctx: AgentContext) -> list[tuple[str, Any]]:
@@ -250,4 +252,28 @@ def find_cycle(graph: Mapping[str, Iterable[str]]) -> list[str] | None:
             found = visit(node)
             if found:
                 return found
+    return None
+
+
+_TEST_PATH = re.compile(
+    r"(^|/)(tests?|__tests__|spec|specs)/"
+    r"|(^|/)test_[^/]+\.py$|_test\.(py|go)$|\.(test|spec)\.[cm]?[jt]sx?$|Test\.java$"
+)
+_FORBIDDEN_PREFIXES = (".git/", ".ai-coding/")
+
+
+def is_test_path(path: str) -> bool:
+    """Heuristic used to require tests with every change (project rule)."""
+    return bool(_TEST_PATH.search(path))
+
+
+def unsafe_path(path: str) -> str | None:
+    """Why ``path`` may not be written by an agent, or ``None``."""
+    if path.startswith(("/", "~")) or "\\" in path or ":" in path:
+        return "must be a relative POSIX path"
+    parts = path.split("/")
+    if ".." in parts or "" in parts or "." in parts:
+        return "must not contain empty, '.' or '..' segments"
+    if path in {".git", ".ai-coding"} or path.startswith(_FORBIDDEN_PREFIXES):
+        return "is inside a protected directory"
     return None

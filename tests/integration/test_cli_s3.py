@@ -45,9 +45,10 @@ def test_tools_list_and_pull_without_docker(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr("ai_coding.cli.commands.tools.docker_available", lambda: False)
     listing = runner.invoke(app, ["tools", "list"])
     assert listing.exit_code == 0
-    for tool in ("gitleaks", "ruff", "semgrep"):
+    for tool in ("gitleaks", "ruff", "semgrep", "python-runtime", "node-runtime"):
         assert tool in listing.output
-    assert "docker unavailable" in listing.output
+    # One "(docker unavailable)" per row; Rich may wrap it inside the cell.
+    assert listing.output.count("unavailable") == 5 and "present" not in listing.output
     assert runner.invoke(app, ["tools", "pull"]).exit_code == ExitCode.NOT_FOUND
 
 

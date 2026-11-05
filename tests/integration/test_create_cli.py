@@ -157,5 +157,6 @@ def test_agents_list(tmp_path: Path, config_file: Path) -> None:
     assert by_name["requirements"]["status"] == "implemented"
     assert by_name["requirements"]["models"] == ["ollama/local-model"]
     assert by_name["bootstrap"]["requires_llm"] is False and by_name["bootstrap"]["models"] == []
-    assert by_name["developer"]["status"] == "planned (S6)"
+    assert by_name["developer"]["status"] == "implemented"
+    assert by_name["qa"]["status"] == "planned (S7)"
     assert by_name["planner"]["output_schema"].endswith("planner.output.schema.json")

@@ -79,6 +79,20 @@ security:
 | `approvals.auto_merge` | Всегда `false` | `false` |
 | `artifacts` | `store` (`local`\|`minio`), `path`, `retention_days`, `formats` (`json, markdown, sarif, junit`) | `local`, `.ai-coding/artifacts`, 30, `[json, markdown]` |
 
+### Тесты в песочнице (`quality_gates.tests`, S6)
+
+| Поле | Назначение | По умолчанию |
+| --- | --- | --- |
+| `command` | Команда тестов (без shell, разбирается как argv) | по стеку: `python -m pytest -q` / `npm test` / `node --test` |
+| `install` | Установка зависимостей (единственный шаг с сетью) | по стеку |
+| `install_hosts` | Хосты, нужные установке (проверяются egress-политикой) | по стеку |
+| `image` | Образ рантайма, только `name@sha256:…` | `python-runtime` / `node-runtime` |
+| `timeout_seconds` | Таймаут каждого шага | 900 |
+
+Установка выполняется только при `execution.docker.network: bridge` и разрешённых хостах. Иначе тесты получают статус SKIPPED с причиной (с `--strict` такой результат не принимается). Подробнее — в [develop.md](develop.md).
+
+`quality_gates.review.ai_review_blocking: true` делает critical/high замечания AI review блокирующими. По умолчанию review только рекомендует (ТЗ §10).
+
 ## Правила безопасности, проверяемые валидатором
 
 | Правило | Пример ошибки |

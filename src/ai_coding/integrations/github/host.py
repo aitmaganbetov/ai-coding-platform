@@ -63,6 +63,18 @@ class PullRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class Issue:
+    """Subset of a GitHub issue."""
+
+    number: int
+    title: str
+    body: str
+    url: str
+    state: str
+    labels: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class Annotation:
     """A check-run annotation (file/line + message)."""
 
@@ -117,6 +129,20 @@ class GitHubHost:
         for item in self.client.paginate(f"{self._base}/pulls", params=params, limit=10):
             return PullRequest.from_api(item)
         return None
+
+    def get_issue(self, number: int) -> Issue:
+        """Issue by number (its text is untrusted input for agents)."""
+        data = self.client.json("GET", f"{self._base}/issues/{int(number)}")
+        if data.get("pull_request"):
+            raise ValueError(f"#{number} is a pull request, not an issue")
+        return Issue(
+            number=int(data["number"]),
+            title=str(data.get("title") or ""),
+            body=str(data.get("body") or ""),
+            url=str(data.get("html_url") or ""),
+            state=str(data.get("state") or ""),
+            labels=tuple(str(lbl.get("name", "")) for lbl in data.get("labels") or []),
+        )
 
     def get_pull_request(self, number: int) -> PullRequest:
         """One pull request by number."""

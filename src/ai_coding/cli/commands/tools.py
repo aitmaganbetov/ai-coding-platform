@@ -13,6 +13,7 @@ from ai_coding.cli.exit_codes import ExitCode
 from ai_coding.executors import DockerSandboxExecutor, docker_available
 from ai_coding.executors.base import ExecutorError, ExecutorUnavailableError
 from ai_coding.tools import default_tool_registry
+from ai_coding.tools.testrun import RUNTIME_IMAGES
 
 app = typer.Typer(help="Analysis tools and their sandbox images.", no_args_is_help=True)
 
@@ -42,6 +43,14 @@ def list_tools() -> None:
             shutil.which(spec.binary) or "not found",
             f"{spec.image.split('@')[0]} ({image_state})",
         )
+    for name, image in RUNTIME_IMAGES.items():
+        state = (
+            ("present" if executor.image_present(image) else "missing")
+            if docker_ok
+            else ("docker unavailable")
+        )
+        table.add_row(name, "tests runtime", "python" if "python" in name else "node",
+                      "-", f"{image.split('@')[0]} ({state})")  # fmt: skip
     stdout.print(table)
 
 
@@ -51,25 +60,29 @@ def pull(
         list[str] | None, typer.Option("--tool", "-t", help="Only these tools.")
     ] = None,
 ) -> None:
-    """Download the digest-pinned sandbox images (needs network; audits then run offline)."""
+    """Download the digest-pinned sandbox images: analysis tools and test runtimes
+    (``python-runtime``, ``node-runtime``). Needs network; audits and tests then run offline."""
     if not docker_available():
         error("Docker daemon is not reachable")
         raise typer.Exit(ExitCode.NOT_FOUND)
     registry = default_tool_registry()
     executor = DockerSandboxExecutor()
     failed = 0
-    for name in tool or registry.names():
-        try:
-            spec = registry.get(name).spec
-        except KeyError as exc:
-            error(str(exc).strip("'\""))
-            raise typer.Exit(ExitCode.USAGE) from exc
-        if executor.image_present(spec.image):
+    for name in tool or [*registry.names(), *RUNTIME_IMAGES]:
+        if name in RUNTIME_IMAGES:
+            image = RUNTIME_IMAGES[name]
+        else:
+            try:
+                image = registry.get(name).spec.image
+            except KeyError as exc:
+                error(str(exc).strip("'\""))
+                raise typer.Exit(ExitCode.USAGE) from exc
+        if executor.image_present(image):
             info(f"{name}: already present")
             continue
         try:
-            executor.pull(spec.image)
-            info(f"{name}: pulled {spec.image}")
+            executor.pull(image)
+            info(f"{name}: pulled {image}")
         except (ExecutorError, ExecutorUnavailableError) as exc:
             failed += 1
             error(f"{name}: {exc}")

@@ -30,6 +30,7 @@ class FakeGitHub:
     requests: list[tuple[str, str]] = field(default_factory=list)
     head_shas: dict[str, str] = field(default_factory=dict)  # branch -> sha (set by tests)
     artifacts: dict[int, list[dict[str, Any]]] = field(default_factory=dict)  # run id -> list
+    issues: dict[int, dict[str, Any]] = field(default_factory=dict)
     blobs: dict[int, bytes] = field(default_factory=dict)  # artifact id -> zip bytes
     artifacts_on_dispatch: list[dict[str, Any]] = field(default_factory=list)
     blob_requests: list[str | None] = field(default_factory=list)  # Authorization seen
@@ -158,6 +159,10 @@ class FakeGitHub:
         if m and method == "GET":
             pr = self.pulls.get(int(m.group(1)))
             return (200, pr) if pr else (404, {"message": "Not Found"})
+        m = re.fullmatch(r"/issues/(\d+)", rest)
+        if m and method == "GET":
+            issue = self.issues.get(int(m.group(1)))
+            return (200, issue) if issue else (404, {"message": "Not Found"})
         m = re.fullmatch(r"/issues/(\d+)/comments", rest)
         if m and method == "GET":
             return 200, [c for c in self.comments.values() if c["issue"] == int(m.group(1))]

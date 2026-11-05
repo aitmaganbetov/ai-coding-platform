@@ -11,8 +11,11 @@ from dataclasses import dataclass
 from ai_coding.agents.architect import ArchitectAgent
 from ai_coding.agents.base import Agent
 from ai_coding.agents.bootstrap import BootstrapAgent
+from ai_coding.agents.database import DatabaseAgent
+from ai_coding.agents.developer import DeveloperAgent
 from ai_coding.agents.planner import PlannerAgent
 from ai_coding.agents.requirements import RequirementsAgent
+from ai_coding.agents.reviewer import ReviewerAgent
 from ai_coding.domain.enums import AgentName
 
 
@@ -49,13 +52,15 @@ CATALOG: tuple[AgentSpec, ...] = (
               PlannerAgent),
     AgentSpec(AgentName.BOOTSTRAP, "Утверждённый план", "Каркас, CI, README, конфигурация",
               "S5", False, BootstrapAgent),
-    AgentSpec(AgentName.DEVELOPER, "Issue, контекст", "Patch/commit, пояснение, тесты", "S6", True),
-    AgentSpec(AgentName.REVIEWER, "Diff, стандарты", "Замечания с file/line/severity", "S6", True),
+    AgentSpec(AgentName.DEVELOPER, "Issue, контекст", "Patch/commit, пояснение, тесты", "S6", True,
+              DeveloperAgent),
+    AgentSpec(AgentName.REVIEWER, "Diff, стандарты", "Замечания с file/line/severity", "S6", True,
+              ReviewerAgent),
     AgentSpec(AgentName.SECURITY, "Diff, scanner reports", "Уязвимости, evidence, рекомендации",
               "S7", True),
     AgentSpec(AgentName.QA, "Требования, код", "Тест-кейсы, результаты, coverage", "S7", True),
     AgentSpec(AgentName.DATABASE, "Schema, queries", "Анализ миграций, индексов, транзакций",
-              "S6", True),
+              "S6", True, DatabaseAgent),
     AgentSpec(AgentName.PERFORMANCE, "Метрики, профили",
               "Bottlenecks и воспроизводимые бенчмарки", "S7", True),
     AgentSpec(AgentName.DEVOPS, "Сборка, окружения", "CI/CD, release plan, rollback", "S7", True),

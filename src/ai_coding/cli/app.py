@@ -12,11 +12,14 @@ from ai_coding.cli.commands import audit as audit_cmd
 from ai_coding.cli.commands import baseline as baseline_cmd
 from ai_coding.cli.commands import config as config_cmd
 from ai_coding.cli.commands import create as create_cmd
+from ai_coding.cli.commands import develop as develop_cmd
 from ai_coding.cli.commands import github as github_cmd
 from ai_coding.cli.commands import init as init_cmd
+from ai_coding.cli.commands import modernize as modernize_cmd
 from ai_coding.cli.commands import pr as pr_cmd
 from ai_coding.cli.commands import project as project_cmd
 from ai_coding.cli.commands import report as report_cmd
+from ai_coding.cli.commands import review as review_cmd
 from ai_coding.cli.commands import run as run_cmd
 from ai_coding.cli.commands import tools as tools_cmd
 
@@ -42,6 +45,9 @@ app.add_typer(report_cmd.app, name="report")
 app.add_typer(github_cmd.app, name="github")
 app.add_typer(pr_cmd.app, name="pr")
 app.command("create")(create_cmd.create)
+app.command("develop")(develop_cmd.develop)
+app.command("modernize")(modernize_cmd.modernize)
+app.command("review")(review_cmd.review)
 app.add_typer(agents_cmd.app, name="agents")
 
 

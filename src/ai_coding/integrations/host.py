@@ -11,7 +11,12 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from ai_coding.integrations.github.host import Annotation, ProtectionReport, PullRequest
+    from ai_coding.integrations.github.host import (
+        Annotation,
+        Issue,
+        ProtectionReport,
+        PullRequest,
+    )
 
 
 @runtime_checkable
@@ -23,6 +28,10 @@ class RepositoryHost(Protocol):
     """
 
     repo: str
+
+    def get_issue(self, number: int) -> Issue:
+        """Issue by number."""
+        ...
 
     def find_pull_request(self, head: str, base: str | None = None) -> PullRequest | None:
         """Open PR from ``head`` (into ``base``), if any."""

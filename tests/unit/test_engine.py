@@ -259,7 +259,7 @@ async def test_mid_run_approval_via_policy(tmp_path: Path) -> None:
     orch.decide(rid, approve=True)
     final = await orch.resume(rid)
     assert final.state is RunState.COMPLETED
-    assert final.tasks[0]["attempts"] == 2
+    assert final.tasks[0]["attempts"] == 1  # the approval pause does not count (S6)
 
 
 async def test_policy_denial_fails_task(tmp_path: Path) -> None:
@@ -321,7 +321,8 @@ async def test_budget_exhaustion_pauses_and_usage_persists(tmp_path: Path) -> No
     final = await bigger.resume(rid)
     assert final.state is RunState.COMPLETED
     # 'a' ran once; 'b' ran each time it hit the budget inside the handler.
-    assert {t["key"]: t["attempts"] for t in final.tasks} == {"a": 1, "b": 3}
+    # Budget pauses do not count as attempts (S6): only the run that finished counts.
+    assert {t["key"]: t["attempts"] for t in final.tasks} == {"a": 1, "b": 1}
     assert "PAUSED" in states(orch, rid)
 
 
@@ -498,3 +499,31 @@ def test_project_and_owner_created_once(tmp_path: Path) -> None:
         project = s.query(Project).one()
         assert orch.role_of(s, "local:tester", project.id) is not None
         assert orch.role_of(s, "nobody", project.id) is None
+
+
+async def test_approval_pause_does_not_consume_attempts(tmp_path: Path) -> None:
+    """S6: pausing for a human must not use up the task's retry budget."""
+    calls: list[int] = []
+
+    class Gate:
+        name = "test.gate"
+        capabilities = frozenset({"gate"})
+        cost_usd = 0.0
+
+        def is_available(self) -> bool:
+            return True
+
+        async def run(self, ctx: StepContext) -> StepResult:
+            calls.append(ctx.attempt)
+            ctx.authorize(ctx.policy.operation(ApprovalOperation.DEPLOY))
+            return StepResult(output={"ok": True})
+
+    orch = make_orchestrator(tmp_path, [Gate()])
+    plan = TaskPlanner().build([step("g", "gate")])
+    run_id = orch.create_run(plan)
+    assert (await orch.execute(run_id)).state is RunState.AWAITING_APPROVAL
+    orch.decide(run_id, approve=True)
+    status = await orch.resume(run_id)
+    assert status.state is RunState.COMPLETED, status.error
+    assert calls == [1, 1]  # the retry after approval is still attempt 1
+    assert status.tasks[0]["attempts"] == 1

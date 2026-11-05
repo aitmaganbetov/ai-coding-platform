@@ -111,7 +111,7 @@ jobs:
 - для PR из форков записи в PR, checks и Code Scanning пропускаются, а аудит всё равно выполняется и выставляет вердикт;
 - `pull_request_target` не используется.
 
-`ai-review.yml` появится в S6, вместе с LLM-адаптерами.
+`ai-review.yml` (S6) — рекомендательный AI review PR, см. [develop.md](develop.md#ai-review--ai-coding-review-и-ai-reviewyml).
 
 ## Пилоты
 

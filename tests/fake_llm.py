@@ -22,7 +22,11 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "architect": agent_samples.ARCH,
     "planner": agent_samples.PLAN,
 }
-_AGENT = re.compile(r"You are the (Requirements|Architect|Planner) Agent")
+_AGENT = re.compile(
+    r"You are the (Requirements|Architect|Planner|Developer|Reviewer|Database) Agent"
+    r"( \(modernization\))?"
+)
+APPROVE: dict[str, Any] = {"summary": "Looks good.", "verdict": "approve", "findings": []}
 
 
 @dataclass
@@ -52,6 +56,10 @@ class FakeLLM:
         script = self.scripts.get(agent)
         if script:
             return script.pop(0)
+        if agent == "reviewer":
+            return APPROVE
+        if agent not in DEFAULTS:
+            return Error(400, f"script for {agent} exhausted")
         return DEFAULTS[agent]
 
     def start(self) -> FakeLLM:
@@ -82,12 +90,15 @@ class FakeLLM:
                     return
                 match = _AGENT.search(system)
                 agent = match.group(1).lower() if match else "unknown"
+                if match and match.group(2):
+                    agent = "migration"
                 with fake._lock:
                     fake.requests.append({
                         "kind": kind, "agent": agent, "body": body,
                         "headers": {k.lower(): v for k, v in self.headers.items()},
                     })  # fmt: skip
-                    answer = fake._answer(agent) if agent in DEFAULTS else Error(400, "agent?")
+                    known = agent in DEFAULTS or agent in fake.scripts or agent == "reviewer"
+                    answer = fake._answer(agent) if known else Error(400, f"no script: {agent}")
                 if isinstance(answer, Error):
                     self._send(answer.status, {"error": {"message": answer.message}})
                     return
