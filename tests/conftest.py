@@ -11,6 +11,8 @@ from pathlib import Path
 import pytest
 
 from ai_coding.git import LocalGitRepository
+from ai_coding.persistence import Database, upgrade_to_head
+from tests.helpers import OPEN_DATABASES
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -52,3 +54,26 @@ def git_repo(tmp_path: Path, git_env: None) -> LocalGitRepository:
         check=True,
     )
     return repo
+
+
+@pytest.fixture
+def db(tmp_path: Path) -> Iterator[Database]:
+    """Migrated SQLite database in a temporary directory."""
+    database = Database(f"sqlite:///{(tmp_path / 'state.db').as_posix()}")
+    upgrade_to_head(database)
+    yield database
+    database.dispose()
+
+
+@pytest.fixture(autouse=True)
+def _dispose_databases() -> Iterator[None]:
+    """Close every database opened through tests.helpers.make_orchestrator."""
+    yield
+    while OPEN_DATABASES:
+        OPEN_DATABASES.pop().dispose()
+
+
+@pytest.fixture(autouse=True)
+def _no_database_url_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never let a developer's AI_CODING_DATABASE_URL leak into tests."""
+    monkeypatch.delenv("AI_CODING_DATABASE_URL", raising=False)

@@ -53,7 +53,7 @@ flowchart TB
     end
     subgraph App[Прикладной слой]
         workflows[workflows<br/>CREATE/DEVELOP/MODERNIZE/AUDIT/MAINTAIN]:::todo
-        orchestrator[orchestrator<br/>planner, registry, router, executor,<br/>context, state, checkpoint, policy,<br/>approval, aggregator, audit, retry]:::todo
+        orchestrator[orchestrator<br/>planner, registry, router, executor,<br/>context, state, checkpoint, policy,<br/>approval, aggregator, audit, retry]:::done
         agents[agents x12]:::todo
         quality[quality gates]:::todo
         reports[reports JSON/MD/SARIF/JUnit]:::todo
@@ -63,9 +63,9 @@ flowchart TB
         contracts[contracts]:::done
         git[git]:::done
         detection[detection]:::done
-        persistence[persistence]:::todo
+        persistence[persistence]:::done
         executors[executors]:::todo
-        llm[llm]:::todo
+        llm[llm port + guard]:::done
         tools[tools]:::todo
         github[integrations.github]:::todo
     end
@@ -77,7 +77,7 @@ flowchart TB
     classDef todo fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 4 3;
 ```
 
-Зелёные — реализованы в S1, серые — запланированы. Правило зависимостей проверяется `import-linter` (ADR-0003).
+Зелёные — реализованы (S1–S2), серые — запланированы. Правило зависимостей проверяется `import-linter` (ADR-0003).
 
 ## 4. Жизненный цикл run (ТЗ §5)
 
@@ -108,7 +108,7 @@ stateDiagram-v2
     CANCELLED --> [*]
 ```
 
-Точная таблица переходов — артефакт S2 (State Manager), покрывается тестами на 100% ветвей (NFR-06). Переходы идемпотентны и журналируются; после рестарта выполнение продолжается с последнего подтверждённого checkpoint без повторного применения изменений (ADR-0006).
+Таблица переходов — `ai_coding/orchestrator/states.py` (`RUN_TRANSITIONS`); тесты проверяют все 100 пар состояний (NFR-06). Руководство — [orchestrator.md](../orchestrator.md). Переходы идемпотентны и журналируются; после рестарта выполнение продолжается с последнего подтверждённого checkpoint без повторного применения изменений (ADR-0006).
 
 ## 5. Поток DEVELOP (FR-04, AC-03)
 

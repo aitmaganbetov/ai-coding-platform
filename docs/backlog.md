@@ -1,6 +1,6 @@
 # Backlog AI Coding Platform v2.1
 
-Полный backlog по ТЗ v2.1. Каждый элемент трассируется к требованиям (FR/NFR/AC/P0, разделы ТЗ). Статусы: ✅ Done (S1, проверено тестами), 🔜 Next (S2), ⬜ Planned.
+Полный backlog по ТЗ v2.1. Каждый элемент трассируется к требованиям (FR/NFR/AC/P0, разделы ТЗ). Статусы: ✅ Done (проверено тестами), 🔜 Next (следующий спринт), ⬜ Planned, ↪ перенесено.
 
 **Definition of Done** (ТЗ §20): код, тесты, обновлённая документация, безопасные значения по умолчанию, прохождение CI, проверенный сценарий отказа (если применимо), отчёт и одобрение ответственного.
 
@@ -10,8 +10,8 @@
 
 | Спринт | Эпики | Приёмка (ТЗ §16) |
 | --- | --- | --- |
-| S1 | E01 Каркас, E02 Конфигурация, E03 Git-абстракция, E04 Контракты/схемы | `init` / `config validate`; тесты каркаса |
-| S2 | E05 Persistence, E06 Orchestrator FSM, E07 Policy/Approval, E08 LLM-порт | Восстановление после прерывания; unit tests |
+| S1 ✅ | E01 Каркас, E02 Конфигурация, E03 Git-абстракция, E04 Контракты/схемы | `init` / `config validate`; тесты каркаса |
+| S2 ✅ | E05 Persistence, E06 Orchestrator FSM, E07 Policy/Approval, E08 LLM-порт | Восстановление после прерывания; unit tests |
 | S3 | E09 Executors Local/Docker, E10 Tool registry, E11 Quality Gates engine | Безопасный локальный audit |
 | S4 | E12 GitHub adapter, E13 Reusable workflows, E14 Reports/PR | CI проходит на пилотном репозитории |
 | S5 | E15 Agents I, E16 LLM adapters, E17 CREATE | Новый проект из задачи до PR |
@@ -49,7 +49,7 @@
 | B-017 | `ai-coding init`: шаблон с комментариями, детекция стеков, `--dry-run`, `--force` с подтверждением и backup, атомарная запись | §14 | P0 | ✅ |
 | B-018 | Определение стеков (Laravel/PHP, React/TS/JS, Python, Go, Rust), ручное переопределение | FR-02 | P0 | ✅ |
 | B-019 | `ai-coding config migrate` между версиями схемы | §11 | P2 | ⬜ (нужен при первой новой версии) |
-| B-020 | Иерархия конфигурации: пользовательский `~/.config/ai-coding/config.yml` (провайдеры, профили) + проектный | §11 | P1 | ⬜ S2 |
+| B-020 | Иерархия конфигурации: пользовательский `~/.config/ai-coding/config.yml` (провайдеры, профили) + проектный | §11 | P1 | ↪ S5 (нужна вместе с адаптерами LLM) |
 
 ### E03 Git-абстракция (P0-04 частично)
 | ID | Задача | Трассировка | Pri | Статус |
@@ -58,9 +58,9 @@
 | B-031 | Worktree add/list/remove, изоляция изменений | §18, AC-03 | P0 | ✅ |
 | B-032 | Защищённые ветки (glob), запрет коммита в protected/detached | AC-03, FR-17 | P0 | ✅ |
 | B-033 | Защита от исполнения кода из репозитория (fsmonitor, hooks), валидация ref-имён против option injection | §12 | P0 | ✅ |
-| B-034 | Импорт: локальная папка (✅ open), Git URL clone в изолированный каталог с проверкой доступа | FR-01 | P0 | ⬜ S3 |
-| B-035 | diff/patch API (apply, check, stat), rollback ветки | FR-05, §18 | P0 | ⬜ S3 |
-| B-036 | Commit trailers `AI-Coding-Run/Task` для идемпотентного восстановления | AC-04 | P0 | ⬜ S2 |
+| B-034 | Импорт: локальная папка (✅ open, ✅ проверка состояния в `run discover`), Git URL clone в изолированный каталог с проверкой доступа | FR-01 | P0 | 🔜 S3 |
+| B-035 | diff/patch API (apply, check, stat), rollback ветки | FR-05, §18 | P0 | 🔜 S3 |
+| B-036 | Commit trailers `AI-Coding-Run/Task` для идемпотентного восстановления | AC-04 | P0 | ✅ S2 |
 
 ### E04 Контракты и доменная модель
 | ID | Задача | Трассировка | Pri | Статус |
@@ -74,46 +74,48 @@
 ## S2 — Orchestrator FSM, persistence, checkpoint, retry, policy (P0-03, P0-05)
 
 ### E05 Persistence
-| ID | Задача | Трассировка | Pri |
-| --- | --- | --- | --- |
-| B-100 | SQLAlchemy-модели всех сущностей ТЗ §13 (users … checkpoints), UUIDv7, UTC | §13 | P0 |
-| B-101 | Alembic, одни миграции для SQLite и PostgreSQL; тест миграций up/down | ADR-0005 | P0 |
-| B-102 | Optimistic concurrency (`version`) для runs/tasks; тест конфликта | §13 | P0 |
-| B-103 | Append-only `audit_events` (actor, project_id, run_id, timestamp, outcome) | §3, FR-16 | P0 |
-| B-104 | `ArtifactStore` (локальный диск, SHA-256, retention) | §4, NFR-03, NFR-08 | P0 |
-| B-105 | SQLite WAL/foreign keys/busy_timeout; каталог `.ai-coding/` | ADR-0005 | P0 |
+| ID | Задача | Трассировка | Pri | Статус |
+| --- | --- | --- | --- | --- |
+| B-100 | SQLAlchemy-модели всех сущностей ТЗ §13 (users … checkpoints), UUIDv7, UTC | §13 | P0 | ✅ S2 |
+| B-101 | Alembic, одни миграции для SQLite и PostgreSQL; тест миграций up/down | ADR-0005 | P0 | ✅ S2 |
+| B-102 | Optimistic concurrency (`version`) для runs/tasks; тест конфликта | §13 | P0 | ✅ S2 |
+| B-103 | Append-only `audit_events` (actor, project_id, run_id, timestamp, outcome) | §3, FR-16 | P0 | ✅ S2 |
+| B-104 | `ArtifactStore` (локальный диск, SHA-256, retention) | §4, NFR-03, NFR-08 | P0 | ✅ S2 |
+| B-106 | Слой репозиториев поверх ORM (ADR-0005; второй потребитель — API) | ADR-0005 | P1 | ⬜ S8 |
+| B-107 | CI-прогон тестов persistence на PostgreSQL (service container) | ADR-0005 | P0 | ⬜ S8 |
+| B-105 | SQLite WAL/foreign keys/busy_timeout; каталог `.ai-coding/` | ADR-0005 | P0 | ✅ S2 |
 
 ### E06 Orchestrator Engine
-| ID | Задача | Трассировка | Pri |
-| --- | --- | --- | --- |
-| B-110 | State Manager: таблица переходов, идемпотентные переходы, журнал; 100% ветвей тестами | §5, NFR-06 | P0 |
-| B-111 | Task Planner: DAG, проверка циклов, критерии успеха, бюджет шага | §5 | P0 |
-| B-112 | Workflow Executor: последовательное/параллельное исполнение, `max_parallel_tasks`, семафоры ресурсов | FR-08, NFR-02 | P0 |
-| B-113 | Checkpoint Manager: атомарная фиксация после верификации шага | §5, NFR-03 | P0 |
-| B-114 | Retry & Recovery: backoff+jitter, классификация ошибок, тайм-аут, отмена | FR-09 | P0 |
-| B-115 | Восстановление после `kill -9` без дублирования коммитов (ключи эффектов) | AC-04 | P0 |
-| B-116 | Agent Registry (встроенные + entry points) | FR-08 | P0 |
-| B-117 | Agent Router: capability, права, стоимость, доступность | §5 | P0 |
-| B-118 | Context Manager: индекс репозитория, минимальный контекст, исключение секретов/игнорируемых путей | §5, FR-18 | P0 |
-| B-119 | Result Aggregator: итог со ссылками на evidence; AI не перекрывает статус теста | §5 | P0 |
-| B-120 | Audit Logger + structlog JSON-логи с run_id и redaction | FR-16, NFR-07 | P0 |
-| B-121 | CLI: `run status`, `run resume`, `run cancel` | §14 | P0 |
+| ID | Задача | Трассировка | Pri | Статус |
+| --- | --- | --- | --- | --- |
+| B-110 | State Manager: таблица переходов, идемпотентные переходы, журнал; 100% ветвей тестами | §5, NFR-06 | P0 | ✅ S2 |
+| B-111 | Task Planner: DAG, проверка циклов, критерии успеха, бюджет шага | §5 | P0 | ✅ S2 |
+| B-112 | Workflow Executor: последовательное/параллельное исполнение, `max_parallel_tasks`, семафоры ресурсов | FR-08, NFR-02 | P0 | ✅ S2 |
+| B-113 | Checkpoint Manager: атомарная фиксация после верификации шага | §5, NFR-03 | P0 | ✅ S2 |
+| B-114 | Retry & Recovery: backoff+jitter, классификация ошибок, тайм-аут, отмена | FR-09 | P0 | ✅ S2 |
+| B-115 | Восстановление после `kill -9` без дублирования коммитов (ключи эффектов) | AC-04 | P0 | ✅ S2 |
+| B-116 | Agent Registry (встроенные + entry points) | FR-08 | P0 | ✅ S2 |
+| B-117 | Agent Router: capability, права, стоимость, доступность | §5 | P0 | ✅ S2 |
+| B-118 | Context Manager: индекс репозитория, минимальный контекст, исключение секретов/игнорируемых путей | §5, FR-18 | P0 | ✅ S2 |
+| B-119 | Result Aggregator: итог со ссылками на evidence; AI не перекрывает статус теста | §5 | P0 | ✅ S2 |
+| B-120 | Audit Logger + structlog JSON-логи с run_id и redaction | FR-16, NFR-07 | P0 | ✅ S2 |
+| B-121 | CLI: `run status`, `run resume`, `run cancel` | §14 | P0 | ✅ S2 |
 
 ### E07 Policy & Approval (P0-05)
-| ID | Задача | Трассировка | Pri |
-| --- | --- | --- | --- |
-| B-130 | Policy Engine: policy-as-code (allowlist команд, пути записи, egress, бюджеты), решения с обоснованием | FR-11, §12 | P0 |
-| B-131 | Approval Manager: запросы, TTL, роль подтверждающего, CLI-подтверждение, `--require-approval` | §5, FR-17, AC-10 | P0 |
-| B-132 | `--dry-run` для всех изменяющих операций | §14, AC-10 | P0 |
-| B-133 | Критичные файлы (`approvals.critical_paths`) → approval | §5 | P0 |
+| ID | Задача | Трассировка | Pri | Статус |
+| --- | --- | --- | --- | --- |
+| B-130 | Policy Engine: policy-as-code (allowlist команд, пути записи, egress, бюджеты), решения с обоснованием | FR-11, §12 | P0 | ✅ S2 |
+| B-131 | Approval Manager: запросы, TTL, роль подтверждающего, CLI-подтверждение, `--require-approval` | §5, FR-17, AC-10 | P0 | ✅ S2 |
+| B-132 | `--dry-run` для всех изменяющих операций (реализовано для `run discover`/`run cancel`; новые команды добавляют его при появлении) | §14, AC-10 | P0 | ✅ S2 |
+| B-133 | Критичные файлы (`approvals.critical_paths`) → approval | §5 | P0 | ✅ S2 |
 
 ### E08 LLM-порт и бюджеты
-| ID | Задача | Трассировка | Pri |
-| --- | --- | --- | --- |
-| B-140 | Порт `LLMProvider`, структурированный вывод, подсчёт токенов/стоимости, `model_usage` | §4, FR-15 | P0 |
-| B-141 | Бюджеты токенов/стоимости/времени на run, остановка при превышении | FR-15 | P0 |
-| B-142 | Egress-guard + redaction перед каждым внешним вызовом | FR-18, §12 | P0 |
-| B-143 | Fake-провайдер **только для тестов** (детерминированные ответы) | NFR-06 | P1 |
+| ID | Задача | Трассировка | Pri | Статус |
+| --- | --- | --- | --- | --- |
+| B-140 | Порт `LLMProvider`, структурированный вывод, подсчёт токенов/стоимости, `model_usage` | §4, FR-15 | P0 | ✅ S2 |
+| B-141 | Бюджеты токенов/стоимости/времени на run, остановка при превышении | FR-15 | P0 | ✅ S2 |
+| B-142 | Egress-guard + redaction перед каждым внешним вызовом | FR-18, §12 | P0 | ✅ S2 |
+| B-143 | Fake-провайдер **только для тестов** (детерминированные ответы) | NFR-06 | P1 | ✅ S2 |
 
 ---
 
@@ -294,10 +296,10 @@
 | AC-01 | B-420 |
 | AC-02 | B-609 |
 | AC-03 | B-031, B-032, B-301, B-502 |
-| AC-04 | B-036, B-115 |
+| AC-04 | B-036, B-115 (✅ `tests/integration/test_recovery.py`) |
 | AC-05 | B-016, B-412 |
 | AC-06 | B-220, B-302 |
 | AC-07 | B-611 |
 | AC-08 | B-701 |
 | AC-09 | B-310, B-313 |
-| AC-10 | B-131, B-132, B-321 |
+| AC-10 | B-131, B-132, B-321 (dry-run, approval, cancel, `run audit` — ✅ S2; `report export` — S4) |

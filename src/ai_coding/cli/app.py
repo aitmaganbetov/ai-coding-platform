@@ -9,6 +9,7 @@ import typer
 from ai_coding import __version__
 from ai_coding.cli.commands import config as config_cmd
 from ai_coding.cli.commands import init as init_cmd
+from ai_coding.cli.commands import run as run_cmd
 
 app = typer.Typer(
     name="ai-coding",
@@ -23,6 +24,7 @@ app = typer.Typer(
 )
 app.command("init")(init_cmd.init)
 app.add_typer(config_cmd.app, name="config")
+app.add_typer(run_cmd.app, name="run")
 
 
 def _version(value: bool) -> None:

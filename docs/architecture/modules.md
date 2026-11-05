@@ -25,19 +25,23 @@ ai-coding-platform/
 │   ├── tz-notes.md                     ✅ замечания к ТЗ
 │   └── sprints/S1-report.md            ✅
 ├── src/ai_coding/
-│   ├── domain/        ✅ перечисления ТЗ (Mode, RunState, Role, AgentName, …); ⏳ S2 сущности
-│   ├── security/      ✅ redaction, детектор секретов; ⏳ S3 egress policy; ⏳ S8 authn/RBAC
+│   ├── domain/        ✅ перечисления ТЗ, TaskStatus/Phase, ApprovalStatus, базовые ошибки
+│   ├── security/      ✅ redaction, детектор секретов; ⏳ S8 authn
 │   ├── contracts/     ✅ контракт агента (AgentTask/AgentResult, валидация output_schema)
 │   ├── detection/     ✅ определение стеков (FR-02)
 │   ├── git/           ✅ порт GitRepository + LocalGitRepository (worktree, защита веток)
 │   ├── config/        ✅ модели, JSON Schema, загрузчик, валидатор, генератор
 │   ├── schemas/       ✅ ai-coding.schema.json; ⏳ S5 agents/*.output.schema.json
 │   ├── templates/     ✅ шаблон .ai-coding.yml
-│   ├── cli/           ✅ ai-coding --help / --version / init / config validate / config schema
-│   ├── persistence/   ⏳ S2 SQLAlchemy-модели, репозитории, Alembic-миграции
-│   ├── orchestrator/  ⏳ S2 planner, registry, router, workflow executor, context, state,
-│   │                       checkpoint, policy, approval, aggregator, audit, retry
-│   ├── llm/           ⏳ S2 порт/бюджеты; S5 openai, anthropic, ollama, vllm
+│   ├── cli/           ✅ init, config validate|schema; ✅ S2 run discover|list|status|events|audit|
+│   │                       resume|cancel|approve|reject
+│   ├── persistence/   ✅ S2 SQLAlchemy-модели (15 сущностей ТЗ + run_events, effects), Alembic,
+│   │                       append-only аудит, артефакты по SHA-256; ⏳ S8 PostgreSQL, MinIO
+│   ├── orchestrator/  ✅ S2 planner, registry, router, engine (workflow executor), context, state,
+│   │                       checkpoint, policy, approval, aggregator, audit, retry, effects, budget,
+│   │                       встроенные discovery-обработчики
+│   ├── llm/           ✅ S2 порт LLMProvider, GuardedLLM; ⏳ S5 openai, anthropic, ollama, vllm
+│   ├── observability/ ✅ S2 structlog JSON + redaction + run_id/trace_id
 │   ├── executors/     ⏳ S3 local, docker; S4 github_actions
 │   ├── tools/         ⏳ S3 реестр; S7 semgrep, gitleaks, trivy, osv, phpstan, pint, eslint,
 │   │                       tsc, ruff, mypy, go, golangci-lint, cargo, clippy, playwright, k6
@@ -66,12 +70,14 @@ flowchart BT
     detection --> domain
     git --> domain
     config --> security & domain
-    persistence -.S2.-> domain
-    llm -.S2.-> security & config
+    persistence --> domain
+    llm --> security & domain
+    observability --> security
     executors -.S3.-> security & config & git
     tools -.S3.-> executors
     quality -.S3.-> tools & contracts
-    orchestrator -.S2.-> persistence & contracts & config & security & llm & executors & git
+    orchestrator --> persistence & config & security & llm & git & detection & observability
+    orchestrator -.S3.-> executors
     agents -.S5.-> contracts & llm & orchestrator
     reports -.S4.-> quality & contracts
     github[integrations.github] -.S4.-> git & reports

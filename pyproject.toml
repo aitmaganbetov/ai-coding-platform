@@ -30,6 +30,10 @@ dependencies = [
   "pydantic>=2.10,<3",
   "PyYAML>=6.0.2,<7",
   "jsonschema>=4.23,<5",
+  # S2: persistence and structured logging (ADR-0005, ADR-0006)
+  "SQLAlchemy>=2.0.36,<3",
+  "alembic>=1.14,<2",
+  "structlog>=24.4",
 ]
 
 [project.urls]
@@ -43,6 +47,7 @@ ai-coding = "ai_coding.cli.app:main"
 dev = [
   "pytest>=8.3",
   "pytest-cov>=6.0",
+  "pytest-asyncio>=0.25",
   "ruff>=0.9",
   "mypy>=1.14",
   "types-PyYAML>=6.0.12",
@@ -77,7 +82,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S603", "S607", "PLR2004", "S105", "S106"]
+"tests/**" = ["S101", "S603", "S607", "PLR2004", "S105", "S106", "S311", "SIM300"]
 "src/ai_coding/git/local.py" = ["S603"]
 "src/ai_coding/cli/commands/*.py" = ["PLR0917"]  # Typer maps options to parameters  # subprocess with argv list, no shell, validated input
 
@@ -99,13 +104,18 @@ minversion = "8.0"
 testpaths = ["tests"]
 addopts = ["-ra", "--strict-markers", "--strict-config"]
 markers = [
-  "integration: tests that call real external binaries (git)",
+  "integration: tests that call real external binaries (git) or subprocesses",
 ]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 filterwarnings = ["error"]
 
 [tool.coverage.run]
 source = ["ai_coding"]
 branch = true
+# Alembic loads migration scripts by file path; they are exercised by
+# tests/unit/test_persistence.py (upgrade, downgrade, schema-drift checks).
+omit = ["*/ai_coding/persistence/migrations/*"]
 
 [tool.coverage.report]
 show_missing = true
@@ -123,8 +133,9 @@ name = "Layered architecture"
 type = "layers"
 layers = [
   "ai_coding.cli",
-  "ai_coding.config",
-  "ai_coding.contracts | ai_coding.detection | ai_coding.git",
+  "ai_coding.orchestrator",
+  "ai_coding.llm | ai_coding.persistence | ai_coding.config",
+  "ai_coding.contracts | ai_coding.detection | ai_coding.git | ai_coding.observability",
   "ai_coding.security",
   "ai_coding.domain",
 ]
@@ -133,4 +144,6 @@ layers = [
 name = "Domain is pure (no third-party I/O libraries)"
 type = "forbidden"
 source_modules = ["ai_coding.domain"]
-forbidden_modules = ["typer", "rich", "yaml", "jsonschema", "pydantic", "subprocess"]
+forbidden_modules = [
+  "typer", "rich", "yaml", "jsonschema", "pydantic", "subprocess", "sqlalchemy", "structlog",
+]

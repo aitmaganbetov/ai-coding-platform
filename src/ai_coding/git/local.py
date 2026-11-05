@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import re
 import shutil
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from ai_coding.git.base import (
@@ -36,6 +37,7 @@ from ai_coding.git.errors import (
 
 DEFAULT_TIMEOUT_SECONDS = 60.0
 DEFAULT_PROTECTED = ("main", "master", "release/*")
+_TRAILER_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9-]{0,63}$")
 
 _SAFETY_CONFIG: tuple[str, ...] = (
     "-c", "core.fsmonitor=false",
@@ -220,10 +222,27 @@ class LocalGitRepository:
         self._git(*args, "--", str(target))
 
     # --------------------------------------------------------------- commits --
-    def commit(self, message: str, *, paths: Sequence[str] | None = None) -> str:
-        """Stage ``paths`` (or everything) and commit on the current, non-protected branch."""
+    def commit(
+        self,
+        message: str,
+        *,
+        paths: Sequence[str] | None = None,
+        trailers: Mapping[str, str] | None = None,
+    ) -> str:
+        """Stage ``paths`` (or everything) and commit on the current, non-protected branch.
+
+        ``trailers`` (e.g. ``{"AI-Coding-Task": "<run>/<task>"}``) are appended as git
+        trailers so that recovery can find commits it already made (AC-04).
+        """
         if not message.strip():
             raise GitCommandError(["commit"], 1, "commit message must not be empty")
+        if trailers:
+            lines = []
+            for key, value in trailers.items():
+                if not _TRAILER_KEY.match(key) or "\n" in value or not value.strip():
+                    raise GitCommandError(["commit"], 1, f"invalid trailer {key!r}")
+                lines.append(f"{key}: {value.strip()}")
+            message = message.rstrip() + "\n\n" + "\n".join(lines)
         branch = self.current_branch()
         if branch is None:
             raise ProtectedBranchError("refusing to commit on a detached HEAD")
@@ -237,6 +256,26 @@ class LocalGitRepository:
         if sha is None:  # pragma: no cover - commit succeeded, HEAD must exist
             raise GitCommandError(["commit"], 1, "HEAD missing after commit")
         return sha
+
+    def find_commits_by_trailer(self, key: str, value: str, *, ref: str = "--all") -> list[str]:
+        """SHAs of commits carrying trailer ``key: value`` (newest first)."""
+        if not _TRAILER_KEY.match(key):
+            raise GitCommandError(["log"], 1, f"invalid trailer key {key!r}")
+        if self.head_commit() is None:
+            return []
+        args = ["log", "--format=%H%x1f%(trailers:key=" + key + ",valueonly,separator=%x1d)%x1e"]
+        args.append("--all" if ref == "--all" else self._verified_ref(ref))
+        proc = self._git(*args)
+        found: list[str] = []
+        for record in proc.stdout.split("\x1e"):
+            sha, _, values = record.strip("\n").partition("\x1f")
+            if sha and value in {v.strip() for v in values.split("\x1d")}:
+                found.append(sha)
+        return found
+
+    def _verified_ref(self, ref: str) -> str:
+        self._check_start_point(ref)
+        return ref
 
     # ------------------------------------------------------------ protection --
     @property
