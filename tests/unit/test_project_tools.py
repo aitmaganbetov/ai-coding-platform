@@ -366,3 +366,14 @@ async def test_sandbox_entry_starts_tools_whose_image_lacks_path(tmp_path: Path)
     ex = FakeExecutor()
     await prepare(OSVScannerAdapter(), ex)  # the database zip above makes it "prepared"
     assert ex.seen[0].argv[:4] == entry and "--download-offline-databases" in ex.seen[0].argv
+
+
+def test_failure_reason_keeps_the_panic_line() -> None:
+    from ai_coding.tools.prepare import failure_reason  # noqa: PLC0415
+
+    trace = "panic: runtime error: invalid memory address\n\ngoroutine 1 [running]:\n" + (
+        "github.com/x/y.f()\n\t/src/y.go:1 +0x1\n" * 50) + "main.main()\n"  # fmt: skip
+    reason = failure_reason(trace)
+    assert reason.startswith("panic: runtime error: invalid memory address")
+    assert reason.endswith("main.main()") and len(reason) <= 600
+    assert failure_reason("a\nb\nc\nd") == "b | c | d"

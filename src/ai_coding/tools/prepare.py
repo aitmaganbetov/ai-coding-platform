@@ -8,6 +8,7 @@ as the non-root sandbox user, with only the cache (and a seed directory) mounted
 
 from __future__ import annotations
 
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -43,6 +44,21 @@ def is_prepared(adapter: Any) -> bool:
     if ready is not None:
         return path.is_dir() and bool(ready(path))
     return path.is_dir() and any(path.iterdir())
+
+
+_HEADLINE = re.compile(r"^\s*(panic:|fatal error:|error:|Error:|ERROR)")
+
+
+def failure_reason(output: str, limit: int = 600) -> str:
+    """The lines that explain a failure: a panic/error headline first, then the tail.
+
+    A Go panic ends with a long stack trace; its reason is the first line.
+    """
+    lines = [ln.rstrip() for ln in output.strip().splitlines() if ln.strip()]
+    head = [ln.strip() for ln in lines if _HEADLINE.match(ln)][:3]
+    tail = " | ".join(lines[-3:])
+    text = " | ".join([*head, "…", tail]) if head else tail
+    return text[:limit]
 
 
 def network_executor() -> DockerSandboxExecutor:
@@ -86,5 +102,7 @@ async def prepare(adapter: Any, executor: Executor | None = None) -> None:
             ok_exit_codes=frozenset(range(256)),
         ))  # fmt: skip
     if not is_prepared(adapter):
-        tail = (result.stderr or result.stdout).strip()[-400:]
-        raise RuntimeError(f"{spec.name}: preparation failed (exit {result.exit_code}): {tail}")
+        raise RuntimeError(
+            f"{spec.name}: preparation failed (exit {result.exit_code}): "
+            f"{failure_reason(result.stderr + chr(10) + result.stdout)}"
+        )
