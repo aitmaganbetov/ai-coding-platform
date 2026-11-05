@@ -345,6 +345,20 @@
           "pattern": "^\\d+(:\\d+)?$",
           "title": "User",
           "type": "string"
+        },
+        "runtime": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9._-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "OCI runtime for the sandbox containers, e.g. 'runsc' (gVisor: a user-space kernel between the project code and the host kernel); the daemon must have it registered. Default: the daemon's default runtime (runc).",
+          "title": "Runtime"
         }
       },
       "title": "DockerConfig",
@@ -842,6 +856,32 @@
           "minimum": 10,
           "title": "Timeout Seconds",
           "type": "integer"
+        },
+        "e2e": {
+          "default": true,
+          "description": "Run the project's Playwright end-to-end tests in the sandbox (S9).",
+          "title": "E2E",
+          "type": "boolean"
+        },
+        "performance_scripts": {
+          "description": "k6 scripts, relative paths; empty: *.k6.js files and k6/*.js (S9).",
+          "items": {
+            "maxLength": 300,
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9_./-]*$",
+            "type": "string"
+          },
+          "title": "Performance Scripts",
+          "type": "array"
+        },
+        "performance_hosts": {
+          "description": "Hosts of the system under test the k6 scripts load (egress allowlist; they must also be allowed by `security`); empty: k6 is SKIPPED.",
+          "items": {
+            "maxLength": 260,
+            "pattern": "^(\\*\\.)?[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*(:\\d{1,5})?$",
+            "type": "string"
+          },
+          "title": "Performance Hosts",
+          "type": "array"
         }
       },
       "title": "TestsGate",

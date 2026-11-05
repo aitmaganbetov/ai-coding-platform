@@ -13,6 +13,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     Float,
     ForeignKey,
@@ -225,6 +226,20 @@ class RunJob(Base):
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = _created()
     finished_at: Mapped[datetime | None] = mapped_column()
+
+
+class RateLimitCounter(Base):
+    """Requests per key and one-minute window, shared by every API process (B-807).
+
+    ``key`` is a SHA-256 of the limited identity (user or client address), so neither
+    addresses nor user ids are stored; old windows are purged.
+    """
+
+    __tablename__ = "rate_limit_counters"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    minute: Mapped[int] = mapped_column(BigInteger, primary_key=True)  # unix time // 60
+    count: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class RunEvent(Base):

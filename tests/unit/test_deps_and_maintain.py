@@ -108,6 +108,7 @@ async def test_apply_upgrades_runs_the_package_manager_on_a_copy(tmp_path: Path)
     ]
     (spec,) = pm.specs  # PyPI needed no command
     assert spec.network and spec.argv[:2] == ("npm", "install")
+    assert spec.egress == ("registry.npmjs.org",)  # only the registry (B-205)
     work = next(m for m in spec.mounts if m.target == "/work")
     assert work.source != root / "web" and not work.read_only
     assert (root / "web" / "package-lock.json").read_text(encoding="utf-8") == '{"v": "4.17.15"}\n'

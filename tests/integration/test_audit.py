@@ -236,6 +236,7 @@ def test_build_audit_selects_tools_by_stack(vulnerable: Path) -> None:
     )
     assert [a.spec.name for a in adapters] == [
         "gitleaks",
+        "k6",  # every stack: SKIPPED until scripts and performance_hosts exist
         "mypy",
         "osv-scanner",
         "ruff",

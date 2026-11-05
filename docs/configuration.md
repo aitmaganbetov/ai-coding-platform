@@ -21,7 +21,7 @@ JSON Schema: [`src/ai_coding/schemas/ai-coding.schema.json`](../src/ai_coding/sc
 | `execution.allow_host_commands` | Разрешить allowlist-команды на хосте | `false` |
 | `execution.command_allowlist` | Исполняемые файлы без approval | `[]` |
 | `execution.limits` | `cpus`, `memory_mb`, `timeout_seconds`, `max_retries`, `max_parallel_tasks` | 2 / 2048 / 1800 / 2 / 4 |
-| `execution.docker` | `image`, `read_only_root`, `network` (`none`\|`bridge`), `user` | `python:3.12-slim`, `true`, `none`, `1000:1000` |
+| `execution.docker` | `image`, `read_only_root`, `network` (`none`\|`bridge`), `user`, `runtime` (OCI runtime, например `runsc` для gVisor — ядро в пространстве пользователя между кодом проекта и ядром хоста; должно быть зарегистрировано в демоне, S9) | `python:3.12-slim`, `true`, `none`, `1000:1000`, runtime демона по умолчанию |
 | `ai.enabled` | Включить LLM | `false` |
 | `ai.provider` | `none` \| `openai` \| `anthropic` \| `ollama` \| `vllm` | `none` |
 | `ai.model`, `ai.base_url` | Модель, URL для Ollama/vLLM | — |
@@ -88,6 +88,9 @@ security:
 | `install_hosts` | Хосты, нужные установке (проверяются egress-политикой) | по стеку |
 | `image` | Образ рантайма, только `name@sha256:…` | `python-runtime` / `node-runtime` |
 | `timeout_seconds` | Таймаут каждого шага | 900 |
+| `e2e` | Запускать E2E-тесты проекта на Playwright (S9) | `true` |
+| `performance_scripts` | Скрипты k6, пути от корня проекта, без `..` (S9) | `*.k6.js` и `k6/*.js` |
+| `performance_hosts` | Хосты тестируемой системы для k6, допустимо `host:port`. Это egress-allowlist, хосты должны быть разрешены и в `security`. Хосты указывает оператор, поэтому разрешены и внутренние адреса (S9) | пусто: k6 SKIPPED |
 
 Установка выполняется только при `execution.docker.network: bridge` и разрешённых хостах. Иначе тесты получают статус SKIPPED с причиной (с `--strict` такой результат не принимается). Подробнее — в [develop.md](develop.md).
 

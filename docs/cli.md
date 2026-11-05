@@ -40,7 +40,7 @@
 | `ai-coding server migrate` | Создать/обновить схему серверной БД (SQLite или PostgreSQL) ([server.md](server.md)) | S8 |
 | `ai-coding server user add NAME [--admin] [--password-stdin]` / `user password NAME` | Пользователи сервера (argon2id, ≥ 12 символов) | S8 |
 | `ai-coding server token create NAME [--name L] [--project P] [--role R] [--ttl-hours N]` / `token revoke ID` | Токены API: область проекта, предельная роль, срок; токен показывается один раз | S8 |
-| `ai-coding server serve [--host H] [--port N] [--with-worker] [--ui DIR]` | REST API `/api/v1` и Web UI (за TLS reverse proxy в production) | S8 |
+| `ai-coding server serve [--host H] [--port N] [--workers N] [--with-worker] [--ui DIR]` | REST API `/api/v1` и Web UI (за TLS reverse proxy в production); `--workers` — несколько процессов API | S8, S9 |
 | `ai-coding server worker [--concurrency N]` | Выполнять прогоны из очереди (≥10 параллельно; SIGTERM — дождаться текущих) | S8 |
 | `ai-coding server export PROJECT --user OWNER -o FILE` | ZIP с данными проекта (NFR-08, права `--user`) | S8 |
 | `ai-coding server purge` / `server settings` | Применить retention сейчас (для cron) / действующие настройки без секретов | S8 |

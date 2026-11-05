@@ -86,6 +86,7 @@ def all_requests(fake: FakeLLM) -> str:
     return json.dumps([r["body"] for r in fake.requests], ensure_ascii=False)
 
 
+@pytest.mark.acceptance("AC-07")
 async def test_readme_injection_cannot_write_git_hooks_or_escape(
     project: LocalGitRepository, fake_llm: FakeLLM
 ) -> None:
@@ -98,6 +99,7 @@ async def test_readme_injection_cannot_write_git_hooks_or_escape(
     assert project.branches() == ["main"]  # nothing committed anywhere
 
 
+@pytest.mark.acceptance("AC-07")
 async def test_injection_touching_ci_and_policy_needs_a_human(
     project: LocalGitRepository, fake_llm: FakeLLM
 ) -> None:
@@ -116,6 +118,7 @@ async def test_injection_touching_ci_and_policy_needs_a_human(
     assert project.branches() == ["main"]
 
 
+@pytest.mark.acceptance("AC-07")
 async def test_issue_injection_cannot_reach_main_or_the_network(
     project: LocalGitRepository, fake_llm: FakeLLM
 ) -> None:
@@ -139,6 +142,7 @@ async def test_issue_injection_cannot_reach_main_or_the_network(
     assert sandbox.specs and all(not s.network for s in sandbox.specs)  # tests: no network
 
 
+@pytest.mark.acceptance("AC-07")
 async def test_secrets_never_reach_the_model_and_delimiters_hold(
     project: LocalGitRepository, fake_llm: FakeLLM
 ) -> None:
@@ -163,6 +167,7 @@ async def test_secrets_never_reach_the_model_and_delimiters_hold(
     assert "<\\/input>" in user and user.count("</input>") == user.count('<input name="')
 
 
+@pytest.mark.acceptance("AC-07")
 async def test_injected_review_approval_does_not_replace_tests(
     project: LocalGitRepository, fake_llm: FakeLLM
 ) -> None:
@@ -172,6 +177,7 @@ async def test_injected_review_approval_does_not_replace_tests(
     assert project.branches() == ["main"]
 
 
+@pytest.mark.acceptance("AC-07")
 async def test_triage_injection_cannot_dismiss_a_committed_secret() -> None:
     agent = SecurityAgent()
     dismissed = copy.deepcopy(SEC_OUT)
@@ -183,6 +189,7 @@ async def test_triage_injection_cannot_dismiss_a_committed_secret() -> None:
         await agent.run(task_for(agent), AgentContext(inputs=inputs, llm=llm))
 
 
+@pytest.mark.acceptance("AC-07")
 async def test_maintenance_injection_cannot_pick_an_attacker_version() -> None:
     agent = MaintenanceAgent()
     evil = copy.deepcopy(MAINT_OUT)

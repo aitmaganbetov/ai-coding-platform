@@ -139,6 +139,7 @@ async def test_install_is_gated_by_sandbox_network_and_egress(tmp_path: Path) ->
     assert run.status is Status.PASSED and run.passed == 2
     install, test = rec.specs
     assert install.network and not test.network
+    assert install.egress and install.egress == tuple(install.egress)  # allowlisted hosts
     assert {m.target: m.read_only for m in test.mounts} == {"/work": False, "/deps": False}
     rec.results = [result(1, "ERROR: no such package")]
     broken = await allowed.run(root, plan)

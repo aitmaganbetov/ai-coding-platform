@@ -27,6 +27,7 @@ from ai_coding.config.models import ResourceLimits
 from ai_coding.domain.enums import ExecutionBackend
 from ai_coding.executors.base import CommandSpec, ExecutionResult, ExecutorError
 from ai_coding.executors.process import run_process
+from ai_coding.executors.winjob import JobLimits
 
 ENV_ALLOWLIST: tuple[str, ...] = (
     "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR", "TEMP",
@@ -36,7 +37,7 @@ ENV_ALLOWLIST: tuple[str, ...] = (
 
 
 def _limits_preexec(limits: ResourceLimits, timeout: float) -> Callable[[], None] | None:
-    if sys.platform == "win32":  # pragma: no cover - no rlimits on Windows (Job Objects: S9)
+    if sys.platform == "win32":  # pragma: no cover - Windows uses a Job Object (winjob.py)
         return None
     import resource  # noqa: PLC0415 - POSIX-only module
 
@@ -113,6 +114,9 @@ class LocalExecutor:
             timeout=min(spec.timeout_seconds, float(self._limits.timeout_seconds)),
             max_output_bytes=spec.max_output_bytes,
             preexec=_limits_preexec(self._limits, spec.timeout_seconds),
+            job=JobLimits(
+                memory_mb=self._limits.memory_mb, cpu_seconds=int(spec.timeout_seconds) + 5
+            ),  # Windows Job Object (B-206)
         )
         return ExecutionResult(
             backend=self.backend,

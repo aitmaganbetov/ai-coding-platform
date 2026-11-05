@@ -141,6 +141,7 @@ async def drive(orch: Orchestrator, run_id: Any) -> tuple[Any, list[str]]:
 
 # ------------------------------------------------------------------ e2e --
 @pytest.mark.docker
+@pytest.mark.acceptance("AC-03")
 async def test_develop_fix_loop_with_real_sandbox_tests(
     project: LocalGitRepository, fake_llm: FakeLLM
 ) -> None:
@@ -348,6 +349,7 @@ async def test_unseen_file_is_shown_before_it_is_rewritten(
     assert "export function sum" in dev_calls[1]["body"]["messages"][1]["content"]
 
 
+@pytest.mark.acceptance("AC-03")
 async def test_develop_opens_pr_with_report_body(
     project: LocalGitRepository, fake_llm: FakeLLM, tmp_path: Path
 ) -> None:

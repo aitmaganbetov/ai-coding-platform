@@ -1,16 +1,28 @@
 """Rate limiting (token bucket) and client address resolution (NFR-04).
 
-The limiter is in-process: each API process enforces its own budget. Behind several
-replicas the effective limit is multiplied by the replica count; a shared limiter
-(Redis) is the documented extension point (ADR-0030).
+:class:`RateLimiter` is in-process: each API process enforces its own budget, so with
+several processes the effective limit is multiplied. :class:`SharedRateLimiter` keeps
+the counters in the database, shared by every API process and replica (S9, B-807).
 """
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import threading
 import time
 from dataclasses import dataclass, field
+
+from sqlalchemy import delete, select
+from sqlalchemy.dialects import postgresql, sqlite
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+
+from ai_coding.observability import get_logger
+from ai_coding.persistence import Database
+from ai_coding.persistence.models import RateLimitCounter
+
+_log = get_logger(__name__)
 
 
 @dataclass(slots=True)
@@ -56,6 +68,129 @@ class RateLimiter:
         ]
         for key in full or list(self._buckets)[: len(self._buckets) // 2]:
             del self._buckets[key]
+
+
+@dataclass(slots=True)
+class _Shared:
+    minute: int
+    previous: int = 0  # all processes, the minute before
+    current: int = 0  # all processes, this minute, as of the last sync
+    pending: int = 0  # this process, not yet sent to the database
+    in_flight: int = 0  # this process, being sent right now
+    synced_at: float = float("-inf")
+
+
+class SharedRateLimiter:
+    """``per_minute`` requests per key across all API processes (sliding-window estimate).
+
+    Each process counts locally and adds its count to the key's row for the current
+    minute at most every ``sync_seconds`` (``INSERT … ON CONFLICT DO UPDATE …
+    RETURNING``), reading back the total of every process. A database write per request
+    made all requests of one client queue on one row lock (load test: p95 0.4 s →
+    1.9 s); batching bounds the writes to 1/``sync_seconds`` per key and process, at
+    the price of at most ``rate × sync_seconds`` extra requests per process. The
+    database round trip happens outside the process lock, so other requests never
+    wait for it.
+
+    The estimate weights the previous minute by the part still inside the window, so
+    a burst at a minute boundary cannot double the limit. If the database fails, this
+    process's own count decides (a failure never resets it).
+    """
+
+    def __init__(
+        self, db: Database, per_minute: int, *, sync_seconds: float = 0.5,
+        purge_every: int = 1000, max_keys: int = 50_000,
+    ) -> None:  # fmt: skip
+        self.db = db
+        self.per_minute = per_minute
+        self.sync_seconds = sync_seconds
+        self.purge_every = purge_every
+        self.max_keys = max_keys
+        self._state: dict[str, _Shared] = {}
+        self._syncs = 0
+        self._lock = threading.Lock()
+
+    def check(self, key: str, now: float | None = None) -> float | None:
+        """``None`` if allowed, else the seconds to wait (Retry-After)."""
+        now = time.time() if now is None else now
+        minute, into = int(now // 60), (now % 60) / 60.0
+        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+        flush: tuple[int, int] | None = None  # (minute, count) of a minute that ended
+        with self._lock:
+            state = self._state.get(digest)
+            if state is None or state.minute != minute:
+                if state is not None and state.pending:
+                    flush = (state.minute, state.pending)
+                if len(self._state) >= self.max_keys:
+                    self._state.clear()
+                old, state = state, _Shared(minute)
+                self._state[digest] = state
+                if old is not None and old.minute == minute - 1:
+                    state.previous = old.current + old.pending + old.in_flight
+        if flush is not None:
+            self._send(digest, *flush)
+        if self.sync_seconds <= 0 or now - state.synced_at >= self.sync_seconds:
+            self._sync(digest, state, now)
+        with self._lock:
+            estimate = (state.previous * (1.0 - into) + state.current + state.pending
+                        + state.in_flight)  # fmt: skip
+            if estimate + 1 > self.per_minute:
+                return max(1.0, 60.0 * (1.0 - into))
+            state.pending += 1
+        if self.sync_seconds <= 0:
+            self._sync(digest, state, now)
+        return None
+
+    def _sync(self, digest: str, state: _Shared, now: float) -> None:
+        """Send this process's pending count; read every process's totals."""
+        with self._lock:
+            if state.in_flight:  # another thread is syncing this key right now
+                return
+            state.in_flight, state.pending = state.pending, 0
+            state.synced_at = now
+            sending = state.in_flight
+        totals = self._send(digest, state.minute, sending)
+        with self._lock:
+            state.in_flight = 0
+            if totals is None:  # database unavailable: keep counting locally
+                state.pending += sending
+            else:
+                state.current, previous = totals
+                state.previous = previous or state.previous
+
+    def _send(self, digest: str, minute: int, count: int) -> tuple[int, int] | None:
+        """Add ``count``; ``(current, previous)`` totals of all processes, or ``None``."""
+        try:
+            with self.db.session() as s:
+                current = self._increment(s, digest, minute, count)
+                previous = s.scalar(
+                    select(RateLimitCounter.count).where(
+                        RateLimitCounter.key == digest, RateLimitCounter.minute == minute - 1
+                    )
+                )
+                with self._lock:
+                    self._syncs += 1
+                    purge = self._syncs % self.purge_every == 0
+                if purge:
+                    s.execute(delete(RateLimitCounter).where(RateLimitCounter.minute < minute - 1))
+        except SQLAlchemyError as exc:
+            _log.warning("shared rate limiter unavailable; counting locally", error=str(exc))
+            return None
+        return current, previous or 0
+
+    @staticmethod
+    def _increment(s: Session, digest: str, minute: int, by: int) -> int:
+        dialect = s.get_bind().dialect.name
+        insert = postgresql.insert if dialect == "postgresql" else sqlite.insert
+        statement = (
+            insert(RateLimitCounter)
+            .values(key=digest, minute=minute, count=by)
+            .on_conflict_do_update(
+                index_elements=["key", "minute"], set_={"count": RateLimitCounter.count + by}
+            )
+            .returning(RateLimitCounter.count)
+        )
+        return int(s.execute(statement).scalar_one())
 
 
 def client_address(

@@ -23,11 +23,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from starlette.concurrency import run_in_threadpool
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ai_coding import __version__
 from ai_coding.api import lifecycle
 from ai_coding.api.kinds import KINDS
-from ai_coding.api.limits import RateLimiter, client_address
+from ai_coding.api.limits import RateLimiter, SharedRateLimiter, client_address
 from ai_coding.api.metrics import Metrics
 from ai_coding.api.security import same_digest
 from ai_coding.api.services import (
@@ -475,6 +476,17 @@ def download_artifact(
     )
 
 
+_HTTP_CODES = {
+    400: "bad_request",
+    401: "unauthorized",
+    403: "forbidden",
+    404: "not_found",
+    405: "method_not_allowed",
+    413: "too_large",
+    415: "unsupported_media_type",
+}
+
+
 # --------------------------------------------------------------------- app --
 def create_app(server: Server, *, ui_dir: Path | None = None, run_worker: bool = False) -> FastAPI:
     """The API application bound to ``server`` (and the Web UI, when built).
@@ -509,8 +521,15 @@ def create_app(server: Server, *, ui_dir: Path | None = None, run_worker: bool =
         redoc_url=None,
     )
     app.state.server = server
-    app.state.limiter = RateLimiter(settings.rate_limit_per_minute)
-    app.state.login_limiter = RateLimiter(settings.login_rate_limit_per_minute)
+    shared = settings.rate_limit_backend == "database" or (
+        settings.rate_limit_backend == "auto" and not server.db.is_sqlite
+    )
+    if shared:  # one budget for all API processes and replicas
+        app.state.limiter = SharedRateLimiter(server.db, settings.rate_limit_per_minute)
+        app.state.login_limiter = SharedRateLimiter(server.db, settings.login_rate_limit_per_minute)
+    else:
+        app.state.limiter = RateLimiter(settings.rate_limit_per_minute)
+        app.state.login_limiter = RateLimiter(settings.login_rate_limit_per_minute)
     app.state.metrics = metrics
     _install_handlers(app)
     app.middleware("http")(_guard)
@@ -569,6 +588,17 @@ def _install_handlers(app: FastAPI) -> None:
         response.headers["Retry-After"] = str(max(1, int(exc.wait + 0.999)))
         return response
 
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error(_request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        # Errors raised by the framework itself (malformed JSON body, unknown route,
+        # wrong method) use the same envelope as the API's own errors (found by B-801).
+        code = _HTTP_CODES.get(exc.status_code, "http_error")
+        message = exc.detail if isinstance(exc.detail, str) else "request failed"
+        response = error_response(exc.status_code, code, message)
+        for name, value in (exc.headers or {}).items():
+            response.headers[name] = value
+        return response
+
     @app.exception_handler(RequestValidationError)
     async def invalid(_request: Request, exc: RequestValidationError) -> JSONResponse:
         details = [
@@ -581,3 +611,19 @@ def _install_handlers(app: FastAPI) -> None:
                 "error": {"code": "invalid", "message": "invalid request", "details": details}
             },
         )
+
+
+UI_DIR_ENV = "AI_CODING_SERVER_UI_DIR"
+
+
+def app_from_env() -> FastAPI:
+    """Application factory for ``serve --workers N``: each API process builds its own
+    server from the environment (uvicorn imports it by name in every process)."""
+    import os  # noqa: PLC0415
+
+    from ai_coding.api.settings import ServerSettings  # noqa: PLC0415
+    from ai_coding.observability import configure_logging  # noqa: PLC0415
+
+    configure_logging(json=True, level="INFO")
+    ui = os.environ.get(UI_DIR_ENV)
+    return create_app(Server(ServerSettings.from_env()), ui_dir=Path(ui) if ui else None)

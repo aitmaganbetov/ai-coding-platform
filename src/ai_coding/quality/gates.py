@@ -39,7 +39,7 @@ class GateName(StrEnum):
 
 _GATE_CATEGORIES: dict[GateName, frozenset[ToolCategory]] = {
     GateName.BUILD: frozenset({ToolCategory.BUILD}),
-    GateName.TESTS: frozenset({ToolCategory.TESTS}),
+    GateName.TESTS: frozenset({ToolCategory.TESTS, ToolCategory.PERFORMANCE}),  # k6: S9
     GateName.STATIC: frozenset({ToolCategory.LINT, ToolCategory.TYPES}),
     GateName.SECURITY: frozenset(
         {ToolCategory.SECRETS, ToolCategory.SAST, ToolCategory.DEPENDENCIES}

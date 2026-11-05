@@ -110,10 +110,10 @@ def server(postgres_url: str, tmp_path: Path) -> Iterator[Server]:
 def test_migrations_match_models_on_postgres(server: Server) -> None:
     with server.db.engine.connect() as conn:
         assert compare_metadata(MigrationContext.configure(conn), Base.metadata) == []
-    assert current_revision(server.db) == "0002_server"
+    assert current_revision(server.db) == "0003_rate_limits"
     command.downgrade(alembic_config(server.db.url), "0001_initial")
     upgrade_to_head(server.db)
-    assert current_revision(server.db) == "0002_server"
+    assert current_revision(server.db) == "0003_rate_limits"
 
 
 def test_audit_trail_is_append_only_on_postgres(server: Server) -> None:
@@ -163,3 +163,36 @@ def test_api_on_postgres(server: Server) -> None:
             json={"kind": "discover"},
         )
         assert run.status_code == 201 and run.json()["state"] == "CREATED"
+
+
+def test_shared_rate_limit_on_postgres(server: Server, postgres_url: str, tmp_path: Path) -> None:
+    """B-807: concurrent increments are atomic and two API instances share one budget."""
+    from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+
+    from ai_coding.api.limits import SharedRateLimiter  # noqa: PLC0415
+    from ai_coding.persistence.models import RateLimitCounter  # noqa: PLC0415
+
+    # 40 "processes" add to the same row at the same time: the upsert must not lose any.
+    limiters = [SharedRateLimiter(server.db, 1000, sync_seconds=0) for _ in range(40)]
+    with ThreadPoolExecutor(20) as pool:
+        list(pool.map(lambda lim: lim.check("burst", 1_700_000_000.0), limiters))
+    with server.db.session() as s:
+        assert s.scalar(select(RateLimitCounter.count)) == 40  # no lost update
+
+    server.create_user("root", PASSWORD, is_admin=True)
+    settings = ServerSettings(data_dir=tmp_path / "d2", database_url=postgres_url,
+                              rate_limit_per_minute=6)  # fmt: skip
+    first, second = Server(settings), Server(settings)  # two API processes, one database
+    token, _ = first.issue_token(first.login("root", PASSWORD), "t")  # type: ignore[arg-type]
+    h = {"Authorization": f"Bearer {token}"}
+    codes = []
+    with TestClient(create_app(first)) as a, TestClient(create_app(second)) as b:
+        for client in (a, b) * 5:  # requests further apart than the sync interval (0.5 s)
+            codes.append(client.get("/api/v1/me", headers=h).status_code)
+            time.sleep(0.55)
+    # One budget for both processes: each sends its latest count with its next request,
+    # so the other one may admit at most one extra request (bound: limit + processes).
+    assert 6 <= codes.count(200) <= 6 + 2 and codes[-2:] == [429, 429]
+    assert codes.count(200) < 10  # in-process limiters would have admitted all ten
+    first.close()
+    second.close()

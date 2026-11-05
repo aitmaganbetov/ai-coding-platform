@@ -46,6 +46,7 @@ def _crash_worker(project: Path, run_id: str, crash: str) -> int:
 
 
 @pytest.mark.parametrize("crash", ["after_commit", "before_commit"])
+@pytest.mark.acceptance("AC-04")
 async def test_worker_crash_resumes_without_duplicate_commits(
     git_repo: LocalGitRepository, tmp_path: Path, crash: str
 ) -> None:

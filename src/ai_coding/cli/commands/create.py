@@ -26,7 +26,7 @@ from ai_coding.cli.commands.run import _finish, _resolve
 from ai_coding.cli.common import close_all, guard, open_orchestrator
 from ai_coding.cli.console import error, info
 from ai_coding.cli.exit_codes import ExitCode
-from ai_coding.config.loader import STATE_CONFIG, find_config
+from ai_coding.config.loader import STATE_CONFIG, ConfigLoadError, find_config, parse_yaml
 from ai_coding.config.models import AICodingConfig
 from ai_coding.config.validator import validate_file
 from ai_coding.domain.enums import ApprovalOperation, ApprovalStatus, Mode, RunState
@@ -109,7 +109,11 @@ def _pull_request(repo: str | None, root: Path, title: str) -> Any:
 def _read_answers(path: Path | None) -> dict[str, str]:
     if path is None:
         return {}
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    try:  # the same bounded parser as the configuration (no alias bombs, no duplicates)
+        data = parse_yaml(path.read_text(encoding="utf-8")) or {}
+    except ConfigLoadError as exc:
+        error(f"{path}: {exc}")
+        raise typer.Exit(ExitCode.INVALID) from exc
     if not isinstance(data, dict):
         error(f"{path}: expected a mapping of question id → answer")
         raise typer.Exit(ExitCode.INVALID)

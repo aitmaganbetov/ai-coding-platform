@@ -71,6 +71,9 @@ dev = [
   "argon2-cffi>=23.1,<26",
   "psycopg[binary]>=3.2,<4",
   "httpx2>=2.16,<3",
+  "schemathesis>=4.3",
+  "hypothesis>=6.140",
+  "cyclonedx-bom>=7.0",
 ]
 
 [tool.hatch.version]
@@ -104,7 +107,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S603", "S607", "PLR2004", "S105", "S106", "S311", "SIM300"]
 "src/ai_coding/git/local.py" = ["S603"]
-"src/ai_coding/cli/commands/*.py" = ["PLR0917"]  # Typer maps options to parameters  # subprocess with argv list, no shell, validated input
+"src/ai_coding/cli/commands/*.py" = ["PLR0917"]
+"loadtest/*.py" = ["S603"]  # the harness starts fixed argv: docker, ai-coding, k6  # Typer maps options to parameters  # subprocess with argv list, no shell, validated input
 
 [tool.mypy]
 python_version = "3.12"
@@ -126,6 +130,7 @@ addopts = ["-ra", "--strict-markers", "--strict-config"]
 markers = [
   "integration: tests that call real external binaries (git) or subprocesses",
   "docker: tests that need a running Docker daemon and the pinned tool images",
+  "acceptance(ac_id): acceptance scenario of ТЗ §17 (AC-01…AC-10)",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

@@ -175,6 +175,7 @@ def test_expired_lease_is_taken_over_and_poison_jobs_stop(
         assert job is not None and job.state == "failed" and "gave up" in (job.error or "")
 
 
+@pytest.mark.acceptance("AC-04")
 async def test_killed_worker_process_run_resumes_from_checkpoint(
     server: Server, setup: tuple[Principal, uuid.UUID], tmp_path: Path
 ) -> None:

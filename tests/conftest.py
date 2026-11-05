@@ -15,6 +15,7 @@ from ai_coding.persistence import Database, upgrade_to_head
 from tests.helpers import OPEN_DATABASES
 
 FIXTURES = Path(__file__).parent / "fixtures"
+pytest_plugins = ["tests.acceptance_plugin"]
 
 
 @pytest.fixture

@@ -13,6 +13,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from ai_coding.executors.winjob import JobLimits, JobObject
 from ai_coding.security import redact
 
 _READ_CHUNK = 65536
@@ -70,8 +71,14 @@ async def run_process(
     max_output_bytes: int,
     preexec: Callable[[], None] | None = None,
     on_timeout: Callable[[], None] | None = None,
+    job: JobLimits | None = None,
 ) -> ProcessOutcome:
-    """Run ``argv`` without a shell; kill the whole process group on timeout."""
+    """Run ``argv`` without a shell; kill the whole process group on timeout.
+
+    ``job``: on Windows the process tree runs in a Job Object with these limits
+    (memory, CPU time, process count; killed when the job closes). Ignored elsewhere,
+    where ``preexec`` sets rlimits.
+    """
     kwargs: dict[str, object] = {}
     if sys.platform == "win32":  # pragma: no cover - exercised on Windows CI
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
@@ -90,6 +97,45 @@ async def run_process(
         **kwargs,  # type: ignore[arg-type]
     )
     assert proc.stdout is not None and proc.stderr is not None  # noqa: S101 - PIPE requested
+    windows_job = _job_for(proc, job)
+    try:
+        return await _supervise(proc, timeout=timeout, max_output_bytes=max_output_bytes,
+                                on_timeout=on_timeout, windows_job=windows_job,
+                                started=started)  # fmt: skip
+    finally:
+        if windows_job is not None:  # pragma: no cover - Windows
+            windows_job.close()  # KILL_ON_JOB_CLOSE: nothing outlives the command
+
+
+def _job_for(proc: asyncio.subprocess.Process, limits: JobLimits | None) -> JobObject | None:
+    if limits is None or os.name != "nt":
+        return None
+    job = JobObject(limits)  # pragma: no cover - Windows
+    try:  # pragma: no cover - Windows
+        job.assign(proc.pid)
+    except OSError:  # pragma: no cover - the process already ended
+        if proc.returncode is None:
+            job.close()
+            raise
+    return job  # pragma: no cover - Windows
+
+
+async def _supervise(
+    proc: asyncio.subprocess.Process,
+    *,
+    timeout: float,
+    max_output_bytes: int,
+    on_timeout: Callable[[], None] | None,
+    windows_job: JobObject | None,
+    started: float,
+) -> ProcessOutcome:
+    assert proc.stdout is not None and proc.stderr is not None  # noqa: S101 - PIPE requested
+
+    def kill() -> None:
+        if windows_job is not None:  # pragma: no cover - Windows
+            windows_job.terminate()
+        _kill_tree(proc)
+
     readers = asyncio.gather(
         _drain(proc.stdout, max_output_bytes), _drain(proc.stderr, max_output_bytes)
     )
@@ -103,13 +149,13 @@ async def run_process(
         timed_out = True
         if on_timeout is not None:
             on_timeout()
-        _kill_tree(proc)
+        kill()
         (out, out_trunc), (err, err_trunc) = await readers
         await proc.wait()
     except asyncio.CancelledError:
         if on_timeout is not None:
             on_timeout()
-        _kill_tree(proc)
+        kill()
         raise
     return ProcessOutcome(
         exit_code=proc.returncode if proc.returncode is not None else -1,

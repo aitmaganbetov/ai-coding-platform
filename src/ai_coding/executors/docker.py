@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import uuid
+from dataclasses import replace
 from pathlib import Path
 
 from ai_coding.config.models import DockerConfig, ResourceLimits
@@ -24,6 +25,8 @@ from ai_coding.executors.base import (
     ExecutorUnavailableError,
     Mount,
 )
+from ai_coding.executors.egress import PROXY_ENV
+from ai_coding.executors.egress import egress_gateway as _gateway
 from ai_coding.executors.process import run_process
 from ai_coding.security import redact
 
@@ -40,7 +43,7 @@ def docker_available(docker: str = "docker") -> bool:
     try:
         proc = subprocess.run(  # noqa: S603 - fixed argv
             [exe, "version", "--format", "{{.Server.Version}}"],
-            capture_output=True, text=True, timeout=15, check=False,
+            capture_output=True, text=True, timeout=15, check=False, env=_docker_env(),
         )  # fmt: skip
     except (OSError, subprocess.TimeoutExpired):
         return False
@@ -69,14 +72,22 @@ class DockerSandboxExecutor:
         """Whether the Docker daemon is reachable."""
         return docker_available(self._docker)
 
-    def build_argv(self, spec: CommandSpec, name: str) -> list[str]:
-        """``docker run`` argv for ``spec`` (exposed for review and tests)."""
+    def build_argv(
+        self, spec: CommandSpec, name: str, *, egress: tuple[str, str] | None = None
+    ) -> list[str]:
+        """``docker run`` argv for ``spec`` (exposed for review and tests).
+
+        ``egress`` is ``(internal network, proxy URL)`` for a step limited to an
+        allowlist: the container gets no route outside, only the proxy.
+        """
         image = spec.image or self._cfg.image
         if self._require_digest and not _DIGEST_REF.match(image):
             raise ExecutorError(f"image '{image}' must be pinned by digest (name@sha256:…)")
         network = "bridge" if spec.network else "none"
         if spec.network and self._cfg.network == "none":
             raise ExecutorError("sandbox network is disabled by execution.docker.network")
+        if egress is not None:
+            network = egress[0]
         argv = [
             "run", "--rm", "--name", name,
             "--pull", "never",  # images come from `ai-coding tools pull`: no hidden egress
@@ -85,6 +96,7 @@ class DockerSandboxExecutor:
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
             "--user", self._cfg.user,
+            *(("--runtime", self._cfg.runtime) if self._cfg.runtime else ()),
             "--pids-limit", "256",
             "--cpus", str(self._limits.cpus),
             "--memory", f"{self._limits.memory_mb}m",
@@ -97,6 +109,16 @@ class DockerSandboxExecutor:
             if not _ENV_KEY.match(key):
                 raise ExecutorError(f"invalid environment variable name {key!r}")
             argv += ["--env", f"{key}={value}"]
+        if egress is not None:
+            argv += ["--dns", "0.0.0.0"]  # noqa: S104 - no resolver: only the proxy resolves names
+            for key in PROXY_ENV:
+                argv += ["--env", f"{key}={egress[1]}"]
+            argv += [
+                "--env",
+                "NO_PROXY=localhost,127.0.0.1",
+                "--env",
+                "no_proxy=localhost,127.0.0.1",
+            ]
         for mount in spec.mounts:
             argv += ["--mount", self._mount_arg(mount)]
         if spec.workdir:
@@ -123,7 +145,7 @@ class DockerSandboxExecutor:
             return False
         proc = subprocess.run(  # noqa: S603 - fixed argv, validated image reference
             [docker, "image", "inspect", "--format", "{{.Id}}", "--", image],
-            capture_output=True, text=True, timeout=30, check=False,
+            capture_output=True, text=True, timeout=30, check=False, env=_docker_env(),
         )  # fmt: skip
         return proc.returncode == 0
 
@@ -136,7 +158,7 @@ class DockerSandboxExecutor:
             raise ExecutorUnavailableError("docker CLI not found")
         proc = subprocess.run(  # noqa: S603 - fixed argv, validated image reference
             [docker, "pull", "--quiet", image], capture_output=True, text=True,
-            timeout=timeout, check=False,
+            timeout=timeout, check=False, env=_docker_env(),
         )  # fmt: skip
         if proc.returncode != 0:
             raise ExecutorUnavailableError(
@@ -149,11 +171,29 @@ class DockerSandboxExecutor:
         if docker is None:
             raise ExecutorUnavailableError("docker CLI not found")
         name = f"ai-coding-{uuid.uuid4().hex[:16]}"
-        argv = [docker, *self.build_argv(spec, name)]
+        if spec.network and spec.egress is not None:
+            async with _gateway(docker, name, spec.egress, _docker_env(),
+                                allow_private=spec.egress_private) as gateway:  # fmt: skip
+                result = await self._run(docker, name, spec, gateway.route)
+            denied = gateway.denied()
+            if denied:  # make the reason of a failed install visible in the step's output
+                note = "\negress denied by policy: " + "; ".join(denied[:10]) + "\n"
+                result = replace(result, stderr=result.stderr + note)
+            return result
+        return await self._run(docker, name, spec, None)
+
+    async def _run(
+        self, docker: str, name: str, spec: CommandSpec, egress: tuple[str, str] | None
+    ) -> ExecutionResult:
+        argv = [docker, *self.build_argv(spec, name, egress=egress)]
 
         def kill() -> None:
             subprocess.run(  # noqa: S603 - fixed argv
-                [docker, "kill", name], capture_output=True, timeout=30, check=False
+                [docker, "kill", name],
+                capture_output=True,
+                timeout=30,
+                check=False,
+                env=_docker_env(),
             )
 
         outcome = await run_process(
@@ -166,6 +206,11 @@ class DockerSandboxExecutor:
         )
         if outcome.exit_code == 125 and "Cannot connect to the Docker daemon" in outcome.stderr:
             raise ExecutorUnavailableError("Docker daemon is not reachable")
+        if outcome.exit_code == 125 and "runtime" in outcome.stderr and self._cfg.runtime:
+            raise ExecutorUnavailableError(
+                f"the Docker daemon has no runtime '{self._cfg.runtime}' "
+                "(execution.docker.runtime; see docs/operations.md, gVisor)"
+            )
         if outcome.exit_code == 125 and (
             "No such image" in outcome.stderr or "Unable to find image" in outcome.stderr
         ):
@@ -186,9 +231,17 @@ class DockerSandboxExecutor:
         )
 
 
+# What the docker CLI needs to reach the daemon, and nothing else (no secrets of the
+# platform process): a remote daemon over TLS (DOCKER_TLS_VERIFY, DOCKER_CERT_PATH) or
+# SSH (ssh://, SSH_AUTH_SOCK) and rootless Docker (XDG_RUNTIME_DIR) — S9, B-807.
+DOCKER_CLIENT_ENV = (
+    "PATH", "HOME", "DOCKER_HOST", "DOCKER_CONFIG", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY",
+    "DOCKER_CERT_PATH", "DOCKER_API_VERSION", "SSH_AUTH_SOCK", "XDG_RUNTIME_DIR",
+    "SYSTEMROOT", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TMPDIR", "TEMP", "TMP",
+)  # fmt: skip
+
+
 def _docker_env() -> dict[str, str]:
     import os  # noqa: PLC0415
 
-    keep = ("PATH", "HOME", "DOCKER_HOST", "DOCKER_CONFIG", "DOCKER_CONTEXT", "SYSTEMROOT",
-            "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TMPDIR", "TEMP", "TMP")  # fmt: skip
-    return {k: v for k, v in os.environ.items() if k in keep}
+    return {k: v for k, v in os.environ.items() if k in DOCKER_CLIENT_ENV}

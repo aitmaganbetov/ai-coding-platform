@@ -36,6 +36,7 @@ DEFAULT_PATTERNS: tuple[SecretPattern, ...] = (
     _p("openai-key", r"\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_\-]{20,}"),
     _p("github-token", r"\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})"),
     _p("aws-access-key", r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
+    _p("ai-coding-token", r"\baic_[A-Za-z0-9_\-]{40,}"),  # this platform's API tokens (S8)
     _p("slack-token", r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),
     _p("google-api-key", r"\bAIza[0-9A-Za-z_\-]{35}\b"),
     _p("jwt", r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}"),

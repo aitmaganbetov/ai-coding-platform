@@ -54,7 +54,9 @@ def _sqlite_pragmas(dbapi_connection: Any, _record: Any) -> None:
 class Database:
     """Owns the engine and session factory for one database."""
 
-    def __init__(self, url: str, *, echo: bool = False) -> None:
+    def __init__(
+        self, url: str, *, echo: bool = False, pool_size: int = 10, max_overflow: int = 10
+    ) -> None:
         parsed = make_url(url)
         self.url = url
         self.is_sqlite = parsed.get_backend_name() == "sqlite"
@@ -64,7 +66,10 @@ class Database:
         if self.is_sqlite:
             kwargs["connect_args"] = {"check_same_thread": False, "timeout": 10}
         else:
-            kwargs["pool_pre_ping"] = True
+            # Sized per process: processes x (pool_size + max_overflow) must stay below the
+            # server's max_connections (PostgreSQL: 100) — see docs/server.md (B-800).
+            kwargs.update(pool_pre_ping=True, pool_size=pool_size, max_overflow=max_overflow,
+                          pool_timeout=30)  # fmt: skip
         self.engine: Engine = create_engine(url, **kwargs)
         if self.is_sqlite:
             event.listen(self.engine, "connect", _sqlite_pragmas)

@@ -13,6 +13,7 @@ import hashlib
 import os
 import re
 import socket
+import threading
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -66,6 +67,7 @@ from ai_coding.persistence.types import utcnow
 
 _DUMMY_HASH = hash_password("dummy-password-for-timing")
 _LAST_USED_GRANULARITY = timedelta(minutes=1)
+_CONFIG_CACHE_SIZE = 256
 _KEY = re.compile(r"[\x21-\x7e]{1,200}")
 
 
@@ -119,9 +121,15 @@ class Server:
 
     def __init__(self, settings: ServerSettings, db: Database | None = None) -> None:
         self.settings = settings
-        self.db = db or Database(settings.database_url)
+        self.db = db or Database(
+            settings.database_url,
+            pool_size=settings.db_pool_size,
+            max_overflow=settings.db_max_overflow,
+        )
         self.audit = AuditLogger()
         self.worker_id = f"{socket.gethostname()}:{os.getpid()}"
+        self._config_cache: dict[tuple[str, int, int], AICodingConfig] = {}
+        self._config_lock = threading.Lock()
 
     def close(self) -> None:
         """Release database connections (orchestrators share this database)."""
@@ -530,12 +538,34 @@ class Server:
         """Root and configuration of a project; the name is the server's project name."""
         root = Path(project.root_path or "")
         path = find_project_config(root) or (root / STATE_CONFIG)
+        config = self._validated_config(path)
+        renamed = config.project.model_copy(update={"name": project.name})
+        return root, config.model_copy(update={"project": renamed})
+
+    def _validated_config(self, path: Path) -> AICodingConfig:
+        """Parse and validate ``path`` once per version of the file.
+
+        YAML parsing and JSON Schema validation dominated every run request under load
+        (B-800); the key includes mtime and size, so an edited file is read again.
+        """
+        try:
+            stat = path.stat()
+            key: tuple[str, int, int] | None = (str(path), stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            key = None
+        with self._config_lock:
+            cached = self._config_cache.get(key) if key else None
+        if cached is not None:
+            return cached
         report = validate_file(path)
         if not report.ok or report.config is None:
             raise InvalidError(f"the project configuration is invalid ({path.name})")
-        config = report.config
-        renamed = config.project.model_copy(update={"name": project.name})
-        return root, config.model_copy(update={"project": renamed})
+        if key is not None:
+            with self._config_lock:
+                if len(self._config_cache) >= _CONFIG_CACHE_SIZE:
+                    self._config_cache.pop(next(iter(self._config_cache)))
+                self._config_cache[key] = report.config
+        return report.config
 
     def list_projects(self, principal: Principal) -> list[dict[str, Any]]:
         """Projects the caller is a member of (admins also see the others' names)."""

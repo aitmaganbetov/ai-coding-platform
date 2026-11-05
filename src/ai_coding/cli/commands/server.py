@@ -11,10 +11,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import signal
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
 
@@ -184,25 +185,35 @@ def serve(
         bool, typer.Option("--with-worker", help="Also run a worker in this process.")
     ] = False,
     ui: Annotated[Path | None, typer.Option("--ui", help="Built Web UI directory.")] = None,
+    workers: Annotated[
+        int,
+        typer.Option(
+            "--workers", min=1, max=64, help="API processes (one per CPU core is a good start)."
+        ),
+    ] = 1,
 ) -> None:
     """Run the API (behind a TLS reverse proxy in production)."""
     import uvicorn  # noqa: PLC0415
 
-    from ai_coding.api.app import create_app  # noqa: PLC0415
+    from ai_coding.api.app import UI_DIR_ENV, create_app  # noqa: PLC0415
 
+    if workers > 1 and with_worker:
+        error("--with-worker runs jobs inside the API process; use it with --workers 1 "
+              "and start `ai-coding server worker` separately for more API processes")  # fmt: skip
+        raise typer.Exit(ExitCode.USAGE)
     server = _server(level="INFO")
     server.migrate()
-    application = create_app(server, ui_dir=ui, run_worker=with_worker)
     proxies = ",".join(server.settings.trusted_proxies) or None
-    uvicorn.run(
-        application,
-        host=host,
-        port=port,
-        proxy_headers=bool(proxies),
-        forwarded_allow_ips=proxies,
-        server_header=False,
-        log_level="info",
-    )
+    common: dict[str, Any] = {"host": host, "port": port, "proxy_headers": bool(proxies),
+                              "forwarded_allow_ips": proxies, "server_header": False,
+                              "log_level": "info"}  # fmt: skip
+    if workers > 1:
+        server.close()
+        if ui is not None:
+            os.environ[UI_DIR_ENV] = str(ui.resolve())
+        uvicorn.run("ai_coding.api.app:app_from_env", factory=True, workers=workers, **common)
+        return
+    uvicorn.run(create_app(server, ui_dir=ui, run_worker=with_worker), **common)
     server.close()
 
 

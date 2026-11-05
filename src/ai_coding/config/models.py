@@ -25,6 +25,7 @@ from ai_coding.domain.enums import (
     Severity,
     Stack,
 )
+from ai_coding.security.endpoints import is_local_endpoint
 
 SCHEMA_VERSION = "2.1"
 SUPPORTED_SCHEMA_VERSIONS: frozenset[str] = frozenset({SCHEMA_VERSION})
@@ -32,6 +33,7 @@ SUPPORTED_SCHEMA_VERSIONS: frozenset[str] = frozenset({SCHEMA_VERSION})
 _ENV_NAME = r"^[A-Z_][A-Z0-9_]*$"
 _LABEL = r"[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
 _HOSTNAME = rf"^(\*\.)?{_LABEL}(\.{_LABEL})*(:\d{{1,5}})?$"
+_REL_PATH = r"^[A-Za-z0-9_][A-Za-z0-9_./-]*$"  # project-relative; ".." refused below
 _BRANCH_GLOB = r"^[A-Za-z0-9._/*-]+$"
 
 ReportFormat = Literal["json", "markdown", "sarif", "junit"]
@@ -100,6 +102,13 @@ class DockerConfig(_Strict):
     read_only_root: bool = True
     network: Literal["none", "bridge"] = "none"
     user: str = Field(default="1000:1000", pattern=r"^\d+(:\d+)?$")
+    runtime: str | None = Field(
+        default=None,
+        pattern=r"^[a-z][a-z0-9._-]{0,63}$",
+        description="OCI runtime for the sandbox containers, e.g. 'runsc' (gVisor: a "
+        "user-space kernel between the project code and the host kernel); the daemon must "
+        "have it registered. Default: the daemon's default runtime (runc).",
+    )
 
 
 class ExecutionConfig(_Strict):
@@ -223,6 +232,16 @@ class AIConfig(_Strict):
             api_key_env=route.api_key_env or (self.api_key_env if same else None),
         )
 
+    def routes_in_use(self) -> list[tuple[str, ModelRoute]]:
+        """Every fully specified route that may receive requests, with its location."""
+        if not self.enabled:
+            return []
+        return [
+            ("ai", self.resolve()),
+            *((f"ai.fallback[{i}]", self.resolve(r)) for i, r in enumerate(self.fallback)),
+            *((f"ai.routing.{a.value}", self.resolve(r)) for a, r in self.routing.items()),
+        ]
+
     def providers_in_use(self) -> set[ProviderName]:
         """All providers that may receive requests."""
         if not self.enabled:
@@ -302,6 +321,27 @@ class TestsGate(_Gate):
         description="Digest-pinned runtime image (default: per stack).",
     )
     timeout_seconds: int = Field(default=900, ge=10, le=7200)
+    e2e: bool = Field(
+        default=True,
+        description="Run the project's Playwright end-to-end tests in the sandbox (S9).",
+    )
+    performance_scripts: list[Annotated[str, Field(pattern=_REL_PATH, max_length=300)]] = Field(
+        default_factory=list,
+        description="k6 scripts, relative paths; empty: *.k6.js files and k6/*.js (S9).",
+    )
+    performance_hosts: list[Annotated[str, Field(pattern=_HOSTNAME, max_length=260)]] = Field(
+        default_factory=list,
+        description="Hosts of the system under test the k6 scripts load (egress allowlist; "
+        "they must also be allowed by `security`); empty: k6 is SKIPPED.",
+    )
+
+    @field_validator("performance_scripts")
+    @classmethod
+    def _inside_project(cls, value: list[str]) -> list[str]:
+        for path in value:
+            if ".." in path.split("/"):
+                raise ValueError(f"performance script {path!r} must stay inside the project")
+        return value
 
 
 class StaticGate(_Gate):
@@ -454,6 +494,14 @@ class AICodingConfig(_Strict):
                 f"security.network 'local-only' forbids egress, but external AI provider(s) "
                 f"are configured: {names}"
             )
+        if self.security.network is NetworkPolicy.LOCAL_ONLY:
+            # A local provider type is not enough: base_url decides where the code goes.
+            for where, route in self.ai.routes_in_use():
+                if route.base_url and not is_local_endpoint(route.base_url):
+                    raise ValueError(
+                        f"security.network 'local-only' forbids egress, but {where} sends "
+                        f"requests to {route.base_url} (not a local or private host)"
+                    )
         if self.execution.backend is ExecutionBackend.GITHUB_ACTIONS and (
             self.security.network is NetworkPolicy.LOCAL_ONLY
         ):
