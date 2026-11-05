@@ -123,27 +123,27 @@ def live_server(env: dict[str, str]) -> Iterator[str]:
 
 
 def test_real_server_process_runs_a_discovery(live_server: str, env: dict[str, str]) -> None:
-    url = live_server
-    login = httpx.post(f"{url}/api/v1/auth/login", json={"username": "root", "password": PASSWORD})
-    assert login.status_code == 201
-    h = {"Authorization": f"Bearer {login.json()['token']}"}
-    root = str(Path(env["AI_CODING_SERVER_ALLOWED_ROOTS"]) / "alpha")
-    project = httpx.post(f"{url}/api/v1/projects", headers=h, json={"name": "alpha", "path": root})
-    assert project.status_code == 201, project.text
-    run = httpx.post(
-        f"{url}/api/v1/projects/{project.json()['id']}/runs", headers=h, json={"kind": "discover"}
-    )
-    rid = run.json()["id"]
-    deadline = time.monotonic() + 60
-    state = run.json()["state"]
-    while state not in {"COMPLETED", "FAILED"} and time.monotonic() < deadline:
-        time.sleep(0.3)
-        state = httpx.get(f"{url}/api/v1/runs/{rid}", headers=h).json()["state"]
-    assert state == "COMPLETED"
-    assert httpx.get(f"{url}/api/v1/runs/{rid}/artifacts", headers=h).json()
-    metrics = httpx.get(
-        f"{url}/metrics", headers={"Authorization": "Bearer metrics-secret-xyz"}
-    ).text
-    assert 'aicoding_runs{state="COMPLETED"} 1' in metrics
-    served = httpx.get(f"{url}/healthz")
-    assert "server" not in {k.lower() for k in served.headers}  # no server banner
+    # Generous timeouts: on Windows runners SQLite locking under the embedded worker is
+    # slow, and httpx's default of 5 s timed out there (CI, S8).
+    with httpx.Client(base_url=live_server, timeout=30) as c:
+        login = c.post("/api/v1/auth/login", json={"username": "root", "password": PASSWORD})
+        assert login.status_code == 201
+        h = {"Authorization": f"Bearer {login.json()['token']}"}
+        root = str(Path(env["AI_CODING_SERVER_ALLOWED_ROOTS"]) / "alpha")
+        project = c.post("/api/v1/projects", headers=h, json={"name": "alpha", "path": root})
+        assert project.status_code == 201, project.text
+        run = c.post(
+            f"/api/v1/projects/{project.json()['id']}/runs", headers=h, json={"kind": "discover"}
+        )
+        rid = run.json()["id"]
+        deadline = time.monotonic() + 120
+        state = run.json()["state"]
+        while state not in {"COMPLETED", "FAILED"} and time.monotonic() < deadline:
+            time.sleep(0.3)
+            state = c.get(f"/api/v1/runs/{rid}", headers=h).json()["state"]
+        assert state == "COMPLETED"
+        assert c.get(f"/api/v1/runs/{rid}/artifacts", headers=h).json()
+        metrics = c.get("/metrics", headers={"Authorization": "Bearer metrics-secret-xyz"}).text
+        assert 'aicoding_runs{state="COMPLETED"} 1' in metrics
+        served = c.get("/healthz")
+        assert "server" not in {k.lower() for k in served.headers}  # no server banner

@@ -19,7 +19,6 @@ Docker sandbox (never on the host) and follow the same rules as sandboxed tests:
 
 from __future__ import annotations
 
-import tempfile
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -37,6 +36,7 @@ from ai_coding.executors.base import (
 from ai_coding.security import redact
 from ai_coding.tools.base import Finding, ToolRun, ToolSpec, skipped_run
 from ai_coding.tools.cache import tool_cache
+from ai_coding.tools.scratch import sandbox_scratch
 from ai_coding.tools.testrun import copy_tree, open_permissions
 
 WORK = "/work"
@@ -167,7 +167,9 @@ class ProjectToolRunner:
     ) -> tuple[str | None, ExecutionResult] | str:
         """Install (if needed), read the version, run; an error message on install failure."""
         spec = tool.spec
-        with tempfile.TemporaryDirectory(prefix=f"ai-coding-{spec.name}-") as tmp:
+        async with sandbox_scratch(self.executor, f"ai-coding-{spec.name}-") as scratch:
+            tmp = scratch.path
+            scratch.used(spec.image)
             deps = Path(tmp) / "deps"
             deps.mkdir()
             if plan.writable or (plan.install is not None and plan.install.writes_project):

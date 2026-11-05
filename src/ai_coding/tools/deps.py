@@ -15,7 +15,6 @@ which the implement loop takes as its starting point.
 from __future__ import annotations
 
 import re
-import shutil
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -26,6 +25,7 @@ from ai_coding.executors.base import CommandSpec, Executor, Mount
 from ai_coding.tools.golang import GO_HOSTS, GO_IMAGE
 from ai_coding.tools.php import COMPOSER_HOSTS, COMPOSER_IMAGE
 from ai_coding.tools.rust import CRATES_HOSTS, RUST_IMAGE
+from ai_coding.tools.scratch import Scratch, sandbox_scratch
 from ai_coding.tools.testrun import NODE_IMAGE, NPM_HOSTS, open_permissions
 
 WORK = "/work"
@@ -160,9 +160,9 @@ async def apply_upgrades(
             f"dependency upgrades need egress to {', '.join(denied)} (security policy)"
         )
     changes: dict[str, str] = {}
-    with tempfile.TemporaryDirectory(prefix="ai-coding-deps-") as tmp:
+    async with sandbox_scratch(executor, "ai-coding-deps-") as scratch:
         for up in upgrades:
-            await _upgrade_one(executor, project, Path(tmp), up, changes=changes,
+            await _upgrade_one(executor, project, scratch, up, changes=changes,
                                timeout=timeout_seconds)  # fmt: skip
     if not changes:
         raise DependencyUpdateError("the package manager changed nothing (already at that "
@@ -181,18 +181,17 @@ def _current(project: Path, rel: str, changes: Mapping[str, str]) -> str | None:
 async def _upgrade_one(
     executor: Executor,
     project: Path,
-    tmp: Path,
+    scratch: Scratch,
     up: Upgrade,
     *,
     changes: dict[str, str],
     timeout: float,
 ) -> None:
-    """Apply one upgrade on a fresh scratch dir; record the files it changed."""
+    """Apply one upgrade on a fresh work directory; record the files it changed."""
     names = _TOUCHED[up.ecosystem]
     rels = {n: (Path(up.directory) / n).as_posix().removeprefix("./") for n in names}
-    work = tmp / "work"
-    shutil.rmtree(work, ignore_errors=True)
-    work.mkdir()
+    # A new directory per upgrade: the previous one may hold files of the sandbox user.
+    work = Path(tempfile.mkdtemp(prefix="work-", dir=scratch.path))
     for name, rel in rels.items():  # only the manifest and lock files leave the project
         text = _current(project, rel, changes)
         if text is not None:
@@ -204,7 +203,7 @@ async def _upgrade_one(
         text = req.read_text(encoding="utf-8")
         req.write_text(pin_requirement(text, up.package, up.version), encoding="utf-8")
     else:
-        await _run(executor, work, tmp, up, timeout)
+        await _run(executor, work, scratch, up, timeout)
     for name, rel in rels.items():
         after = work / name
         if after.is_file():
@@ -213,13 +212,18 @@ async def _upgrade_one(
                 changes[rel] = text
 
 
-async def _run(executor: Executor, work: Path, tmp: Path, up: Upgrade, timeout: float) -> None:
+async def _run(
+    executor: Executor, work: Path, scratch: Scratch, up: Upgrade, timeout: float
+) -> None:
     cmd = command_for(up)
     if cmd is None:  # pragma: no cover - only PyPI, handled without a command
         raise DependencyUpdateError(f"no command for {up.ecosystem}")
-    deps = tmp / "deps"
+    scratch.used(cmd.image)
+    deps = scratch.path / "deps"
     deps.mkdir(exist_ok=True)
-    open_permissions(tmp)
+    open_permissions(work)
+    open_permissions(scratch.path, recursive=False)
+    open_permissions(deps, recursive=False)
     result = await executor.run(CommandSpec(
         argv=cmd.argv, cwd=work, image=cmd.image, workdir=WORK, network=True, env=dict(cmd.env),
         mounts=(Mount(work, WORK, read_only=False), Mount(deps, DEPS, read_only=False)),
