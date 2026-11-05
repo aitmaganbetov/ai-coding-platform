@@ -227,14 +227,16 @@ class S3ArtifactStore:
                 self._raise(response, "delete artifact")
         return existed
 
-    def keys(self) -> Iterator[str]:
-        """Object keys under the store prefix."""
+    def keys(self, *, page_size: int | None = None) -> Iterator[str]:
+        """Object keys under the store prefix (all pages of ListObjectsV2)."""
         token: str | None = None
         while True:
             query: dict[str, Any] = {
                 "list-type": "2",
                 "prefix": f"{self.prefix}/sha256/" if self.prefix else "sha256/",
             }
+            if page_size:
+                query["max-keys"] = str(page_size)
             if token:
                 query["continuation-token"] = token
             response = self._request("GET", query=query)

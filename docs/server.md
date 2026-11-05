@@ -144,7 +144,11 @@ ai-coding server token create ci-bot --name nightly --project <project-id> --rol
 
 - TLS терминирует Caddy с автоматическими сертификатами. API доверяет `X-Forwarded-*` только от адресов из `AI_CODING_SERVER_TRUSTED_PROXIES`. HSTS выставляется только для HTTPS-запросов.
 - Заголовки: `Content-Security-Policy` (`default-src 'self'`, без inline-скриптов), `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store` для `/api/`.
-- Rate limiting: token bucket на пользователя/токен и отдельно на вход с адреса. Лимитер работает в процессе: при нескольких репликах API лимит умножается на их число.
+- Rate limiting — на пользователя/токен и отдельно на вход с одного адреса. Тип задаёт `AI_CODING_SERVER_RATE_LIMIT_BACKEND`:
+  - `auto` (по умолчанию) — на PostgreSQL лимит **общий** для всех процессов API и реплик: счётчики хранятся в БД (таблица `rate_limit_counters`, ключи — SHA-256). На SQLite он работает внутри процесса.
+  - `memory` и `database` задают тип явно.
+
+  Общий лимитер считает по скользящей минуте. Каждый процесс накапливает счёт локально и раз в 0,5 с добавляет его в БД атомарным upsert. Поэтому за одно окно синхронизации процесс может пропустить запросов не больше, чем «скорость × 0,5 с». Запись в БД на каждый запрос выстраивала запросы в очередь на блокировке строки: в нагрузочном тесте p95 вырос с 0,4 до 1,9 с. Если БД недоступна, решает локальный счёт процесса.
 - Web UI хранит токен в `sessionStorage` и отправляет его заголовком. Cookie не используются, поэтому CSRF неприменим.
 
 ## Очередь и worker'ы
@@ -154,6 +158,15 @@ ai-coding server token create ci-bot --name nightly --project <project-id> --rol
 - Approval останавливает прогон в `WAITING_APPROVAL`. Решение через `POST /runs/{id}/approve` ставит в очередь `resume`, когда ожидающих approvals не остаётся.
 - `AI_CODING_SERVER_WORKERS` задаёт число параллельных прогонов на процесс. Масштабирование — дополнительные контейнеры `worker`.
 - `SIGTERM` и `SIGINT`: worker перестаёт брать задания и дожидается текущих.
+
+## Изоляция worker'а: rootless Docker и удалённый демон
+
+Доступ к Docker-демону эквивалентен root на его хосте. API доступа к демону не имеет, но worker должен его иметь, чтобы запускать песочницы. Для production рекомендуется один из вариантов:
+
+- **Rootless Docker** на хосте worker'а: демон работает от непривилегированного пользователя, и захват демона не даёт root на хосте. Worker найдёт демон через `DOCKER_HOST=unix:///run/user/<uid>/docker.sock` или `docker context use rootless` (`DOCKER_CONTEXT`). Файлы, которые песочница создаёт во временных каталогах, получают в rootless-режиме uid из диапазона subuid. Хост не может их удалить, поэтому их удаляет сам пользователь песочницы (`tools/scratch.py`).
+- **Удалённый демон** (отдельная машина или VM для песочниц): `DOCKER_HOST=tcp://builder:2376` с `DOCKER_TLS_VERIFY=1` и `DOCKER_CERT_PATH`, либо `DOCKER_HOST=ssh://user@builder` с `SSH_AUTH_SOCK`. Пути монтирования интерпретирует демон, поэтому каталог данных (`AI_CODING_SERVER_DATA_DIR`, клоны и временные каталоги) и `TMPDIR` должны быть доступны демону **по тем же путям** — например, через общий NFS-том.
+
+Executor передаёт `docker` CLI только эти переменные (`DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_TLS_VERIFY`, `DOCKER_CERT_PATH`, `SSH_AUTH_SOCK`, `XDG_RUNTIME_DIR` и т. п.). Секреты процесса платформы — ключи провайдеров, S3, GitHub — в окружение `docker` не попадают.
 
 ## Артефакты в MinIO / S3
 
@@ -166,7 +179,7 @@ ai-coding server token create ci-bot --name nightly --project <project-id> --rol
 | `AI_CODING_S3_ACCESS_KEY_ID` / `AI_CODING_S3_SECRET_ACCESS_KEY` | ключи сервисной учётной записи |
 | `AI_CODING_S3_REGION` | `us-east-1` |
 
-Объекты хранятся по адресу содержимого `projects/<имя>/<sha256>`. При чтении содержимое сверяется с хэшем. Подпись — AWS SigV4.
+Объекты хранятся по адресу содержимого `projects/<имя>/<sha256>`. При чтении содержимое сверяется с хэшем. Подпись — AWS SigV4. В CI хранилище проверяется на настоящем S3-совместимом сервере VersityGW, который сам проверяет подписи: операции, постраничный `ListObjectsV2`, неверные ключи (`SignatureDoesNotMatch`), подмена объекта и серверный прогон с артефактами в bucket'е.
 
 ## Метрики и логи (NFR-07)
 

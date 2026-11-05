@@ -28,7 +28,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from ai_coding import __version__
 from ai_coding.api import lifecycle
 from ai_coding.api.kinds import KINDS
-from ai_coding.api.limits import RateLimiter, client_address
+from ai_coding.api.limits import RateLimiter, SharedRateLimiter, client_address
 from ai_coding.api.metrics import Metrics
 from ai_coding.api.security import same_digest
 from ai_coding.api.services import (
@@ -521,8 +521,15 @@ def create_app(server: Server, *, ui_dir: Path | None = None, run_worker: bool =
         redoc_url=None,
     )
     app.state.server = server
-    app.state.limiter = RateLimiter(settings.rate_limit_per_minute)
-    app.state.login_limiter = RateLimiter(settings.login_rate_limit_per_minute)
+    shared = settings.rate_limit_backend == "database" or (
+        settings.rate_limit_backend == "auto" and not server.db.is_sqlite
+    )
+    if shared:  # one budget for all API processes and replicas
+        app.state.limiter = SharedRateLimiter(server.db, settings.rate_limit_per_minute)
+        app.state.login_limiter = SharedRateLimiter(server.db, settings.login_rate_limit_per_minute)
+    else:
+        app.state.limiter = RateLimiter(settings.rate_limit_per_minute)
+        app.state.login_limiter = RateLimiter(settings.login_rate_limit_per_minute)
     app.state.metrics = metrics
     _install_handlers(app)
     app.middleware("http")(_guard)

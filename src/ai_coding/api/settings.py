@@ -11,6 +11,7 @@
 | ``AI_CODING_SERVER_TRUSTED_PROXIES`` | empty: ``X-Forwarded-For`` is ignored |
 | ``AI_CODING_SERVER_METRICS_TOKEN`` | empty: ``/metrics`` requires an authenticated admin |
 | ``AI_CODING_SERVER_RETENTION_DAYS`` | ``0``: no automatic purge |
+| ``AI_CODING_SERVER_RATE_LIMIT_BACKEND`` | ``auto``: shared on PostgreSQL, else in-process |
 | ``AI_CODING_SERVER_DB_POOL_SIZE`` | ``10`` database connections kept per process (PostgreSQL) |
 | ``AI_CODING_SERVER_DB_MAX_OVERFLOW`` | ``10`` extra connections per process under load |
 """
@@ -35,6 +36,13 @@ def _int(env: Mapping[str, str], name: str, default: int, *, low: int, high: int
     return value
 
 
+def _choice(env: Mapping[str, str], name: str, default: str, allowed: tuple[str, ...]) -> str:
+    value = env.get(PREFIX + name, "").strip().lower() or default
+    if value not in allowed:
+        raise ValueError(f"{PREFIX}{name} must be one of {', '.join(allowed)}, not {value!r}")
+    return value
+
+
 def _paths(env: Mapping[str, str], name: str) -> tuple[Path, ...]:
     raw = env.get(PREFIX + name, "")
     return tuple(Path(p).expanduser().resolve() for p in raw.split(os.pathsep) if p.strip())
@@ -53,6 +61,7 @@ class ServerSettings:
     trusted_proxies: frozenset[str] = field(default_factory=frozenset)
     metrics_token: str | None = None
     retention_days: int = 0
+    rate_limit_backend: str = "auto"
     db_pool_size: int = 10
     db_max_overflow: int = 10
     token_ttl_days: int = 30
@@ -83,6 +92,9 @@ class ServerSettings:
             trusted_proxies=proxies,
             metrics_token=env.get(PREFIX + "METRICS_TOKEN") or None,
             retention_days=_int(env, "RETENTION_DAYS", 0, low=0, high=36_500),
+            rate_limit_backend=_choice(
+                env, "RATE_LIMIT_BACKEND", "auto", ("auto", "memory", "database")
+            ),
             db_pool_size=_int(env, "DB_POOL_SIZE", 10, low=1, high=200),
             db_max_overflow=_int(env, "DB_MAX_OVERFLOW", 10, low=0, high=200),
         )

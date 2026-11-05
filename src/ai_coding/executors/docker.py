@@ -40,7 +40,7 @@ def docker_available(docker: str = "docker") -> bool:
     try:
         proc = subprocess.run(  # noqa: S603 - fixed argv
             [exe, "version", "--format", "{{.Server.Version}}"],
-            capture_output=True, text=True, timeout=15, check=False,
+            capture_output=True, text=True, timeout=15, check=False, env=_docker_env(),
         )  # fmt: skip
     except (OSError, subprocess.TimeoutExpired):
         return False
@@ -123,7 +123,7 @@ class DockerSandboxExecutor:
             return False
         proc = subprocess.run(  # noqa: S603 - fixed argv, validated image reference
             [docker, "image", "inspect", "--format", "{{.Id}}", "--", image],
-            capture_output=True, text=True, timeout=30, check=False,
+            capture_output=True, text=True, timeout=30, check=False, env=_docker_env(),
         )  # fmt: skip
         return proc.returncode == 0
 
@@ -136,7 +136,7 @@ class DockerSandboxExecutor:
             raise ExecutorUnavailableError("docker CLI not found")
         proc = subprocess.run(  # noqa: S603 - fixed argv, validated image reference
             [docker, "pull", "--quiet", image], capture_output=True, text=True,
-            timeout=timeout, check=False,
+            timeout=timeout, check=False, env=_docker_env(),
         )  # fmt: skip
         if proc.returncode != 0:
             raise ExecutorUnavailableError(
@@ -153,7 +153,11 @@ class DockerSandboxExecutor:
 
         def kill() -> None:
             subprocess.run(  # noqa: S603 - fixed argv
-                [docker, "kill", name], capture_output=True, timeout=30, check=False
+                [docker, "kill", name],
+                capture_output=True,
+                timeout=30,
+                check=False,
+                env=_docker_env(),
             )
 
         outcome = await run_process(
@@ -186,9 +190,17 @@ class DockerSandboxExecutor:
         )
 
 
+# What the docker CLI needs to reach the daemon, and nothing else (no secrets of the
+# platform process): a remote daemon over TLS (DOCKER_TLS_VERIFY, DOCKER_CERT_PATH) or
+# SSH (ssh://, SSH_AUTH_SOCK) and rootless Docker (XDG_RUNTIME_DIR) — S9, B-807.
+DOCKER_CLIENT_ENV = (
+    "PATH", "HOME", "DOCKER_HOST", "DOCKER_CONFIG", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY",
+    "DOCKER_CERT_PATH", "DOCKER_API_VERSION", "SSH_AUTH_SOCK", "XDG_RUNTIME_DIR",
+    "SYSTEMROOT", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TMPDIR", "TEMP", "TMP",
+)  # fmt: skip
+
+
 def _docker_env() -> dict[str, str]:
     import os  # noqa: PLC0415
 
-    keep = ("PATH", "HOME", "DOCKER_HOST", "DOCKER_CONFIG", "DOCKER_CONTEXT", "SYSTEMROOT",
-            "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TMPDIR", "TEMP", "TMP")  # fmt: skip
-    return {k: v for k, v in os.environ.items() if k in keep}
+    return {k: v for k, v in os.environ.items() if k in DOCKER_CLIENT_ENV}
