@@ -1,0 +1,43 @@
+schema_version: "2.1"
+project:
+  name: shop-platform
+  description: Laravel + React monorepo
+  default_branch: main
+  protected_branches: [main, "release/*"]
+mode: develop
+stacks: [laravel, php, react, typescript]
+execution:
+  backend: docker
+  use_worktree: true
+  allow_host_commands: false
+  command_allowlist: [php, composer, npm]
+  limits: { cpus: 4, memory_mb: 4096, timeout_seconds: 3600, max_retries: 3, max_parallel_tasks: 10 }
+  docker: { image: "php:8.3-cli", read_only_root: true, network: none, user: "1000:1000" }
+ai:
+  enabled: true
+  provider: anthropic
+  model: claude-sonnet-5-5
+  api_key_env: ANTHROPIC_API_KEY
+  max_output_tokens: 8192
+  fallback:
+    - { provider: ollama, model: qwen2.5-coder }
+  routing:
+    security: { provider: anthropic, model: claude-opus-5-5 }
+agents:
+  enabled: [requirements, architect, planner, developer, reviewer, security, qa]
+security:
+  network: allowlist
+  egress_allowlist: [api.anthropic.com, "*.github.com", "localhost:11434"]
+quality_gates:
+  security: { fail_on: critical }
+  coverage: { min_percent: 85 }
+  review: { required_approvals: 2 }
+budgets: { max_tokens_per_run: 1000000, max_cost_usd_per_run: 20, max_duration_minutes: 240 }
+approvals:
+  required_for: [delete, migration, merge, deploy, pr_create]
+  critical_paths: [".github/**", "database/migrations/**"]
+artifacts:
+  store: minio
+  path: artifacts
+  retention_days: 90
+  formats: [json, markdown, sarif, junit]

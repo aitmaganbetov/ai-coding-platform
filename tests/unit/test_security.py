@@ -1,0 +1,108 @@
+"""Tests for redaction and secret detection."""
+
+from __future__ import annotations
+
+import pytest
+
+from ai_coding.security import (
+    REDACTED,
+    Redactor,
+    find_secrets_in_mapping,
+    is_secret_key,
+    is_secret_reference,
+    redact,
+)
+
+SAMPLES = {
+    "anthropic": "sk-ant-api03-" + "x" * 40,
+    "openai": "sk-proj-" + "Y" * 40,
+    "github": "ghp_" + "z" * 36,
+    "github_pat": "github_pat_" + "Q" * 30,
+    "aws": "AKIA" + "ABCDEFGHIJKLMNOP",
+    "slack": "xoxb-1234567890-abcdef",
+    "google": "AIza" + "a" * 35,
+    "jwt": ".".join(["eyJ" + "h" * 16, "eyJ" + "p" * 16, "s" * 20]),
+}
+
+
+@pytest.mark.parametrize("secret", list(SAMPLES.values()), ids=list(SAMPLES))
+def test_known_token_formats_are_redacted(secret: str) -> None:
+    text = f"before {secret} after"
+    out = redact(text)
+    assert secret not in out
+    assert REDACTED in out
+    assert out.startswith("before ")
+
+
+def test_private_key_block_redacted() -> None:
+    pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY-----"
+    assert redact(f"key:\n{pem}\n") == f"key:\n{REDACTED}\n"
+
+
+def test_url_credentials_redacted_keep_user() -> None:
+    out = redact("postgresql://app:s3cr3tpass@db:5432/app")
+    assert "s3cr3tpass" not in out
+    assert out == f"postgresql://app:{REDACTED}@db:5432/app"
+
+
+def test_assignment_redacted_keeps_key() -> None:
+    assert redact("password=hunter2hunter2") == f"password={REDACTED}"
+    value = "abc" + "def" * 3
+    assert redact(f'API_KEY: "{value}"') == f'API_KEY: "{REDACTED}"'
+
+
+def test_plain_text_untouched() -> None:
+    text = "run pytest -q --maxfail=1 on branch feature/x"
+    assert redact(text) == text
+
+
+def test_literal_registration() -> None:
+    r = Redactor()
+    r.add_literals(["value-from-env-123", "", "abc"])
+    assert r.redact("x value-from-env-123 y") == f"x {REDACTED} y"
+    assert "literal" in r.find("value-from-env-123")
+    assert r.redact("abc") == "abc"  # too short to register
+
+
+def test_find_reports_pattern_names() -> None:
+    assert "github-token" in Redactor().find(SAMPLES["github"])
+    assert Redactor().find("nothing here") == []
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [
+        ("api_key", True),
+        ("apikey", True),
+        ("token", True),
+        ("github_token", True),
+        ("password", True),
+        ("client_secret", True),
+        ("api_key_env", False),
+        ("max_tokens_per_run", False),
+        ("block_new_secrets", False),
+        ("secret_scan", False),
+        ("name", False),
+    ],
+)
+def test_is_secret_key(key: str, expected: bool) -> None:
+    assert is_secret_key(key) is expected
+
+
+def test_is_secret_reference() -> None:
+    assert is_secret_reference("${env:OPENAI_API_KEY}")
+    assert is_secret_reference("${secret:prod/db}")
+    assert not is_secret_reference("plain")
+
+
+def test_find_secrets_in_nested_mapping() -> None:
+    doc = {
+        "ai": {"api_key": "literal", "api_key_env": "OPENAI_API_KEY"},
+        "list": [{"token": "${env:T}"}, "ghp_" + "c" * 36],
+        "flags": {"token": True},
+        "empty": {"password": ""},
+        "bad_env": {"api_key_env": SAMPLES["openai"]},
+        "n": 5,
+    }
+    findings = {f.path: f.reason for f in find_secrets_in_mapping(doc)}
+    assert set(findings) == {"ai.api_key", "list[1]", "bad_env.api_key_env"}

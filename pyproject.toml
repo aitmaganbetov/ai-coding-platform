@@ -1,0 +1,136 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ai-coding-platform"
+dynamic = ["version"]
+description = "AI Coding Platform v2.1 — Local, Self-Hosted & GitHub Hybrid AI SDLC orchestration"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+authors = [{ name = "AI Coding Platform contributors" }]
+keywords = ["ai", "agents", "sdlc", "orchestration", "code-quality", "devsecops"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Quality Assurance",
+  "Typing :: Typed",
+]
+# Runtime dependencies of Sprint S1. Later sprints add their own (see docs/adr/0002).
+dependencies = [
+  "typer>=0.15,<1",
+  "rich>=13.9",
+  "pydantic>=2.10,<3",
+  "PyYAML>=6.0.2,<7",
+  "jsonschema>=4.23,<5",
+]
+
+[project.urls]
+Repository = "https://github.com/aitmaganbetov/ai-coding-platform"
+Documentation = "https://github.com/aitmaganbetov/ai-coding-platform/tree/main/docs"
+
+[project.scripts]
+ai-coding = "ai_coding.cli.app:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "pytest-cov>=6.0",
+  "ruff>=0.9",
+  "mypy>=1.14",
+  "types-PyYAML>=6.0.12",
+  "types-jsonschema>=4.23",
+  "import-linter>=2.1",
+]
+
+[tool.hatch.version]
+path = "src/ai_coding/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ai_coding"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/ai_coding", "tests", "docs", "README.md", "LICENSE", "pyproject.toml", "uv.lock"]
+
+# ---------------------------------------------------------------- tooling ---
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "S", "PTH", "N", "PL", "TRY", "PERF",
+]
+ignore = [
+  "PLR0913",  # Typer commands legitimately take many options
+  "TRY003",   # descriptive exception messages are intended
+  "PLR2004",  # magic values are fine in comparisons of well-named constants
+  "RUF001", "RUF002", "RUF003",  # Cyrillic references to the ТЗ are intentional
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S603", "S607", "PLR2004", "S105", "S106"]
+"src/ai_coding/git/local.py" = ["S603"]
+"src/ai_coding/cli/commands/*.py" = ["PLR0917"]  # Typer maps options to parameters  # subprocess with argv list, no shell, validated input
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+mypy_path = "src"
+packages = ["ai_coding"]
+plugins = ["pydantic.mypy"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+markers = [
+  "integration: tests that call real external binaries (git)",
+]
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+source = ["ai_coding"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 80
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "\\.\\.\\."]
+
+# Architectural layering (ADR-0003). Lower layers must never import higher ones.
+[tool.importlinter]
+root_package = "ai_coding"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture"
+type = "layers"
+layers = [
+  "ai_coding.cli",
+  "ai_coding.config",
+  "ai_coding.contracts | ai_coding.detection | ai_coding.git",
+  "ai_coding.security",
+  "ai_coding.domain",
+]
+
+[[tool.importlinter.contracts]]
+name = "Domain is pure (no third-party I/O libraries)"
+type = "forbidden"
+source_modules = ["ai_coding.domain"]
+forbidden_modules = ["typer", "rich", "yaml", "jsonschema", "pydantic", "subprocess"]

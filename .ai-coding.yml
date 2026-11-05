@@ -1,0 +1,69 @@
+# AI Coding Platform project configuration.
+# Schema: https://github.com/aitmaganbetov/ai-coding-platform/blob/main/src/ai_coding/schemas/ai-coding.schema.json
+# Validate with: ai-coding config validate
+#
+# SECURITY: never put secret values in this file. Reference them by
+# environment-variable name (e.g. ai.api_key_env: ANTHROPIC_API_KEY).
+schema_version: "2.1"
+
+project:
+  name: "ai-coding-platform"
+  default_branch: "main"
+  protected_branches: ["main", "master", "release/*"]
+
+# create | develop | modernize | audit | maintain
+mode: develop
+
+# Detected automatically; edit to override (laravel, php, react, typescript,
+# javascript, python, go, rust).
+stacks: [python]
+
+execution:
+  backend: local            # local | docker | github-actions
+  use_worktree: true        # agent changes happen in an isolated git worktree
+  allow_host_commands: false
+  limits:
+    cpus: 2
+    memory_mb: 2048
+    timeout_seconds: 1800
+    max_retries: 2
+    max_parallel_tasks: 4
+  docker:
+    image: python:3.12-slim
+    read_only_root: true
+    network: none
+
+# AI is optional. Deterministic checks and Quality Gates work without it.
+ai:
+  enabled: false
+  provider: none            # none | openai | anthropic | ollama | vllm
+  # model: <model-id>
+  # api_key_env: ANTHROPIC_API_KEY
+
+security:
+  network: local-only       # local-only | allowlist | open
+  egress_allowlist: []
+  secret_scan: true
+
+quality_gates:
+  build:    { enabled: true, blocking: true }
+  tests:    { enabled: true, blocking: true }
+  static:   { enabled: true, blocking: true, max_errors: 0 }
+  security: { enabled: true, blocking: true, fail_on: high, block_new_secrets: true }
+  coverage: { enabled: true, blocking: true, min_percent: 80 }
+  review:   { enabled: true, blocking: true, required_approvals: 1, ai_review_blocking: false }
+
+budgets:
+  max_tokens_per_run: 500000
+  max_cost_usd_per_run: 5.0
+  max_duration_minutes: 120
+
+approvals:
+  # delete, migration, merge and deploy are mandatory and cannot be removed.
+  required_for: [critical_file_change, delete, deploy, external_llm, host_command, merge, migration, pr_create]
+
+artifacts:
+  store: local
+  path: .ai-coding/artifacts
+  retention_days: 30
+  formats: [json, markdown]
