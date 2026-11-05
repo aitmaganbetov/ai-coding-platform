@@ -129,7 +129,7 @@
       "type": "object"
     },
     "ApprovalOperation": {
-      "description": "Operations that may require human approval (ТЗ §4 Human-in-the-loop, FR-17).",
+      "description": "Operations that may require human approval (ТЗ §5 Human-in-the-loop, FR-17).",
       "enum": [
         "critical_file_change",
         "delete",
@@ -146,7 +146,7 @@
     },
     "ApprovalsConfig": {
       "additionalProperties": false,
-      "description": "Human-in-the-loop policy (ТЗ §4, FR-17).",
+      "description": "Human-in-the-loop policy (ТЗ §5, FR-17).",
       "properties": {
         "required_for": {
           "items": {
@@ -505,7 +505,7 @@
     },
     "ResourceLimits": {
       "additionalProperties": false,
-      "description": "Per-step resource limits enforced by every executor (ТЗ §4 Executor).",
+      "description": "Per-step resource limits enforced by every executor (ТЗ §5 Executor).",
       "properties": {
         "cpus": {
           "default": 2.0,

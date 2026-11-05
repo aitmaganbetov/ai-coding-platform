@@ -4,7 +4,7 @@
 - Дата: 2026-11-05
 
 ## Контекст
-ТЗ §4: Local (ограниченный), Docker sandbox, GitHub Actions adapter; один интерфейс исполнения. Executor ограничивает CPU/RAM, время, сеть, файловую систему и число повторов; команды — allowlist/policy-based. ТЗ §12: без privileged, без Docker socket, read-only mounts. GitHub не обязателен для локального запуска.
+ТЗ §4: Local (ограниченный), Docker sandbox, GitHub Actions adapter; один интерфейс исполнения. ТЗ §5: Executor ограничивает CPU/RAM, время, сеть, файловую систему и число повторов; команды — allowlist/policy-based. ТЗ §12: без privileged, без Docker socket, read-only mounts. GitHub не обязателен для локального запуска.
 
 ## Решение
 Порт `Executor` (`ai_coding.executors.base`):

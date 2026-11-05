@@ -4,7 +4,7 @@
 - Дата: 2026-11-05
 
 ## Контекст
-ТЗ §4/§5: состояния `CREATED → DISCOVERY → PLANNED → AWAITING_APPROVAL → RUNNING → VERIFYING → COMPLETED` + `FAILED, CANCELLED, PAUSED`; переходы идемпотентны и журналируются; после рестарта выполнение продолжается с последнего подтверждённого checkpoint **без повторного применения изменений** (AC-04). Нужны последовательные и параллельные шаги, DAG-зависимости, ограничения ресурсов, retry с backoff, отмена и тайм-аут (FR-08, FR-09).
+ТЗ §4–§5: состояния `CREATED → DISCOVERY → PLANNED → AWAITING_APPROVAL → RUNNING → VERIFYING → COMPLETED` + `FAILED, CANCELLED, PAUSED`; переходы идемпотентны и журналируются; после рестарта выполнение продолжается с последнего подтверждённого checkpoint **без повторного применения изменений** (AC-04). Нужны последовательные и параллельные шаги, DAG-зависимости, ограничения ресурсов, retry с backoff, отмена и тайм-аут (FR-08, FR-09).
 
 ## Решение
 Компоненты Orchestrator Engine (`ai_coding.orchestrator`):

@@ -6,7 +6,8 @@
 
 ```text
 ai-coding-platform/
-├── AI_Coding_Platform_v2_1_TZ.md      # ТЗ (источник требований)
+├── AI_Coding_Platform_v2_1_TZ.pdf     # ТЗ — основной источник требований
+├── AI_Coding_Platform_v2_1_TZ.md      # конвертация ТЗ (с дефектами, см. docs/tz-notes.md)
 ├── README.md, LICENSE, SECURITY.md, CONTRIBUTING.md
 ├── pyproject.toml, uv.lock, Makefile   ✅ сборка, зависимости, линтеры, слои
 ├── .ai-coding.yml                      ✅ конфигурация платформы для самой себя (dogfooding)
@@ -87,13 +88,13 @@ flowchart BT
 
 | Модуль | Ответственность | Ключевые порты | ТЗ |
 | --- | --- | --- | --- |
-| domain | Словарь предметной области, без I/O | — | §2–§4, §6, §10 |
+| domain | Словарь предметной области, без I/O | — | §2–§6, §10 |
 | security | Redaction, детект секретов, политика egress, authn/RBAC | `Redactor`, `PolicyDecision` | §12, FR-18 |
 | config | `.ai-coding.yml`: модели, схема, валидация, генерация | `AICodingConfig` | §11 |
 | contracts | Контракт агент↔оркестратор | `AgentTask`, `AgentResult` | §6 |
 | detection | Определение стеков, ручное переопределение | `detect_stacks` | FR-02 |
 | git | Рабочая копия, ветки, worktree, коммиты | `GitRepository` | §4, AC-03 |
-| persistence | Сущности ТЗ §12, миграции, репозитории | `RunRepository`, `ArtifactStore`, `TaskQueue` | §12, NFR-03 |
+| persistence | Сущности ТЗ §13, миграции, репозитории | `RunRepository`, `ArtifactStore`, `TaskQueue` | §13, NFR-03 |
 | orchestrator | 12 компонентов ядра | `Planner`, `Router`, `StateManager`, … | §4, §5, FR-08/09 |
 | llm | Провайдеры, бюджеты, маршрутизация, fallback | `LLMProvider` | §4, FR-15 |
 | executors | Local / Docker / GitHub Actions | `Executor` | §4, §12 |
@@ -103,4 +104,4 @@ flowchart BT
 | integrations.github | PR, checks, reusable workflows | `RepositoryHost` | §9, FR-14, FR-17 |
 | agents | 12 агентов ТЗ §6 | `Agent` | §6 |
 | workflows | Сценарии пяти режимов | `ModeWorkflow` | FR-03…FR-07 |
-| cli / api / worker | Точки входа | — | §13, §14 |
+| cli / api / worker | Точки входа | — | §4, §13, §14 |

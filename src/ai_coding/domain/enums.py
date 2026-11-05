@@ -21,7 +21,7 @@ class Mode(StrEnum):
 
 
 class RunState(StrEnum):
-    """Run/task states (ТЗ §4). The transition table lives in the orchestrator (S2)."""
+    """Run/task states (ТЗ §5). The transition table lives in the orchestrator (S2)."""
 
     CREATED = "CREATED"
     DISCOVERY = "DISCOVERY"
@@ -107,7 +107,7 @@ class AgentName(StrEnum):
 
 
 class ApprovalOperation(StrEnum):
-    """Operations that may require human approval (ТЗ §4 Human-in-the-loop, FR-17)."""
+    """Operations that may require human approval (ТЗ §5 Human-in-the-loop, FR-17)."""
 
     CRITICAL_FILE_CHANGE = "critical_file_change"
     DELETE = "delete"

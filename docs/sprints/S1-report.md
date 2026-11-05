@@ -6,8 +6,8 @@
 
 | Пункт задания | Результат |
 | --- | --- |
-| Изучить ТЗ | Выполнено; найдены повреждения кодировки и структурные дефекты — [tz-notes.md](../tz-notes.md) |
-| Проверить репозиторий | Был только ТЗ и LICENSE (GPL-3.0); ничего не удалялось |
+| Изучить ТЗ | Выполнено по `.md`, затем сверено с PDF (совпадает) — [tz-notes.md](../tz-notes.md) |
+| Проверить репозиторий | Был только ТЗ (.md) и LICENSE (GPL-3.0); позже добавлен ТЗ в PDF; ничего не удалялось |
 | Архитектура платформы | [architecture/overview.md](../architecture/overview.md) |
 | Модули и зависимости | [architecture/modules.md](../architecture/modules.md), слои закреплены import-linter |
 | ADR | 15 ADR — [adr/README.md](../adr/README.md) |
@@ -57,8 +57,8 @@
 
 ## 4. Найденные проблемы
 
-1. **ТЗ: повреждённая кодировка** в §4, §12, §17, §19 — восстановлено, см. [tz-notes.md](../tz-notes.md). Рекомендуется исправить исходный документ через Change Request.
-2. **ТЗ: пустые разделы** §1, §5, §13, §14, §20 — содержимое находится в соседних разделах.
+1. **ТЗ (`.md`): повреждённая кодировка** в §4, §12, §17, §19 и сбитые разделы §1, §5, §13, §14, §20. Текст был восстановлен; после появления `AI_Coding_Platform_v2_1_TZ.pdf` сверка показала полное совпадение, PDF принят основным источником, ссылки на разделы приведены к PDF — см. [tz-notes.md](../tz-notes.md).
+2. **Рекомендация:** перегенерировать `.md` из PDF или удалить его (по решению владельца ТЗ), чтобы не было двух версий.
 3. **Безопасность git**: обычный `git status` в недоверенном репозитории исполняет `core.fsmonitor` — устранено в адаптере (ADR-0008).
 4. **Gitleaks** находил синтетические токены в тестах — тестовые значения теперь собираются динамически, allowlist не потребовался.
 5. **Конфликт имён**: reusable workflow `security.yml` из ТЗ §9 vs CI безопасности самого проекта — CI переименован в `repo-security.yml`.
@@ -66,7 +66,18 @@
 
 ## 5. CI на GitHub
 
-**Ещё не запускался.** Workflows срабатывают на `pull_request` и push в `main`; ручной `workflow_dispatch` GitHub разрешает только для workflow, уже присутствующих в default branch (попытка запуска вернула 404). Первый прогон матрицы Linux/Windows/macOS произойдёт при открытии PR из ветки `claude/cool-sagan-ho737s`. До этого Windows/macOS-совместимость подтверждена только проектированием (pathlib, argv без shell, `os.devnull`), не запуском.
+После слияния PR #1 в `main` (коммит `0745155`) GitHub Actions выполнил все проверки — **успешно**:
+
+| Workflow / job | Результат |
+| --- | --- |
+| CI · Lint & type-check (ruff, mypy, import-linter, schema drift, self-validate) | ✅ success |
+| CI · Tests ubuntu-24.04 × py3.12 / py3.13 | ✅ success / ✅ success |
+| CI · Tests windows-2025 × py3.12 / py3.13 | ✅ success / ✅ success |
+| CI · Tests macos-15 × py3.12 / py3.13 | ✅ success / ✅ success |
+| CI · Build & smoke-test wheel | ✅ success |
+| Repository security · Gitleaks (вся история) + pip-audit | ✅ success |
+
+Прогон CI: https://github.com/aitmaganbetov/ai-coding-platform/actions/runs/41975059069. Тот же набор прошёл и на PR (run 41974921663). Один прогон для merge-коммита отменён штатно (`concurrency: cancel-in-progress`) последующим push.
 
 ## 6. Незавершённые задачи S1
 
@@ -77,7 +88,7 @@
 
 Цель приёмки: «Восстановление после прерывания; unit tests».
 
-1. **Persistence (E05)**: SQLAlchemy 2 + Alembic, все сущности ТЗ §12, SQLite WAL, optimistic `version`, append-only `audit_events`, локальный `ArtifactStore` с SHA-256.
+1. **Persistence (E05)**: SQLAlchemy 2 + Alembic, все сущности ТЗ §13, SQLite WAL, optimistic `version`, append-only `audit_events`, локальный `ArtifactStore` с SHA-256.
 2. **State Manager (B-110)**: таблица переходов RunState, идемпотентные переходы с ключом, журнал событий; 100% ветвей переходов тестами.
 3. **Task Planner + Workflow Executor (B-111, B-112)**: DAG с проверкой циклов, параллельное исполнение с `max_parallel_tasks`.
 4. **Checkpoint + Retry & Recovery (B-113…B-115)**: checkpoint после верификации шага, backoff+jitter, отмена, таймаут; тест «kill -9 worker → resume без дублирования эффектов» (AC-04).

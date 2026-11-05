@@ -40,10 +40,10 @@ uv run ai-coding config validate /path/to/project
 - [ADR](docs/adr/README.md) — архитектурные решения
 - [Разработка](docs/development.md) — окружение, правила, тесты
 - [Backlog](docs/backlog.md) — все требования ТЗ по спринтам
-- [Замечания к ТЗ](docs/tz-notes.md) — восстановление повреждённой кодировки и интерпретации
+- [Замечания к ТЗ](docs/tz-notes.md) — сверка PDF и `.md`, интерпретации
 - [Отчёт по S1](docs/sprints/S1-report.md)
 - [Политика безопасности](SECURITY.md)
-- Техническое задание: [AI_Coding_Platform_v2_1_TZ.md](AI_Coding_Platform_v2_1_TZ.md)
+- Техническое задание: [AI_Coding_Platform_v2_1_TZ.pdf](AI_Coding_Platform_v2_1_TZ.pdf) (основной документ; `.md` — конвертация с дефектами)
 
 ## Технологии
 
