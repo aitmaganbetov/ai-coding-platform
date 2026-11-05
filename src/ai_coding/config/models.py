@@ -123,10 +123,23 @@ class ExecutionConfig(_Strict):
 
 # ----------------------------------------------------------------------- ai --
 class ModelRoute(_Strict):
-    """Optional per-agent model override (FR-15 routing)."""
+    """Per-agent model override or fallback entry (FR-15 routing).
+
+    ``base_url``/``api_key_env`` default to the top-level ``ai`` values when the
+    provider is the same, so a route only needs them for a different endpoint.
+    """
 
     provider: ProviderName
     model: str = Field(min_length=1, max_length=200)
+    base_url: str | None = Field(default=None, pattern=r"^https?://", max_length=2048)
+    api_key_env: EnvVarName | None = None
+
+
+class ModelPrice(_Strict):
+    """Price of a model in USD per million tokens (used for cost budgets)."""
+
+    input_per_mtok: float = Field(ge=0)
+    output_per_mtok: float = Field(ge=0)
 
 
 class AIConfig(_Strict):
@@ -143,6 +156,16 @@ class AIConfig(_Strict):
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     fallback: list[ModelRoute] = Field(default_factory=list, max_length=5)
     routing: dict[AgentName, ModelRoute] = Field(default_factory=dict)
+    timeout_seconds: int = Field(default=300, ge=5, le=3600)
+    cache: bool = Field(
+        default=True,
+        description="Reuse responses for identical redacted requests at temperature 0.",
+    )
+    pricing: dict[Annotated[str, Field(min_length=1, max_length=200)], ModelPrice] = Field(
+        default_factory=dict,
+        description="USD per million tokens by model name; unpriced external models are "
+        "limited by the token budget only.",
+    )
 
     @model_validator(mode="after")
     def _provider_consistency(self) -> Self:
@@ -156,7 +179,49 @@ class AIConfig(_Strict):
             and not self.api_key_env
         ):
             raise ValueError(f"ai.api_key_env is required for provider '{self.provider}'")
+        if self.enabled and self.provider is ProviderName.VLLM and not self.base_url:
+            raise ValueError("ai.base_url is required for provider 'vllm'")
+        if self.enabled:
+            for where, route in [
+                *(("ai.fallback", r) for r in self.fallback),
+                *((f"ai.routing.{a.value}", r) for a, r in self.routing.items()),
+            ]:
+                self._check_route(where, route)
         return self
+
+    def _check_route(self, where: str, route: ModelRoute) -> None:
+        same = route.provider is self.provider
+        if route.provider is ProviderName.NONE:
+            raise ValueError(f"{where}: provider 'none' cannot serve requests")
+        if (
+            route.provider in {ProviderName.OPENAI, ProviderName.ANTHROPIC}
+            and not route.api_key_env
+            and not (same and self.api_key_env)
+        ):
+            raise ValueError(f"{where}: api_key_env is required for provider '{route.provider}'")
+        if (
+            route.provider is ProviderName.VLLM
+            and not route.base_url
+            and not (same and self.base_url)
+        ):
+            raise ValueError(f"{where}: base_url is required for provider 'vllm'")
+
+    def resolve(self, route: ModelRoute | None = None) -> ModelRoute:
+        """Fully specified route: the default model or ``route`` with inherited settings."""
+        if route is None:
+            return ModelRoute(
+                provider=self.provider,
+                model=self.model or "",
+                base_url=self.base_url,
+                api_key_env=self.api_key_env,
+            )
+        same = route.provider is self.provider
+        return ModelRoute(
+            provider=route.provider,
+            model=route.model,
+            base_url=route.base_url or (self.base_url if same else None),
+            api_key_env=route.api_key_env or (self.api_key_env if same else None),
+        )
 
     def providers_in_use(self) -> set[ProviderName]:
         """All providers that may receive requests."""

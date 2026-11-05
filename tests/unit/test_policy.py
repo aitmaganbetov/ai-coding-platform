@@ -134,7 +134,12 @@ def test_external_llm_rules() -> None:
 
 
 def test_vllm_remote_host_subject_to_egress() -> None:
-    e = engine(ai__enabled=True, ai__provider="vllm", ai__model="m")
+    e = engine(
+        ai__enabled=True,
+        ai__provider="vllm",
+        ai__model="m",
+        ai__base_url="http://gpu.internal:8000",
+    )
     assert e.external_llm(ProviderName.VLLM, base_url="http://gpu.internal:8000").verdict is D
 
 

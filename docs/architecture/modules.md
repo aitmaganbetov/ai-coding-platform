@@ -21,12 +21,12 @@ ai-coding-platform/
 │   └── dependabot.yml                  ✅
 ├── docs/
 │   ├── architecture/                   ✅ обзор, модули
-│   ├── adr/                            ✅ ADR-0001…0022
+│   ├── adr/                            ✅ ADR-0001…0024
 │   ├── installation.md, development.md, configuration.md, cli.md   ✅
-│   ├── audit.md (S3), github.md (S4)    ✅
+│   ├── audit.md (S3), github.md (S4), create.md (S5)   ✅
 │   ├── backlog.md                      ✅ полный backlog по ТЗ
 │   ├── tz-notes.md                     ✅ замечания к ТЗ
-│   └── sprints/S1…S4-report.md         ✅
+│   └── sprints/S1…S5-report.md         ✅
 ├── examples/pilot-python, pilot-node   ✅ S4 пилотные проекты (AC-09)
 ├── src/ai_coding/
 │   ├── domain/        ✅ перечисления ТЗ, TaskStatus/Phase, ApprovalStatus, базовые ошибки
@@ -35,7 +35,7 @@ ai-coding-platform/
 │   ├── detection/     ✅ определение стеков (FR-02)
 │   ├── git/           ✅ порт GitRepository + LocalGitRepository (worktree, защита веток)
 │   ├── config/        ✅ модели, JSON Schema, загрузчик, валидатор, генератор
-│   ├── schemas/       ✅ ai-coding.schema.json; ⏳ S5 agents/*.output.schema.json
+│   ├── schemas/       ✅ ai-coding.schema.json; ✅ S5 agents/*.output.schema.json
 │   ├── templates/     ✅ шаблон .ai-coding.yml
 │   ├── cli/           ✅ init, config validate|schema; ✅ S2 run discover|list|status|events|audit|
 │   │                       resume|cancel|approve|reject
@@ -44,7 +44,7 @@ ai-coding-platform/
 │   ├── orchestrator/  ✅ S2 planner, registry, router, engine (workflow executor), context, state,
 │   │                       checkpoint, policy, approval, aggregator, audit, retry, effects, budget,
 │   │                       встроенные discovery-обработчики
-│   ├── llm/           ✅ S2 порт LLMProvider, GuardedLLM; ⏳ S5 openai, anthropic, ollama, vllm
+│   ├── llm/           ✅ S2 порт LLMProvider, GuardedLLM; ✅ S5 адаптеры openai/anthropic/ollama/vllm, router+fallback, кэш
 │   ├── observability/ ✅ S2 structlog JSON + redaction + run_id/trace_id
 │   ├── executors/     ✅ S3 port, local (allow-list, env allow-list, rlimits, kill tree), docker
 │   │                       (hardened sandbox, --pull never); ⏳ S4 github_actions
@@ -53,8 +53,8 @@ ai-coding-platform/
 │   ├── quality/       ✅ S3 движок гейтов PASS/FAIL/SKIPPED, fail-closed, strict, baseline
 │   ├── reports/       ✅ S3 JSON, Markdown; ✅ S4 SARIF 2.1.0, JUnit
 │   ├── integrations/  ✅ S4 порт RepositoryHost; github/: клиент, App/token, PR, checks, rulesets, Actions executor
-│   ├── agents/        ⏳ S5–S7 12 агентов
-│   ├── workflows/     ✅ S3 audit; ✅ S4 pull_request; ⏳ S5 create; S6 develop, modernize; S7 maintain
+│   ├── agents/        ✅ S5 порт Agent, requirements, architect, planner, bootstrap, каталог; ⏳ S6–S7 остальные 8
+│   ├── workflows/     ✅ S3 audit; ✅ S4 pull_request; ✅ S5 create; ⏳ S6 develop, modernize; S7 maintain
 │   ├── api/           ⏳ S8 FastAPI
 │   └── worker/        ⏳ S8 серверный worker
 ├── tests/
@@ -84,12 +84,12 @@ flowchart BT
     reports --> security
     orchestrator --> persistence & config & security & llm & git & detection & observability
     orchestrator --> tools
-    agents -.S5.-> contracts & llm & orchestrator
+    agents --> contracts & llm & config
     reports --> quality
     github[integrations.github] --> executors & security
     workflows --> orchestrator & quality & reports & tools & executors
     workflows --> github & git
-    workflows -.S5.-> agents
+    workflows --> agents
     cli --> config & detection & git
     cli -.-> workflows
     api -.S8.-> workflows & persistence

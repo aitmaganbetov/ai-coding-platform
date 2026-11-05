@@ -143,7 +143,7 @@ layers = [
   "ai_coding.orchestrator",
   "ai_coding.reports",
   "ai_coding.quality",
-  "ai_coding.tools | ai_coding.integrations",
+  "ai_coding.tools | ai_coding.integrations | ai_coding.agents",
   "ai_coding.executors",
   "ai_coding.llm | ai_coding.persistence | ai_coding.config",
   "ai_coding.contracts | ai_coding.detection | ai_coding.git | ai_coding.observability",

@@ -181,30 +181,30 @@
 ## S5 — CREATE: requirements, architect, planning, bootstrap (P0-07, P0-10)
 
 ### E15 Agents I
-| ID | Задача | Трассировка | Pri |
-| --- | --- | --- | --- |
-| B-400 | Порт `Agent`, базовый класс: контракт, полномочия, схема вывода, ошибки, журналирование | §6 | P0 |
-| B-401 | Requirements Agent → ТЗ, user stories, acceptance criteria | §6 | P0 |
-| B-402 | Architect Agent → ADR, схема модулей, API/DB проект | §6 | P0 |
-| B-403 | Planner Agent → backlog, зависимости, оценка | §6 | P0 |
-| B-404 | Bootstrap Agent → каркас, CI, README, конфигурация | §6 | P0 |
-| B-405 | JSON Schemas выходов агентов в `schemas/agents/` | §6 | P0 |
-| B-406 | `ai-coding agents list` | §14 | P0 |
+| ID | Задача | Трассировка | Pri | Статус |
+| --- | --- | --- | --- | --- |
+| B-400 | Порт `Agent`, базовый класс: контракт, полномочия, схема вывода, ошибки, журналирование | §6 | P0 | ✅ S5 |
+| B-401 | Requirements Agent → ТЗ, user stories, acceptance criteria | §6 | P0 | ✅ S5 |
+| B-402 | Architect Agent → ADR, схема модулей, API/DB проект | §6 | P0 | ✅ S5 |
+| B-403 | Planner Agent → backlog, зависимости, оценка | §6 | P0 | ✅ S5 |
+| B-404 | Bootstrap Agent → каркас, CI, README, конфигурация | §6 | P0 | ✅ S5 (детерминированные шаблоны; стеки Python и Node.js) |
+| B-405 | JSON Schemas выходов агентов в `schemas/agents/` | §6 | P0 | ✅ S5 |
+| B-406 | `ai-coding agents list` | §14 | P0 | ✅ S5 |
 
 ### E16 LLM adapters
-| ID | Задача | Трассировка | Pri |
-| --- | --- | --- | --- |
-| B-410 | OpenAI adapter | §4 | P0 |
-| B-411 | Anthropic adapter | §4 | P0 |
-| B-412 | Ollama / vLLM adapters (OpenAI-совместимый API), offline | FR-12, AC-05 | P0 |
-| B-413 | Маршрутизация по агенту и fallback-цепочки | FR-15 | P1 |
-| B-414 | Кэширование ответов (по хэшу redacted-контекста) | §18 | P2 |
+| ID | Задача | Трассировка | Pri | Статус |
+| --- | --- | --- | --- | --- |
+| B-410 | OpenAI adapter | §4 | P0 | ✅ S5 (httpx, без SDK — ADR-0023) |
+| B-411 | Anthropic adapter | §4 | P0 | ✅ S5 (structured output через tool_choice) |
+| B-412 | Ollama / vLLM adapters (OpenAI-совместимый API), offline | FR-12, AC-05 | P0 | ✅ S5 (OpenAI-совместимый `/v1`) |
+| B-413 | Маршрутизация по агенту и fallback-цепочки | FR-15 | P1 | ✅ S5 |
+| B-414 | Кэширование ответов (по хэшу redacted-контекста) | §18 | P2 | ✅ S5 |
 
 ### E17 CREATE
-| ID | Задача | Трассировка | Pri |
-| --- | --- | --- | --- |
-| B-420 | Диалог требований → версия ТЗ → approval → ADR → backlog → bootstrap → PR | FR-03, AC-01 | P0 |
-| B-421 | `ai-coding create`, `ai-coding project add` | §14 | P0 |
+| ID | Задача | Трассировка | Pri | Статус |
+| --- | --- | --- | --- | --- |
+| B-420 | Диалог требований → версия ТЗ → approval → ADR → backlog → bootstrap → PR | FR-03, AC-01 | P0 | ✅ S5 |
+| B-421 | `ai-coding create`, `ai-coding project add` | §14 | P0 | ✅ S5 (`project add` — S3) |
 
 ---
 

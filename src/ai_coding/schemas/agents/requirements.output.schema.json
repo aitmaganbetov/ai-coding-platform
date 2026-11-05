@@ -1,0 +1,233 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-coding.dev/schemas/agents/requirements.output.schema.json",
+  "title": "Requirements Agent output: requirements specification (ТЗ)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "goals": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      },
+      "minItems": 1,
+      "maxItems": 30
+    },
+    "non_goals": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      },
+      "minItems": 0,
+      "maxItems": 30
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "functional_requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^FR-[0-9]{2,3}$"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "priority": {
+            "enum": [
+              "must",
+              "should",
+              "could"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "priority"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 100
+    },
+    "non_functional_requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^NFR-[0-9]{2,3}$"
+          },
+          "category": {
+            "enum": [
+              "performance",
+              "security",
+              "reliability",
+              "usability",
+              "maintainability",
+              "compatibility",
+              "observability",
+              "other"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "id",
+          "category",
+          "text"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 60
+    },
+    "user_stories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^US-[0-9]{2,3}$"
+          },
+          "as_a": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "i_want": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "so_that": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "requirement_refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^FR-[0-9]{2,3}$"
+            },
+            "minItems": 1,
+            "maxItems": 20
+          },
+          "acceptance_criteria": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "minItems": 1,
+            "maxItems": 20
+          }
+        },
+        "required": [
+          "id",
+          "as_a",
+          "i_want",
+          "so_that",
+          "requirement_refs",
+          "acceptance_criteria"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 100
+    },
+    "open_questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^Q-[0-9]{2}$"
+          },
+          "question": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "default_assumption": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "id",
+          "question",
+          "default_assumption"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 30
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Self-assessed confidence; informative only, never replaces checks."
+    }
+  },
+  "required": [
+    "title",
+    "summary",
+    "goals",
+    "non_goals",
+    "constraints",
+    "assumptions",
+    "functional_requirements",
+    "non_functional_requirements",
+    "user_stories",
+    "open_questions"
+  ]
+}

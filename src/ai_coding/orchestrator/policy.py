@@ -104,6 +104,17 @@ class PolicyEngine:
             return self._approval(op, "approvals.required_for", f"'{op}' requires human approval")
         return Decision(Verdict.ALLOW, "approvals.required_for", f"'{op}' does not need approval")
 
+    def spec_approval(self, version: str) -> Decision:
+        """CREATE: a requirements version must be approved before architecture (FR-03).
+
+        Unlike configurable operations this gate cannot be switched off.
+        """
+        return self._approval(
+            ApprovalOperation.SPEC_APPROVAL,
+            "create.spec",
+            f"requirements version {version} must be approved before architecture work",
+        )
+
     def agent(self, name: AgentName | str) -> Decision:
         """Whether an agent may be scheduled."""
         enabled = {a.value for a in self._cfg.agents.enabled}

@@ -162,7 +162,19 @@ def _resolve(orch: Orchestrator, run_id: str) -> uuid.UUID:
     return _guard(lambda: orch.resolve_run_id(run_id))
 
 
-_RESUME_HINTS = {"git.push": "ai-coding pr resume", "github.pr": "ai-coding pr resume"}
+_RESUME_HINTS = {
+    "git.push": "ai-coding pr resume",
+    "github.pr": "ai-coding pr resume",
+    "agent.": "ai-coding create --resume",
+    "create.": "ai-coding create --resume",
+}
+
+
+def _hint(capability: str) -> str | None:
+    for prefix, hint in _RESUME_HINTS.items():
+        if capability == prefix or (prefix.endswith(".") and capability.startswith(prefix)):
+            return hint
+    return None
 
 
 def _ensure_resumable(orch: Orchestrator, rid: uuid.UUID) -> None:
@@ -178,7 +190,7 @@ def _ensure_resumable(orch: Orchestrator, rid: uuid.UUID) -> None:
     ]
     missing = sorted({c for c in unfinished if not orch.registry.for_capability(c)})
     if missing:
-        hint = next((_RESUME_HINTS[c] for c in missing if c in _RESUME_HINTS), None)
+        hint = next((h for c in missing if (h := _hint(c))), None)
         error(
             f"run {short_id(rid)} needs handlers for {', '.join(missing)}"
             + (f"; resume it with `{hint} {short_id(rid)}`" if hint else "")
