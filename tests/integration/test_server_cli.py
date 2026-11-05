@@ -82,12 +82,16 @@ def _free_port() -> int:
 
 
 @pytest.fixture
-def live_server(env: dict[str, str]) -> Iterator[str]:
+def live_server(env: dict[str, str], tmp_path: Path) -> Iterator[str]:
     runner.invoke(app, ["server", "migrate"])
     runner.invoke(
         app, ["server", "user", "add", "root", "--admin", "--password-stdin"], input=PASSWORD + "\n"
     )
     port = _free_port()
+    # Output goes to a file, not a pipe: nobody reads a pipe while the test runs, and on
+    # Windows its few-KB buffer filled up with logs, so the server blocked on a write.
+    log_path = tmp_path / "server.log"
+    log = log_path.open("w", encoding="utf-8")
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -103,9 +107,8 @@ def live_server(env: dict[str, str]) -> Iterator[str]:
             "--with-worker",
         ],
         env={**os.environ, **env},
-        stdout=subprocess.PIPE,
+        stdout=log,
         stderr=subprocess.STDOUT,
-        text=True,
     )
     url = f"http://127.0.0.1:{port}"
     try:
@@ -118,11 +121,14 @@ def live_server(env: dict[str, str]) -> Iterator[str]:
                 time.sleep(0.2)
         else:
             proc.kill()
-            pytest.fail(f"server did not start: {proc.communicate()[0][-2000:]}")
+            proc.wait(timeout=30)
+            pytest.fail(f"server did not start: {log_path.read_text(encoding='utf-8')[-2000:]}")
         yield url
     finally:
         proc.terminate()
-        output = proc.communicate(timeout=30)[0]  # reap the process and close its pipe
+        proc.wait(timeout=30)
+        log.close()
+        output = log_path.read_text(encoding="utf-8", errors="replace")
         print("--- server output (tail) ---\n" + output[-20000:])  # shown on failure
 
 
