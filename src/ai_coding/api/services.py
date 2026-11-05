@@ -21,7 +21,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -415,10 +415,15 @@ class Server:
         """Role of the caller if it grants ``permission``.
 
         Not a member (or another project's token) → :class:`NotFoundError`; a member
-        without the permission → :class:`ForbiddenError` (recorded as denied).
+        without the permission → :class:`ForbiddenError`. Both are recorded as denied;
+        a probe of a foreign project is a server-level event (no ``project_id``), so it
+        never appears in that project's trail, only in the administrators' view.
         """
         role = self._role(s, principal, project_id)
         if role is None:
+            self._denied(
+                principal.username, f"access.{permission.value}", target=f"project:{project_id}"
+            )
             raise NotFoundError("project not found")
         if not allowed(role, permission):
             self._denied(
@@ -836,7 +841,12 @@ class Server:
     def audit_events(
         self, principal: Principal, project_id: uuid.UUID | None = None, *, limit: int = 200
     ) -> list[dict[str, Any]]:
-        """Audit trail of one project, or of every project the caller may audit."""
+        """Audit trail of one project, or of every project the caller may audit.
+
+        Unscoped administrators also see server-level events (users, logins, probes of
+        foreign projects), which belong to no project.
+        """
+        server_level = principal.is_admin and principal.token_project_id is None
         with self.session() as s:
             if project_id is not None:
                 self.require(s, principal, project_id, Permission.AUDIT_VIEW)
@@ -850,11 +860,14 @@ class Server:
                     for m in members
                     if allowed(self._role(s, principal, m.project_id), Permission.AUDIT_VIEW)
                 ]
-            if not projects:
+            scope: ColumnElement[bool] = AuditEvent.project_id.in_(projects)
+            if project_id is None and server_level:
+                scope = or_(scope, AuditEvent.project_id.is_(None))
+            elif not projects:
                 return []
             rows = s.scalars(
                 select(AuditEvent)
-                .where(AuditEvent.project_id.in_(projects))
+                .where(scope)
                 .order_by(AuditEvent.created_at.desc())
                 .limit(min(limit, 1000))
             )

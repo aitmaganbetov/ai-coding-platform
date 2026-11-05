@@ -182,6 +182,17 @@ def check_audit(s: Scene) -> None:
     assert beta_events and {e["project_id"] for e in beta_events} == {s.beta}
     assert all(e["run_id"] != s.run_a for e in beta_events)
     assert MARKER_A not in json.dumps(beta_events)
+    # Probes of a foreign project are recorded as server-level events for the admins.
+    server_events = c.get("/api/v1/audit-events", headers=s.admin).json()
+    probes = [
+        e
+        for e in server_events
+        if e["actor"] == "alice" and e["outcome"] == "denied" and e["project_id"] is None
+    ]
+    assert {e["target"] for e in probes} == {f"project:{s.beta}"}
+    assert {"access.run.view", "access.run.create", "access.run.cancel_own"} <= {
+        e["action"] for e in probes
+    }
 
 
 async def test_two_projects_rbac_and_no_context_leak(server: Server) -> None:
