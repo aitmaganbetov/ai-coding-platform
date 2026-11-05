@@ -171,6 +171,25 @@ jobs:
           "$RUNNER_TEMP/smoke/bin/ai-coding" run discover -C "$RUNNER_TEMP/proj"
           "$RUNNER_TEMP/smoke/bin/ai-coding" run list -C "$RUNNER_TEMP/proj"
 
+  web:
+    name: Web UI (typecheck, tests, build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    needs: [lint]
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: The built UI has no inline scripts (strict CSP)
+        run: "! grep -E '<script>|<script type=\"module\">[^<]' dist/index.html"
+
   server-image:
     name: Server image (Docker build & smoke test)
     runs-on: ubuntu-24.04

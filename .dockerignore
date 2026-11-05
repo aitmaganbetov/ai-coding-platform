@@ -5,4 +5,7 @@
 !uv.lock
 !README.md
 !LICENSE
+!web/
+web/node_modules
+web/dist
 **/__pycache__
