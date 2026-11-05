@@ -1,0 +1,13 @@
+{
+  "name": "pilot-greet",
+  "version": "0.1.0",
+  "description": "Pilot project for the AI Coding Platform reusable workflows (AC-09).",
+  "type": "module",
+  "main": "index.js",
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=junit.xml"
+  }
+}

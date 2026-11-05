@@ -154,27 +154,27 @@
 ## S4 — GitHub adapter, reusable workflows, PR/report integration (P0-06, P0-08)
 
 ### E12 GitHub adapter
-| ID | Задача | Трассировка | Pri |
-| --- | --- | --- | --- |
-| B-300 | Порт `RepositoryHost`; GitHub REST/GraphQL через httpx; GitHub App и fine-grained token | §4 | P0 |
-| B-301 | Push ветки + создание PR, запрет push в protected, запрет auto-merge | FR-17, AC-03 | P0 |
-| B-302 | Check runs / statuses; комментарии к PR с защитой от дублей (маркер + upsert) | FR-10 | P0 |
-| B-303 | GitHubActionsExecutor (dispatch, ожидание, артефакты) | ADR-0007 | P0 |
-| B-304 | Rulesets: проверка/рекомендация настроек защиты | §15 | P1 |
+| ID | Задача | Трассировка | Pri | Статус |
+| --- | --- | --- | --- | --- |
+| B-300 | Порт `RepositoryHost`; GitHub REST/GraphQL через httpx; GitHub App и fine-grained token | §4 | P0 | ✅ S4 (REST; GraphQL не понадобился — ADR-0021) |
+| B-301 | Push ветки + создание PR, запрет push в protected, запрет auto-merge | FR-17, AC-03 | P0 | ✅ S4 |
+| B-302 | Check runs / statuses; комментарии к PR с защитой от дублей (маркер + upsert) | FR-10 | P0 | ✅ S4 |
+| B-303 | GitHubActionsExecutor (dispatch, ожидание, артефакты) | ADR-0007 | P0 | ✅ S4 |
+| B-304 | Rulesets: проверка/рекомендация настроек защиты | §15 | P1 | ✅ S4 |
 
 ### E13 Reusable workflows
-| ID | Задача | Трассировка | Pri |
-| --- | --- | --- | --- |
-| B-310 | `quality.yml`, `security.yml`, `test-php.yml`, `test-node.yml`, `test-python.yml`, `test-go.yml`, `test-rust.yml`, `ai-review.yml`, `release.yml` (`workflow_call`) | §9, FR-14 | P0 |
-| B-311 | Минимальные permissions, SHA-pinning, environments+approval для секретов, fork PR read-only, без `pull_request_target` | §9 | P0 |
-| B-312 | actionlint + zizmor в CI | §9 | P1 |
-| B-313 | Пилотный репозиторий: CI проходит | §16 S4, AC-09 | P0 |
+| ID | Задача | Трассировка | Pri | Статус |
+| --- | --- | --- | --- | --- |
+| B-310 | `quality.yml`, `security.yml`, `test-php.yml`, `test-node.yml`, `test-python.yml`, `test-go.yml`, `test-rust.yml`, `ai-review.yml`, `release.yml` (`workflow_call`) | §9, FR-14 | P0 | ✅ S4 (`ai-review.yml` — S6, нужны LLM-адаптеры) |
+| B-311 | Минимальные permissions, SHA-pinning, environments+approval для секретов, fork PR read-only, без `pull_request_target` | §9 | P0 | ✅ S4 |
+| B-312 | actionlint + zizmor в CI | §9 | P1 | ✅ S4 |
+| B-313 | Пилотный репозиторий: CI проходит | §16 S4, AC-09 | P0 | ✅ S4 (examples/pilot-python, examples/pilot-node) |
 
 ### E14 Reports
-| ID | Задача | Трассировка | Pri |
-| --- | --- | --- | --- |
-| B-320 | Отчёты JSON, Markdown, SARIF 2.1.0, JUnit XML | FR-10, P0-08 | P0 |
-| B-321 | `ai-coding report export` | §14 | P0 |
+| ID | Задача | Трассировка | Pri | Статус |
+| --- | --- | --- | --- | --- |
+| B-320 | Отчёты JSON, Markdown, SARIF 2.1.0, JUnit XML | FR-10, P0-08 | P0 | ✅ S4 |
+| B-321 | `ai-coding report export` | §14 | P0 | ✅ S4 |
 
 ---
 
@@ -219,6 +219,7 @@
 | B-504 | MODERNIZE: baseline, impact analysis, малые PR, миграционные планы, rollback | FR-05 | P0 |
 | B-505 | Database Agent → анализ миграций, индексов, транзакций | §6 | P1 |
 | B-506 | `ai-coding develop`, `ai-coding modernize` | §14 | P0 |
+| B-507 | Reusable `ai-review.yml` (Reviewer Agent в PR; только same-repo PR или approval через environment) — перенесено из B-310 | §9, ADR-0022 | P0 |
 
 ## S7 — AUDIT/MAINTAIN, security tools, reports, QA
 
@@ -306,4 +307,4 @@
 | AC-07 | B-611 |
 | AC-08 | B-701 |
 | AC-09 | B-310, B-313 |
-| AC-10 | B-131, B-132, B-321 (dry-run, approval, cancel, `run audit` — ✅ S2; `report export` — S4) |
+| AC-10 | B-131, B-132, B-321 (dry-run, approval, cancel, `run audit` — ✅ S2; `report export` — ✅ S4) |

@@ -77,3 +77,18 @@ def _dispose_databases() -> Iterator[None]:
 def _no_database_url_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Never let a developer's AI_CODING_DATABASE_URL leak into tests."""
     monkeypatch.delenv("AI_CODING_DATABASE_URL", raising=False)
+
+
+@pytest.fixture
+def fake_github(monkeypatch: pytest.MonkeyPatch) -> Iterator[object]:
+    """A running fake GitHub API; the environment points the platform at it."""
+    from tests.fake_github import FakeGitHub  # noqa: PLC0415
+
+    fake = FakeGitHub().start()
+    monkeypatch.setenv("GITHUB_API_URL", fake.url)
+    monkeypatch.setenv("GITHUB_TOKEN", fake.token)
+    monkeypatch.setenv("GITHUB_REPOSITORY", fake.repo)
+    for var in ("AI_CODING_GITHUB_TOKEN", "AI_CODING_GITHUB_APP_ID"):
+        monkeypatch.delenv(var, raising=False)
+    yield fake
+    fake.stop()

@@ -431,6 +431,7 @@ class Orchestrator:
                 tasks=tuple(
                     {
                         "key": t.key,
+                        "capability": t.capability,
                         "phase": t.phase,
                         "status": t.status,
                         "attempts": t.attempts,

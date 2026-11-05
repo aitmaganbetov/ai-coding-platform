@@ -15,15 +15,19 @@ ai-coding-platform/
 │   ├── workflows/ci.yml                ✅ CI проекта
 │   ├── workflows/repo-security.yml     ✅ gitleaks + pip-audit
 │   ├── workflows/{quality,security,test-php,test-node,test-python,
-│   │             test-go,test-rust,ai-review,release}.yml   ⏳ S4 reusable (workflow_call)
+│   │             test-go,test-rust,release}.yml   ✅ S4 reusable (workflow_call)
+│   ├── workflows/pilots.yml            ✅ S4 пилоты AC-09 (examples/)
+│   ├── workflows/ai-review.yml         ⏳ S6 (нужны LLM-адаптеры)
 │   └── dependabot.yml                  ✅
 ├── docs/
 │   ├── architecture/                   ✅ обзор, модули
-│   ├── adr/                            ✅ ADR-0001…0015
+│   ├── adr/                            ✅ ADR-0001…0022
 │   ├── installation.md, development.md, configuration.md, cli.md   ✅
+│   ├── audit.md (S3), github.md (S4)    ✅
 │   ├── backlog.md                      ✅ полный backlog по ТЗ
 │   ├── tz-notes.md                     ✅ замечания к ТЗ
-│   └── sprints/S1-report.md            ✅
+│   └── sprints/S1…S4-report.md         ✅
+├── examples/pilot-python, pilot-node   ✅ S4 пилотные проекты (AC-09)
 ├── src/ai_coding/
 │   ├── domain/        ✅ перечисления ТЗ, TaskStatus/Phase, ApprovalStatus, базовые ошибки
 │   ├── security/      ✅ redaction, детектор секретов; ⏳ S8 authn
@@ -47,10 +51,10 @@ ai-coding-platform/
 │   ├── tools/         ✅ S3 реестр, runner, gitleaks, semgrep (офлайн-правила), ruff; ⏳ S7 trivy, osv,
 │   │                       phpstan, pint, eslint, tsc, mypy, go, golangci-lint, cargo, clippy, playwright, k6
 │   ├── quality/       ✅ S3 движок гейтов PASS/FAIL/SKIPPED, fail-closed, strict, baseline
-│   ├── reports/       ✅ S3 JSON, Markdown; ⏳ S4 SARIF, JUnit, PR-комментарии
-│   ├── integrations/github/ ⏳ S4 GitHub API, App, checks, PR
+│   ├── reports/       ✅ S3 JSON, Markdown; ✅ S4 SARIF 2.1.0, JUnit
+│   ├── integrations/  ✅ S4 порт RepositoryHost; github/: клиент, App/token, PR, checks, rulesets, Actions executor
 │   ├── agents/        ⏳ S5–S7 12 агентов
-│   ├── workflows/     ✅ S3 audit; ⏳ S5 create; S6 develop, modernize; S7 maintain
+│   ├── workflows/     ✅ S3 audit; ✅ S4 pull_request; ⏳ S5 create; S6 develop, modernize; S7 maintain
 │   ├── api/           ⏳ S8 FastAPI
 │   └── worker/        ⏳ S8 серверный worker
 ├── tests/
@@ -81,10 +85,11 @@ flowchart BT
     orchestrator --> persistence & config & security & llm & git & detection & observability
     orchestrator --> tools
     agents -.S5.-> contracts & llm & orchestrator
-    reports -.S4.-> quality & contracts
-    github[integrations.github] -.S4.-> git & reports
+    reports --> quality
+    github[integrations.github] --> executors & security
     workflows --> orchestrator & quality & reports & tools & executors
-    workflows -.S5.-> agents & github
+    workflows --> github & git
+    workflows -.S5.-> agents
     cli --> config & detection & git
     cli -.-> workflows
     api -.S8.-> workflows & persistence

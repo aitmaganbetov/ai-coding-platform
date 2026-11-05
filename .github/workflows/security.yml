@@ -1,0 +1,124 @@
+# Reusable workflow: secrets + SAST via ai-coding audit, SARIF to code scanning
+# Call with `uses: aitmaganbetov/ai-coding-platform/.github/workflows/security.yml@<sha>`.
+# Security (ТЗ §9): inputs reach shell steps only through environment variables;
+# privileged writes (PR comment, check run, SARIF upload) are skipped for fork PRs.
+name: security (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: Project directory containing .ai-coding.yml
+        type: string
+        default: "."
+      platform-spec:
+        description: pip/uv spec of the AI Coding Platform to install ("." = this checkout)
+        type: string
+        default: "git+https://github.com/aitmaganbetov/ai-coding-platform@main"
+      tools:
+        description: Space-separated tool names
+        type: string
+        default: "gitleaks semgrep"
+      strict:
+        description: Treat SKIPPED blocking gates as FAIL
+        type: boolean
+        default: false
+      check-name:
+        type: string
+        default: "ai-coding / security"
+      comment-key:
+        type: string
+        default: "security"
+      upload-sarif:
+        description: Upload findings to GitHub code scanning
+        type: boolean
+        default: true
+    outputs:
+      verdict:
+        description: PASS or FAIL
+        value: ${{ jobs.audit.outputs.verdict }}
+
+permissions: {}
+
+jobs:
+  audit:
+    name: security audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+      security-events: write
+    outputs:
+      verdict: ${{ steps.audit.outputs.verdict }}
+    env:
+      WORKDIR: ${{ inputs.working-directory }}
+      PLATFORM_SPEC: ${{ inputs.platform-spec }}
+      TOOLS: ${{ inputs.tools }}
+      STRICT: ${{ inputs.strict }}
+      SAME_REPO: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+      - name: Install the AI Coding Platform
+        run: uv tool install "$PLATFORM_SPEC"
+      - name: Pull digest-pinned tool images (the only networked step)
+        run: |
+          args=()
+          for t in $TOOLS; do args+=(--tool "$t"); done
+          ai-coding tools pull "${args[@]}"
+      - name: Audit (read-only, offline Docker sandbox)
+        id: audit
+        run: |
+          args=(--project "$WORKDIR" --backend docker --output "$RUNNER_TEMP/audit")
+          for t in $TOOLS; do args+=(--tool "$t"); done
+          if [ "$STRICT" = "true" ]; then args+=(--strict); fi
+          chmod -R a+rX "$WORKDIR"
+          set +e
+          ai-coding audit "${args[@]}"
+          code=$?
+          set -e
+          if [ ! -f "$RUNNER_TEMP/audit/audit-report.json" ]; then exit "$code"; fi
+          verdict=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["verdict"])' "$RUNNER_TEMP/audit/audit-report.json")
+          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+          ai-coding report export --input "$RUNNER_TEMP/audit/audit-report.json" -f sarif -o "$RUNNER_TEMP/audit/audit.sarif"
+          ai-coding report export --input "$RUNNER_TEMP/audit/audit-report.json" -f junit -o "$RUNNER_TEMP/audit/audit-junit.xml"
+          cat "$RUNNER_TEMP/audit/audit-report.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload SARIF to code scanning
+        if: always() && inputs.upload-sarif && env.SAME_REPO == 'true' && steps.audit.outputs.verdict != ''
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: ${{ runner.temp }}/audit/audit.sarif
+          category: ai-coding-security-${{ inputs.working-directory }}
+      - name: Publish check run and PR comment
+        if: always() && env.SAME_REPO == 'true' && steps.audit.outputs.verdict != ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          CHECK_NAME: ${{ inputs.check-name }}
+          COMMENT_KEY: ${{ inputs.comment-key }}
+        run: |
+          ai-coding github check --sha "$HEAD_SHA" --report "$RUNNER_TEMP/audit/audit-report.json" --name "$CHECK_NAME"
+          if [ -n "$PR_NUMBER" ]; then
+            ai-coding github comment --pr "$PR_NUMBER" --report "$RUNNER_TEMP/audit/audit-report.json" --key "$COMMENT_KEY"
+          fi
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-report-${{ strategy.job-index }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/audit/
+          retention-days: 30
+      - name: Enforce the verdict
+        if: steps.audit.outputs.verdict != 'PASS'
+        env:
+          VERDICT: ${{ steps.audit.outputs.verdict }}
+        run: |
+          echo "Quality Gates verdict: ${VERDICT:-ERROR}" >&2
+          exit 1

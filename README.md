@@ -12,7 +12,7 @@
 
 Ключевые принципы: GitHub и LLM **опциональны**; детерминированные Quality Gates (PASS/FAIL/SKIPPED) не зависят от AI; изменения только в отдельных git worktree/ветках; секреты никогда не попадают в конфигурацию, логи и prompts; опасные операции — только с human approval.
 
-> **Статус: Sprints S1–S3 завершены.** S1 — архитектура, схема конфигурации, CLI, Git. S2 — оркестратор (конечный автомат, DAG, checkpoints, retry, политики, approvals, аудит), восстановление после падения worker'а. S3 — исполнители Local и Docker-песочница, реестр инструментов (Gitleaks, Semgrep, Ruff), Quality Gates и baseline, **`ai-coding audit`** — безопасный офлайн read-only аудит с отчётами JSON/Markdown. GitHub-интеграция, агенты и API — S4–S9, см. [backlog](docs/backlog.md).
+> **Статус: Sprints S1–S4 завершены.** S1 — архитектура, схема конфигурации, CLI, Git. S2 — оркестратор (конечный автомат, DAG, checkpoints, retry, политики, approvals, аудит), восстановление после падения worker'а. S3 — исполнители Local и Docker-песочница, реестр инструментов (Gitleaks, Semgrep, Ruff), Quality Gates и baseline, **`ai-coding audit`** — безопасный офлайн read-only аудит. S4 — GitHub: PR под политикой и approval (без merge), check runs и PR-комментарии без дублей, отчёты SARIF/JUnit, GitHub Actions executor, reusable workflows и пилоты на двух стеках ([github.md](docs/github.md)). Агенты, LLM и API — S5–S9, см. [backlog](docs/backlog.md).
 
 ## Быстрый старт
 

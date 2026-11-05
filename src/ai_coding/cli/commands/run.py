@@ -14,7 +14,7 @@ from rich.table import Table
 from ai_coding.cli.common import close_all, guard, load_project, open_orchestrator
 from ai_coding.cli.console import error, info, stdout
 from ai_coding.cli.exit_codes import ExitCode
-from ai_coding.domain.enums import RunState
+from ai_coding.domain.enums import RunState, TaskStatus
 from ai_coding.orchestrator import Orchestrator, RunOptions, RunStatus, TaskPlanner
 from ai_coding.orchestrator.engine import short_id
 from ai_coding.orchestrator.handlers import builtin_registry, discovery_plan
@@ -162,6 +162,30 @@ def _resolve(orch: Orchestrator, run_id: str) -> uuid.UUID:
     return _guard(lambda: orch.resolve_run_id(run_id))
 
 
+_RESUME_HINTS = {"git.push": "ai-coding pr resume", "github.pr": "ai-coding pr resume"}
+
+
+def _ensure_resumable(orch: Orchestrator, rid: uuid.UUID) -> None:
+    """Refuse to resume a run whose remaining steps need handlers this command lacks.
+
+    Resuming anyway would fail those steps with "no route" and end the run as FAILED,
+    destroying a run that its own workflow command (e.g. ``pr resume``) could finish.
+    """
+    unfinished = [
+        t["capability"]
+        for t in _guard(lambda: orch.status(rid)).tasks
+        if t["status"] not in {TaskStatus.SUCCEEDED.value, TaskStatus.SKIPPED.value}
+    ]
+    missing = sorted({c for c in unfinished if not orch.registry.for_capability(c)})
+    if missing:
+        hint = next((_RESUME_HINTS[c] for c in missing if c in _RESUME_HINTS), None)
+        error(
+            f"run {short_id(rid)} needs handlers for {', '.join(missing)}"
+            + (f"; resume it with `{hint} {short_id(rid)}`" if hint else "")
+        )
+        raise typer.Exit(ExitCode.USAGE)
+
+
 RunIdArg = Annotated[str, typer.Argument(help="Run id or unique prefix.")]
 
 
@@ -231,6 +255,7 @@ def resume(
         )
     ):
         raise typer.Exit(ExitCode.ABORTED)
+    _ensure_resumable(orch, rid)
     _finish(_guard(lambda: asyncio.run(orch.resume(rid, force=force))), as_json)
 
 
@@ -292,6 +317,7 @@ def approve(
     for a in decided:
         info(f"[green]approved[/] {a.operation} ({short_id(a.id)})")
     if resume_run:
+        _ensure_resumable(orch, rid)
         _finish(_guard(lambda: asyncio.run(orch.resume(rid))), as_json)
 
 
