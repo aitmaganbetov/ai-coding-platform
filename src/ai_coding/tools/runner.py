@@ -34,6 +34,15 @@ def _short(text: str) -> str:
     return tail if len(tail) <= _MAX_ERROR_CHARS else "…" + tail[-_MAX_ERROR_CHARS:]
 
 
+def sandbox_entry(adapter: object) -> tuple[str, ...]:
+    """argv prefix that starts the tool inside its image (default: the binary name).
+
+    An adapter sets ``sandbox_entry`` when its image does not put the binary on PATH.
+    """
+    entry = getattr(adapter, "sandbox_entry", None)
+    return tuple(entry) if entry else (adapter.spec.binary,)  # type: ignore[attr-defined]
+
+
 class ToolRunner:
     """Executes adapters against a project directory with a given executor."""
 
@@ -81,7 +90,7 @@ class ToolRunner:
         seconds = timeout or self.timeout
         if self.sandboxed:
             return CommandSpec(
-                argv=(adapter.spec.binary, *args),
+                argv=(*sandbox_entry(adapter), *args),
                 cwd=self.root,
                 env=env,
                 image=adapter.spec.image,

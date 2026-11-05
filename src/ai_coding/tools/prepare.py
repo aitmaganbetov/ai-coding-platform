@@ -16,6 +16,7 @@ from ai_coding.config.models import DockerConfig
 from ai_coding.executors import DockerSandboxExecutor
 from ai_coding.executors.base import CommandSpec, Executor, Mount
 from ai_coding.tools.cache import tool_cache
+from ai_coding.tools.runner import sandbox_entry
 
 SANDBOX_CACHE = "/cache"
 SANDBOX_TOOLCHAIN = "/toolchain"
@@ -75,9 +76,10 @@ async def prepare(adapter: Any, executor: Executor | None = None) -> None:
                     (seed / rel).chmod(0o644)
                 seed.chmod(0o755)
                 mounts += (Mount(seed, SANDBOX_SEED, read_only=True),)
-                entry = (spec.binary, *adapter.prepare_args(SANDBOX_CACHE, SANDBOX_SEED))
+                entry = (*sandbox_entry(adapter),
+                         *adapter.prepare_args(SANDBOX_CACHE, SANDBOX_SEED))  # fmt: skip
             else:
-                entry = (spec.binary, *adapter.prepare_args(SANDBOX_CACHE))
+                entry = (*sandbox_entry(adapter), *adapter.prepare_args(SANDBOX_CACHE))
         result = await executor.run(CommandSpec(
             argv=entry, cwd=cache, image=spec.image, mounts=mounts, network=True,
             env={**dict(spec.env), **dict(env)}, timeout_seconds=1800.0,

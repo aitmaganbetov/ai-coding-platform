@@ -348,3 +348,21 @@ async def test_prepare_toolchain_mounts_toolchain_dir() -> None:
     (spec,) = ex.seen
     assert spec.network and spec.mounts[0].target == "/toolchain"
     assert spec.env.get("RUSTUP_HOME", "").startswith("/toolchain")
+
+
+async def test_sandbox_entry_starts_tools_whose_image_lacks_path(tmp_path: Path) -> None:
+    from ai_coding.tools.runner import ToolRunner, sandbox_entry  # noqa: PLC0415
+
+    assert sandbox_entry(TrivyAdapter()) == ("trivy",)
+    entry = sandbox_entry(OSVScannerAdapter())
+    assert entry[:2] == ("sh", "-c") and "/go/osv-scanner" in entry[2]
+    osv_cache = tool_cache("osv-scanner") / "osv-scanner" / "npm"
+    osv_cache.mkdir(parents=True)
+    (osv_cache / "all.zip").write_bytes(b"zip")
+    ex = FakeExecutor(results={"sh": result(0, json.dumps({"results": []}))})
+    run = await ToolRunner(ex, tmp_path).run(OSVScannerAdapter())
+    assert run.succeeded, run.error
+    assert all(spec.argv[:4] == entry for spec in ex.seen)  # version and scan
+    ex = FakeExecutor()
+    await prepare(OSVScannerAdapter(), ex)  # the database zip above makes it "prepared"
+    assert ex.seen[0].argv[:4] == entry and "--download-offline-databases" in ex.seen[0].argv

@@ -72,6 +72,12 @@ class OSVScannerAdapter:
     )
     cache_name = "osv-scanner"
     seed_files = SEED_FILES
+    # The published image's Dockerfile sets ENTRYPOINT /osv-scanner but copies the
+    # binary into the base image's WORKDIR: start whichever executable exists.
+    sandbox_entry = ("sh", "-c", 'for p in /osv-scanner /go/osv-scanner /root/osv-scanner '
+                     '"$(command -v osv-scanner)"; do [ -x "$p" ] && exec "$p" "$@"; done; '
+                     'echo "osv-scanner binary not found in the image" >&2; exit 127',
+                     "osv-scanner")  # fmt: skip
 
     def cache_ready(self, cache: Path) -> bool:
         return any(cache.rglob("*.zip"))

@@ -70,7 +70,9 @@ def test_json_report_counts_only_new() -> None:
     r = report([f("high"), f("high", status="baselined"), f("low")])
     data = json.loads(r.to_json())
     assert data["summary"] == {"critical": 0, "high": 1, "medium": 0, "low": 1, "info": 0}
-    assert data["schema_version"] == "1" and data["verdict"] == "FAIL"
+    assert (
+        data["schema_version"] == "2"
+    )  # v2 (S7): triage, suppressions, reproducibility and data["verdict"] == "FAIL"
 
 
 def test_markdown_sorted_escaped_and_complete() -> None:

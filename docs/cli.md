@@ -18,11 +18,11 @@
 | `ai-coding run cancel RUN [--reason] [--yes] [--dry-run]` | Отменить (кооперативно, если run выполняется) | S2 |
 | `ai-coding run approve RUN [--approval ID] [--note] [--resume]` | Подтвердить (только Owner/Maintainer) | S2 |
 | `ai-coding run reject RUN [--approval ID] [--note]` | Отклонить; run будет отменён при возобновлении | S2 |
-| `ai-coding audit [-C DIR] [-b local\|docker] [-t TOOL]… [--semgrep-config F] [--strict] [-o DIR] [--json] [--dry-run]` | Read-only аудит: секреты, SAST, lint → Quality Gates → отчёт ([audit.md](audit.md)) | S3 |
+| `ai-coding audit [-C DIR] [-b local\|docker] [-t TOOL]… [--semgrep-config F] [--strict] [--triage] [--resume RUN] [-o DIR] [--json] [--dry-run]` | Read-only аудит: секреты, SAST, зависимости, инструменты стеков → Quality Gates → отчёт; `--triage` — рекомендательная оценка Security Agent ([audit.md](audit.md)) | S3, S7 |
 | `ai-coding baseline create REPORT --owner O --reason R --expires YYYY-MM-DD [-o FILE] [--force]` | Baseline существующих находок с владельцем и сроком | S3 |
 | `ai-coding project add SOURCE [--dest DIR] [--branch B] [--depth N] [--full-history]` | Импорт локальной папки или Git URL (безопасный clone) | S3 |
-| `ai-coding tools list` | Инструменты, категории, образы, доступность | S3 |
-| `ai-coding tools pull [-t TOOL]…` | Явно скачать образы, закреплённые по digest: анализаторы и (S6) рантаймы тестов `python-runtime`, `node-runtime` | S3 |
+| `ai-coding tools list [--json]` | Инструменты, категории, стеки, способ запуска, образы, офлайн-данные, путь кэша | S3, S7 |
+| `ai-coding tools pull [-t TOOL]… [--refresh]` | Явно скачать образы, закреплённые по digest, и подготовить офлайн-данные (БД Trivy и OSV, toolchain Clippy) | S3, S7 |
 | `ai-coding report export [RUN] [-i FILE] [-f json\|markdown\|sarif\|junit] [-o FILE]` | Экспорт отчёта аудита (SARIF 2.1.0, JUnit XML, JSON, Markdown) | S4 |
 | `ai-coding github comment --pr N --report FILE [--key K] [-R owner/repo]` | PR-комментарий с отчётом без дублей (маркер + upsert) | S4 |
 | `ai-coding github check --sha SHA --report FILE [--name N] [-R owner/repo]` | Check run с вердиктом и аннотациями по файлам/строкам | S4 |
@@ -32,8 +32,10 @@
 | `ai-coding create [IDEA] [--idea-file F] --dest DIR [--config F] [--name N] [--constraint C]… [--branch B] [--base B] [--pr [-R owner/repo] [--pr-title T]] [--interactive/--no-interactive] [--dry-run] [--require-approval]` | CREATE: требования → approval версии → ADR → backlog → каркас в ветке → (PR) ([create.md](create.md)) | S5 |
 | `ai-coding create --resume RUN --dest DIR` / `--revise RUN --answers F --dest DIR` | Продолжить CREATE-прогон / новая версия ТЗ с ответами на вопросы | S5 |
 | `ai-coding agents list [-C DIR] [--json]` | 12 агентов ТЗ §6: статус, вход → выход, нужен ли LLM, цепочка моделей | S5 |
+| `ai-coding agents run AGENT -i INPUTS.json [-C DIR] [-o FILE]` | Любой агент как одношаговый прогон (политика, бюджет, approvals); результат по схеме | S7 |
 | `ai-coding develop [TASK] [--issue N] [--task-file F] [-C DIR] [--base B] [--branch B] [--file P]… [--max-iterations N] [--strict] [--no-review] [--pr [-R owner/repo]] [--resume RUN] [--interactive/--no-interactive] [--dry-run] [--require-approval]` | DEVELOP: задача/issue → изменения с тестами → тесты в песочнице → review → коммит в рабочую ветку → проверка → (PR) ([develop.md](develop.md)) | S6 |
 | `ai-coding modernize GOAL \| --continue RUN [--step M-NN] \| --rollback RUN [-C DIR] [--allow-red-baseline] [--pr] [--resume RUN] [--dry-run] [--require-approval]` | MODERNIZE: baseline → анализ влияния и план → approval → один шаг = одна ветка/PR; откат шага через `git revert` | S6 |
+| `ai-coding maintain [--report F] [--issue N]… [--issues-file F] [--telemetry F] \| --continue RUN [--item ID] [-C DIR] [--base B] [--max-iterations N] [--allow-red-baseline] [--pr [-R owner/repo]] [--resume RUN] [--interactive/--no-interactive] [--dry-run]` | MAINTAIN: источники → план Maintenance Agent → approval → одна задача: обновление зависимостей пакетным менеджером, исправление с регрессионным тестом, проверка, (PR) ([maintain.md](maintain.md)) | S7 |
 | `ai-coding review --base B [--head H] [-C DIR] [--pr N --comment] [--check] [-o FILE] [--json] [--skip-if-disabled]` | Рекомендательный AI review diff (комментарий, check run); ненулевой код только при блокирующей политике | S6 |
 
 `RUN` — полный UUID, короткий id (последние 12 символов, их показывает `run list`) или уникальный префикс. Префикс UUIDv7 — это метка времени, поэтому для коротких id используется случайный хвост. Состояние хранится в `.ai-coding/state.db` проекта; каталог `.ai-coding/` сам себя исключает из git. Другую БД можно указать через `AI_CODING_DATABASE_URL`.
@@ -74,4 +76,4 @@
 
 ## Запланировано (ТЗ §14)
 
-`maintain` (S7); `audit` расширяется адаптерами стеков в S7. Все изменяющие команды получат `--dry-run` и `--require-approval`.
+API-сервер и Web UI — S8. Все команды ТЗ §14 для CLI реализованы.

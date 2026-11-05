@@ -31,3 +31,6 @@
 | [0024](0024-agents-and-create-mode.md) | Агенты CREATE (порт, цикл исправления, детерминированный bootstrap) и сценарий CREATE | Принято | S5 |
 | [0025](0025-develop-loop-sandbox-tests-review.md) | DEVELOP: цикл реализация→тесты→review, тесты в Docker-песочнице, рекомендательный review | Принято | S6 |
 | [0026](0026-modernize-and-rollback.md) | MODERNIZE: baseline, план шагов, малые PR, откат через git revert | Принято | S6 |
+| [0027](0027-project-tools-and-offline-data.md) | Инструменты стеков в песочнице, офлайн-данные в кэше платформы, подавления, воспроизводимость | Принято | S7 |
+| [0028](0028-s7-agents-and-advisory-triage.md) | Агенты Security, QA, Performance, DevOps, Maintenance; рекомендательный triage; prompt injection | Принято | S7 |
+| [0029](0029-maintain-and-dependency-upgrades.md) | MAINTAIN: утверждённый план, обновление зависимостей пакетным менеджером, регрессионные тесты | Принято | S7 |

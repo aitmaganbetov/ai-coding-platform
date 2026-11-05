@@ -228,7 +228,7 @@
 | B-600 | Адаптеры: Semgrep, Gitleaks, Trivy, OSV-Scanner | §4, §10 | P0 |
 | B-601 | Адаптеры: PHPStan, Pint, ESLint, TypeScript, Ruff, mypy | §10 | P0 |
 | B-602 | Адаптеры: go test, golangci-lint, cargo test, Clippy | §10 | P0 |
-| B-603 | Адаптеры: Playwright, k6 | §10 | P1 |
+| B-603 | Адаптеры: Playwright, k6 — **перенесено в S9** (нужны запущенное приложение и сеть; Performance Agent уже анализирует переданные результаты k6/APM, ADR-0027) | §10 | P1 |
 | B-604 | Security Agent → уязвимости, evidence, рекомендации | §6 | P0 |
 | B-605 | QA Agent → тест-кейсы, результаты, coverage | §6 | P0 |
 | B-606 | Performance Agent → bottlenecks, воспроизводимые бенчмарки (k6) | §6 | P1 |
@@ -259,6 +259,7 @@
 | ID | Задача | Трассировка | Pri |
 | --- | --- | --- | --- |
 | B-800 | Нагрузочные тесты (k6) API/worker | NFR-02 | P0 |
+| B-603 | Адаптеры Playwright (E2E) и k6 для проектов пользователей (перенесено из S7) | §10 | P1 |
 | B-801 | Security-тесты: SAST/DAST API, fuzzing конфигурации, тесты sandbox escape | §12 | P0 |
 | B-802 | SBOM (CycloneDX), подписанные артефакты (Sigstore), provenance (SLSA) | §12 | P0 |
 | B-803 | Эксплуатационная инструкция, runbook восстановления | §19 | P0 |

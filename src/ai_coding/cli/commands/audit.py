@@ -66,7 +66,7 @@ def audit(
         typer.Option("--resume", help="Continue a waiting audit run (e.g. after an approval)."),
     ] = None,
 ) -> None:
-    """Read-only audit: secrets, SAST and lint in a sandbox → Quality Gates → report.
+    """Read-only audit: secrets, SAST, dependencies and stack tools in a sandbox → gates.
 
     Exit codes: 0 PASS, 1 FAIL (blocking gate or failed run), 2 not found / unavailable.
     """
