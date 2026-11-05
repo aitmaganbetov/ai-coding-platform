@@ -420,9 +420,11 @@ class _InspectingExecutor(FakeExecutor):
         modules = spec.cwd / "node_modules"
         entries = list(modules.rglob("*"))
         self.snapshot = {
-            "files": sorted(str(p.relative_to(modules)) for p in entries),
+            "files": sorted(p.relative_to(modules).as_posix() for p in entries),
             "links": {
-                str(p.relative_to(modules)): str(p.readlink()) for p in entries if p.is_symlink()
+                p.relative_to(modules).as_posix(): p.readlink().as_posix()
+                for p in entries
+                if p.is_symlink()
             },
             "writable": os.access(modules, os.W_OK)
             and not any(m.target.startswith("/work/node_modules") for m in spec.mounts),
