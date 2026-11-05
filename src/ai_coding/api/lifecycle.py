@@ -153,7 +153,7 @@ def delete_project(server: Server, principal: Principal, project_id: uuid.UUID) 
             raise InvalidError("project not found")
         s.expunge(project)
     orch, _ = server.orchestrator(project, actor=principal.username)
-    artifacts_root = orch.artifacts.root
+    store = orch.artifacts
     root = orch.project_root
     with server.session() as s:
         s.execute(delete(Project).where(Project.id == project_id))
@@ -165,7 +165,7 @@ def delete_project(server: Server, principal: Principal, project_id: uuid.UUID) 
             project_id=project_id,
             target=project.name,
         )
-    shutil.rmtree(artifacts_root, ignore_errors=True)
+    store.clear()
     managed = server.settings.projects_dir.resolve()
     if root.resolve().is_relative_to(managed):  # a clone the server made: remove it
         shutil.rmtree(root, ignore_errors=True)
@@ -230,12 +230,7 @@ def _purge_project(server: Server, project: Project, now: Any) -> tuple[int, int
             project_id=project.id,
             details={"runs": len(old), "days": days},
         )
-    files = 0
-    for digest in digests - kept:
-        path = orch.artifacts.root / "sha256" / digest[:2] / digest
-        if path.is_file():
-            path.unlink()
-            files += 1
+    files = sum(1 for digest in digests - kept if orch.artifacts.delete(digest))
     return len(old), files
 
 

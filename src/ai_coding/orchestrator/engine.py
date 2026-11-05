@@ -70,7 +70,7 @@ from ai_coding.orchestrator.registry import HandlerRegistry, StepContext, StepRe
 from ai_coding.orchestrator.retry import ErrorClass, RetryPolicy, classify
 from ai_coding.orchestrator.router import AgentRouter
 from ai_coding.orchestrator.states import TERMINAL_STATES, StateManager
-from ai_coding.persistence.artifacts import ArtifactRef, LocalArtifactStore
+from ai_coding.persistence.artifacts import ArtifactRef, ArtifactStore, LocalArtifactStore
 from ai_coding.persistence.db import Database
 from ai_coding.persistence.models import (
     AgentExecution,
@@ -87,6 +87,7 @@ from ai_coding.persistence.models import (
     User,
 )
 from ai_coding.persistence.models import Finding as FindingRow
+from ai_coding.persistence.s3 import S3ArtifactStore
 from ai_coding.persistence.types import utcnow
 from ai_coding.security import redact
 from ai_coding.tools.base import Finding
@@ -203,6 +204,15 @@ class _RunContext:
     lease_lost: bool = False
 
 
+def make_artifact_store(config: AICodingConfig, project_root: Path) -> ArtifactStore:
+    """Local store under ``artifacts.path`` or, with ``store: minio``, an S3 bucket
+    (credentials from ``AI_CODING_S3_*``; one prefix per project)."""
+    if config.artifacts.store == "minio":
+        return S3ArtifactStore.from_env(prefix=f"projects/{config.project.name}")
+    root = Path(config.artifacts.path)
+    return LocalArtifactStore(root if root.is_absolute() else project_root / root)
+
+
 class Orchestrator:
     """Facade over planner, state, policy, approvals, execution and recovery."""
 
@@ -237,10 +247,7 @@ class Orchestrator:
         self.approvals = ApprovalManager(self.audit)
         self.checkpoints = CheckpointManager()
         self.base_policy = PolicyEngine(config)
-        artifacts_root = Path(config.artifacts.path)
-        if not artifacts_root.is_absolute():
-            artifacts_root = self.project_root / artifacts_root
-        self.artifacts = LocalArtifactStore(artifacts_root)
+        self.artifacts = make_artifact_store(config, self.project_root)
 
     def close(self) -> None:
         """Release database connections."""
