@@ -80,14 +80,19 @@ async def test_discover_run_executes_and_artifacts_are_downloadable(
         assert r.content and r.headers["X-Content-Type-Options"] == "nosniff"
 
 
+SLEEP = 2.5
+
+
 async def test_ten_runs_execute_in_parallel(
     server: Server, setup: tuple[Principal, uuid.UUID], tmp_path: Path
 ) -> None:
     """NFR-02: at least 10 concurrent runs per worker process."""
     admin, alpha = setup
     marker = tmp_path / "marker.txt"
+    # Each run holds its step long enough for a slow CI runner to start all twelve;
+    # sequential execution would take 12 x SLEEP.
     runs = [
-        server.create_run(admin, alpha, "probe", {"sleep": 0.6, "marker": str(marker)})
+        server.create_run(admin, alpha, "probe", {"sleep": SLEEP, "marker": str(marker)})
         for _ in range(12)
     ]
     STATS.update(current=0, peak=0)
@@ -96,7 +101,7 @@ async def test_ten_runs_execute_in_parallel(
     assert await worker.run_until_idle(timeout=120) == 12
     elapsed = time.monotonic() - started
     assert STATS["peak"] >= 10, STATS
-    assert elapsed < 12 * 0.6  # far below sequential execution
+    assert elapsed < 12 * SLEEP / 2  # far below sequential execution
     assert {server.run_status(admin, r)["state"] for r in runs} == {"COMPLETED"}
 
 

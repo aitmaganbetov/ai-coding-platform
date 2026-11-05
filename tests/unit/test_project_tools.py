@@ -18,7 +18,13 @@ from ai_coding.tools.mypy import MypyAdapter
 from ai_coding.tools.node import ESLintAdapter, TypeScriptAdapter
 from ai_coding.tools.osv import OSVScannerAdapter
 from ai_coding.tools.php import PHPStanAdapter, PintAdapter
-from ai_coding.tools.prepare import cache_name, is_prepared, needs_prepare, prepare
+from ai_coding.tools.prepare import (
+    cache_name,
+    is_prepared,
+    needs_prepare,
+    prepare,
+    readable_argv,
+)
 from ai_coding.tools.project import DEPS, WORK, ProjectToolRunner
 from ai_coding.tools.rust import CLIPPY_CACHE, CargoTestAdapter, ClippyAdapter
 from ai_coding.tools.trivy import TrivyAdapter
@@ -336,7 +342,7 @@ async def test_prepare_trivy_db_is_networked_and_verified() -> None:
     ex = _WritesDB()
     await prepare(TrivyAdapter(), ex)
     spec, fix_modes = ex.seen
-    assert fix_modes.argv[:3] == ("chmod", "-R", "a+rX") and not fix_modes.network
+    assert fix_modes.argv == readable_argv(fix_modes.mounts[0].target) and not fix_modes.network
     assert spec.network and spec.argv[0] == "trivy" and is_prepared(TrivyAdapter())
     with pytest.raises(RuntimeError, match="preparation failed"):
         await prepare(OSVScannerAdapter(), FakeExecutor(results={"osv-scanner": result(1)}))
@@ -347,7 +353,7 @@ async def test_prepare_toolchain_mounts_toolchain_dir() -> None:
     with pytest.raises(RuntimeError):  # nothing was installed by the fake
         await prepare(ClippyAdapter(), ex)
     spec, fix_modes = ex.seen
-    assert fix_modes.argv[:3] == ("chmod", "-R", "a+rX") and not fix_modes.network
+    assert fix_modes.argv == readable_argv(fix_modes.mounts[0].target) and not fix_modes.network
     assert spec.network and spec.mounts[0].target == "/toolchain"
     assert spec.env.get("RUSTUP_HOME", "").startswith("/toolchain")
 

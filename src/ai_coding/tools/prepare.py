@@ -84,6 +84,17 @@ def _listing(root: Path, limit: int = 8) -> str:
     )
 
 
+_READABLE = (
+    'rc=0; for p in "$1"/* "$1"/.[!.]*; do [ -e "$p" ] || continue; '
+    'chmod -R a+rX "$p" || rc=1; done; exit $rc'
+)
+
+
+def readable_argv(target: str) -> tuple[str, ...]:
+    """Make everything under ``target`` (not ``target`` itself) world-readable."""
+    return ("sh", "-c", _READABLE, "sh", target)
+
+
 def network_executor() -> DockerSandboxExecutor:
     """Executor allowed to use the network (preparation only)."""
     return DockerSandboxExecutor(docker_config=DockerConfig(network="bridge"))
@@ -127,9 +138,10 @@ async def prepare(adapter: Any, executor: Executor | None = None) -> None:
         # Tools create their data as the sandbox user, sometimes with private modes
         # (e.g. 0750 directories). Make it readable for everyone so the host user
         # can verify it and any sandbox user can read it; no network for this step.
-        target = mounts[0].target
+        # The mount root belongs to the host user, and BusyBox ``chmod -R`` stops at
+        # the first directory it cannot change, so only its entries are changed.
         modes = await executor.run(CommandSpec(
-            argv=("chmod", "-R", "a+rX", target), cwd=cache, image=spec.image,
+            argv=readable_argv(mounts[0].target), cwd=cache, image=spec.image,
             mounts=mounts[:1], network=False, timeout_seconds=300.0,
             ok_exit_codes=frozenset(range(256)),
         ))  # fmt: skip
