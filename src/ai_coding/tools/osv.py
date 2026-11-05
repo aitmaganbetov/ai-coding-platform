@@ -16,8 +16,11 @@ from typing import Any
 from ai_coding.domain.enums import Severity
 from ai_coding.tools.base import Finding, ToolCategory, ToolSpec, fingerprint, relative_path
 
-OSV_IMAGE = (  # google/osv-scanner v2.0.2
-    "ghcr.io/google/osv-scanner@sha256:385ff9dd9d50a573766fc226f24da1d61cd5843542ff7e04c563561bbd918e30"
+# google/osv-scanner v2.6.0. v2.0.x panics while downloading the offline DB since OSV
+# published Drupal advisories (ecosystem "Packagist:https://packages.drupal.org/8").
+OSV_IMAGE = (
+    "ghcr.io/google/osv-scanner"
+    "@sha256:afd838850ac1a0fcc15ff4a041dc9ba11123c3f0d2666217a5f0fcf9222b55fa"
 )
 CACHE_ENV = "OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY"
 _LEVELS = {"CRITICAL": Severity.CRITICAL, "HIGH": Severity.HIGH, "MODERATE": Severity.MEDIUM,
@@ -72,8 +75,8 @@ class OSVScannerAdapter:
     )
     cache_name = "osv-scanner"
     seed_files = SEED_FILES
-    # The published image's Dockerfile sets ENTRYPOINT /osv-scanner but copies the
-    # binary into the base image's WORKDIR: start whichever executable exists.
+    # Image layouts differ between releases (v2.0.x copied the binary into the base
+    # image's WORKDIR, v2.6 into /): start whichever executable exists.
     sandbox_entry = ("sh", "-c", 'for p in /osv-scanner /go/osv-scanner /root/osv-scanner '
                      '"$(command -v osv-scanner)"; do [ -x "$p" ] && exec "$p" "$@"; done; '
                      'echo "osv-scanner binary not found in the image" >&2; exit 127',
