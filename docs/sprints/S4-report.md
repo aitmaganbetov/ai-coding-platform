@@ -47,7 +47,14 @@
 | `uv lock --check`; сборка wheel и `ai-coding --help` из wheel | OK; команды `report`, `github`, `pr` присутствуют |
 | Локальная симуляция пилотов | node security audit (Docker) PASS; python ruff audit PASS; pytest пилота 2 passed |
 
-Результаты CI (Linux/Windows/macOS × 3.12/3.13, sandbox, pilots, workflow lint) — в PR.
+CI на GitHub (PR #6, коммит `4980224`) — **20 из 20 проверок успешны**:
+
+| Группа | Проверки |
+| --- | --- |
+| CI | Lint & type-check; Tests: ubuntu-24.04, windows-2025, macos-15 × py3.12/3.13 (6 jobs); Sandbox, tools & self-audit (Docker); Build & smoke-test wheel |
+| Repository security | Gitleaks (full history); pip-audit; **Workflow lint (actionlint + zizmor)** — новый job S4 |
+| Pilots (AC-09) | Python: tests, quality audit; Node: tests, security audit |
+| Опубликовано самой платформой | check runs `ai-coding / quality (pilot-python)` и `ai-coding / security (pilot-node)`; два PR-комментария с отчётами (по маркеру); SARIF gitleaks и semgrep принят Code Scanning |
 
 ## 4. Найденные и исправленные проблемы
 
