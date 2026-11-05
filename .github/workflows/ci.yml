@@ -112,6 +112,9 @@ jobs:
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Pull digest-pinned tool images
         run: uv run ai-coding tools pull
+      - name: Pull the digest-pinned base image used by the sandbox isolation tests
+        # Keep in sync with ALPINE in tests/integration/conftest.py.
+        run: docker pull --quiet alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
       - name: Sandbox and audit integration tests (no skips allowed)
         run: uv run pytest -m "docker or integration" -rs --junitxml=junit-sandbox.xml
       - name: Fail if any Docker test was skipped
