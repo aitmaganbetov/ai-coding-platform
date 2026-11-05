@@ -68,7 +68,8 @@ def list_tools(
     """Show tools, categories, pinned images, offline data and local availability."""
     rows = _rows(docker_available())
     if as_json:
-        stdout.print_json(json.dumps({"cache": str(cache_root()), "tools": rows}))
+        # Plain text: machine-readable even when colour is forced (FORCE_COLOR in CI).
+        typer.echo(json.dumps({"cache": str(cache_root()), "tools": rows}, indent=2))
         return
     table = Table("tool", "category", "stacks", "runs", "sandbox image", "offline data")
     for r in rows:
