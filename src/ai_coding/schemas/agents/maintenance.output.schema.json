@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-coding.dev/schemas/agents/maintenance.output.schema.json",
+  "title": "Maintenance Agent output: prioritised fix plan with regression tests",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "kind": {
+            "enum": [
+              "bug",
+              "security",
+              "dependency",
+              "tech_debt",
+              "incident"
+            ]
+          },
+          "priority": {
+            "enum": [
+              "p0",
+              "p1",
+              "p2",
+              "p3"
+            ]
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "minItems": 1,
+            "maxItems": 50
+          },
+          "plan": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300,
+              "pattern": "^(?![/\\\\])(?!.*(^|/)\\.\\.(/|$))[^\\\\:*?\"<>|]+$"
+            },
+            "minItems": 0,
+            "maxItems": 50
+          },
+          "upgrades": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                },
+                "to_version": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                }
+              },
+              "required": [
+                "source",
+                "to_version"
+              ]
+            },
+            "minItems": 0,
+            "maxItems": 30
+          },
+          "regression_test": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "file": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300,
+                "pattern": "^(?![/\\\\])(?!.*(^|/)\\.\\.(/|$))[^\\\\:*?\"<>|]+$"
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              }
+            },
+            "required": [
+              "file",
+              "description"
+            ]
+          },
+          "risk": {
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "kind",
+          "priority",
+          "sources",
+          "plan",
+          "files",
+          "regression_test",
+          "risk"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "deferred": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "source",
+          "reason"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 500
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Self-assessed confidence; informative only, never replaces checks."
+    }
+  },
+  "required": [
+    "summary",
+    "items",
+    "deferred"
+  ]
+}

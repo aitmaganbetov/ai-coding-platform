@@ -1,7 +1,8 @@
-"""``ai-coding agents list`` — the twelve agents of ТЗ §6 and their status (B-406)."""
+"""``ai-coding agents list|run`` — the twelve agents of ТЗ §6 (B-406, S7)."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Annotated, Any
@@ -10,11 +11,17 @@ import typer
 from rich.markup import escape
 from rich.table import Table
 
-from ai_coding.agents import CATALOG, plan_chain
-from ai_coding.cli.console import stdout
+from ai_coding.agents import CATALOG, plan_chain, spec_for
+from ai_coding.cli.commands.run import _finish
+from ai_coding.cli.common import close_all, guard, load_project, open_orchestrator
+from ai_coding.cli.console import error, stdout
+from ai_coding.cli.exit_codes import ExitCode
 from ai_coding.config.loader import find_config
 from ai_coding.config.models import AICodingConfig
 from ai_coding.config.validator import validate_file
+from ai_coding.domain.enums import AgentName, RunState
+from ai_coding.orchestrator import TaskPlanner
+from ai_coding.workflows.agent_runtime import build_agent_run
 
 app = typer.Typer(help="Agents (ТЗ §6).", no_args_is_help=True)
 
@@ -71,3 +78,49 @@ def list_agents(
             escape(f"{r['inputs']} → {r['outputs']}"), llm, escape(models),
         )  # fmt: skip
     stdout.print(table)
+
+
+@app.command("run")
+def run_agent_cmd(
+    ctx: typer.Context,
+    agent: Annotated[str, typer.Argument(help="Agent name, e.g. qa, performance, devops.")],
+    input_file: Annotated[
+        Path, typer.Option("--input", "-i", help="JSON object with the agent inputs.")
+    ],
+    project: Annotated[Path, typer.Option("--project", "-C")] = Path(),
+    output: Annotated[Path | None, typer.Option("--output", "-o")] = None,
+) -> None:
+    """Run one agent on JSON inputs as an orchestrated run (policy, budget, approvals).
+
+    The result is the agent's schema-validated output; nothing in the project changes.
+    """
+    ctx.call_on_close(close_all)
+    try:
+        name = AgentName(agent)
+    except ValueError:
+        error(f"unknown agent '{agent}' (known: {', '.join(a.value for a in AgentName)})")
+        raise typer.Exit(ExitCode.USAGE) from None
+    try:
+        inputs = json.loads(input_file.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        error(f"input file not found: {input_file}")
+        raise typer.Exit(ExitCode.NOT_FOUND) from None
+    except ValueError as exc:
+        error(f"input file is not valid JSON: {exc}")
+        raise typer.Exit(ExitCode.INVALID) from None
+    if not isinstance(inputs, dict):
+        error("the input file must contain a JSON object")
+        raise typer.Exit(ExitCode.INVALID)
+    root, config = load_project(project)
+    registry, steps = build_agent_run(spec_for(name).create(), inputs)
+    orch = open_orchestrator(root, config, registry)
+    run_id = guard(lambda: orch.create_run(TaskPlanner().build(steps), goal=f"agent {agent}"))
+    status = guard(lambda: asyncio.run(orch.execute(run_id)))
+    if status.state is not RunState.COMPLETED:
+        _finish(status, as_json=False)
+    out = orch.task_output(run_id, steps[0].key) or {}
+    text = json.dumps(out.get("result", {}), indent=2, ensure_ascii=False)
+    if output:
+        output.write_text(text + "\n", encoding="utf-8")
+    else:
+        typer.echo(text)

@@ -1,7 +1,7 @@
 """Catalogue of the twelve agents of ТЗ §6 and their implementation status (B-406).
 
-Implemented agents are instantiable; the others are listed with the sprint in which
-they arrive, so ``ai-coding agents list`` reports the truth instead of pretending.
+Since S7 all twelve agents are implemented; the sprint column records when each
+arrived, so ``ai-coding agents list`` reports the truth instead of pretending.
 """
 
 from __future__ import annotations
@@ -13,9 +13,14 @@ from ai_coding.agents.base import Agent
 from ai_coding.agents.bootstrap import BootstrapAgent
 from ai_coding.agents.database import DatabaseAgent
 from ai_coding.agents.developer import DeveloperAgent
+from ai_coding.agents.devops import DevOpsAgent
+from ai_coding.agents.maintenance import MaintenanceAgent
+from ai_coding.agents.performance import PerformanceAgent
 from ai_coding.agents.planner import PlannerAgent
+from ai_coding.agents.qa import QAAgent
 from ai_coding.agents.requirements import RequirementsAgent
 from ai_coding.agents.reviewer import ReviewerAgent
+from ai_coding.agents.security import SecurityAgent
 from ai_coding.domain.enums import AgentName
 
 
@@ -57,15 +62,17 @@ CATALOG: tuple[AgentSpec, ...] = (
     AgentSpec(AgentName.REVIEWER, "Diff, стандарты", "Замечания с file/line/severity", "S6", True,
               ReviewerAgent),
     AgentSpec(AgentName.SECURITY, "Diff, scanner reports", "Уязвимости, evidence, рекомендации",
-              "S7", True),
-    AgentSpec(AgentName.QA, "Требования, код", "Тест-кейсы, результаты, coverage", "S7", True),
+              "S7", True, SecurityAgent),
+    AgentSpec(AgentName.QA, "Требования, код", "Тест-кейсы, результаты, coverage", "S7", True,
+              QAAgent),
     AgentSpec(AgentName.DATABASE, "Schema, queries", "Анализ миграций, индексов, транзакций",
               "S6", True, DatabaseAgent),
     AgentSpec(AgentName.PERFORMANCE, "Метрики, профили",
-              "Bottlenecks и воспроизводимые бенчмарки", "S7", True),
-    AgentSpec(AgentName.DEVOPS, "Сборка, окружения", "CI/CD, release plan, rollback", "S7", True),
+              "Bottlenecks и воспроизводимые бенчмарки", "S7", True, PerformanceAgent),
+    AgentSpec(AgentName.DEVOPS, "Сборка, окружения", "CI/CD, release plan, rollback", "S7", True,
+              DevOpsAgent),
     AgentSpec(AgentName.MAINTENANCE, "Issues, telemetry", "План исправлений, проверяемые PR",
-              "S7", True),
+              "S7", True, MaintenanceAgent),
 )  # fmt: skip
 
 

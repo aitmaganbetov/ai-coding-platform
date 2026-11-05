@@ -39,6 +39,13 @@ DEFAULT_PATTERNS: tuple[SecretPattern, ...] = (
     _p("slack-token", r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),
     _p("google-api-key", r"\bAIza[0-9A-Za-z_\-]{35}\b"),
     _p("jwt", r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}"),
+    _p(
+        "auth-header",
+        r"(?i)\b(?:authorization|proxy-authorization)\s*:\s*(?:bearer|basic|token)\s+"
+        r"([A-Za-z0-9_\-.~+/=]{8,})",
+        group=1,
+    ),
+    _p("bearer", r"(?i)\bbearer\s+([A-Za-z0-9_\-.~+/]{20,}=*)", group=1),
     _p("url-credentials", r"(?<=://)[^/\s:@]+:([^/\s@]+)(?=@)", group=1),
     _p(
         "signed-url-param",

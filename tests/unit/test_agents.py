@@ -21,6 +21,7 @@ from ai_coding.agents import (
     AgentContext,
     AgentError,
     AgentOutputError,
+    AgentSpec,
     ArchitectAgent,
     BootstrapAgent,
     DatabaseAgent,
@@ -96,24 +97,15 @@ def test_samples_satisfy_schemas() -> None:
 
 def test_catalog_covers_all_agents() -> None:
     assert {s.name for s in CATALOG} == set(AgentName)
-    implemented = {s.name for s in CATALOG if s.implemented}
-    assert implemented == {
-        AgentName.REQUIREMENTS,
-        AgentName.ARCHITECT,
-        AgentName.PLANNER,
-        AgentName.BOOTSTRAP,
-        AgentName.DEVELOPER,
-        AgentName.REVIEWER,
-        AgentName.DATABASE,
-    }
+    assert all(s.implemented for s in CATALOG)  # S7: all twelve agents
     for spec in CATALOG:
-        if spec.implemented:
-            agent = spec.create()
-            assert isinstance(agent, Agent) and agent.name is spec.name
-            assert agent.requires_llm is spec.requires_llm
-        else:
-            with pytest.raises(LookupError, match="planned for S"):
-                spec.create()
+        agent = spec.create()
+        assert isinstance(agent, Agent) and agent.name is spec.name
+        assert agent.requires_llm is spec.requires_llm
+        Draft202012Validator.check_schema(dict(agent.output_schema))
+    unbuilt = AgentSpec(AgentName.QA, "", "", "S9", True)
+    with pytest.raises(LookupError, match="planned for S9"):
+        unbuilt.create()
     assert spec_for(AgentName.QA).sprint == "S7"
 
 

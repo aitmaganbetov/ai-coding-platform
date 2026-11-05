@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-coding.dev/schemas/agents/performance.output.schema.json",
+  "title": "Performance Agent output: bottlenecks and reproducible benchmarks",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "bottlenecks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "minItems": 1,
+            "maxItems": 20
+          },
+          "file": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300,
+            "pattern": "^(?![/\\\\])(?!.*(^|/)\\.\\.(/|$))[^\\\\:*?\"<>|]+$"
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "impact": {
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "cause": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "recommendation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "metrics",
+          "impact",
+          "cause",
+          "recommendation"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "benchmarks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "bottleneck": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "tool": {
+            "enum": [
+              "k6",
+              "wrk",
+              "hyperfine",
+              "pytest-benchmark",
+              "go-bench",
+              "cargo-bench",
+              "phpbench",
+              "lighthouse",
+              "other"
+            ]
+          },
+          "command": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "metric": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "target": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "id",
+          "bottleneck",
+          "tool",
+          "command",
+          "metric",
+          "target"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Self-assessed confidence; informative only, never replaces checks."
+    }
+  },
+  "required": [
+    "summary",
+    "bottlenecks",
+    "benchmarks"
+  ]
+}

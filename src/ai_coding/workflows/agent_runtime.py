@@ -31,8 +31,9 @@ from ai_coding.orchestrator.errors import (
     BudgetExceededError,
     PermanentError,
 )
+from ai_coding.orchestrator.planner import StepSpec
 from ai_coding.orchestrator.policy import Verdict
-from ai_coding.orchestrator.registry import StepContext, StepResult
+from ai_coding.orchestrator.registry import HandlerRegistry, StepContext, StepResult
 
 InputBuilder = Callable[[StepContext], dict[str, Any]]
 
@@ -139,3 +140,22 @@ class AgentStepHandler:
             evidence_refs=list(result.evidence_refs),
             confidence=result.confidence,
         )
+
+
+def build_agent_run(
+    agent: Agent,
+    inputs: Mapping[str, Any],
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+    env: Mapping[str, str] | None = None,
+) -> tuple[HandlerRegistry, list[StepSpec]]:
+    """A one-step run of ``agent`` on ``inputs`` (``ai-coding agents run``).
+
+    The agent gets the same guarantees as inside a workflow — policy, approvals,
+    budget, guarded LLM, persisted output — and nothing else: no repository writes.
+    """
+    handler = AgentStepHandler(agent, lambda ctx: dict(ctx.input["inputs"]),
+                               transport=transport, env=env)  # fmt: skip
+    step = StepSpec(key=f"agent.{agent.name.value}", capability=handler.name,
+                    max_attempts=3, input={"inputs": dict(inputs)})  # fmt: skip
+    return HandlerRegistry([handler]), [step]
