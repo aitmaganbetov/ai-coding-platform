@@ -101,8 +101,17 @@ async def prepare(adapter: Any, executor: Executor | None = None) -> None:
             env={**dict(spec.env), **dict(env)}, timeout_seconds=1800.0,
             ok_exit_codes=frozenset(range(256)),
         ))  # fmt: skip
+        # Tools create their data as the sandbox user, sometimes with private modes
+        # (e.g. 0750 directories). Make it readable for everyone so the host user
+        # can verify it and any sandbox user can read it; no network for this step.
+        target = mounts[0].target
+        await executor.run(CommandSpec(
+            argv=("chmod", "-R", "a+rX", target), cwd=cache, image=spec.image,
+            mounts=mounts[:1], network=False, timeout_seconds=300.0,
+            ok_exit_codes=frozenset(range(256)),
+        ))  # fmt: skip
     if not is_prepared(adapter):
+        output = result.stderr if result.stderr.strip() else result.stdout
         raise RuntimeError(
-            f"{spec.name}: preparation failed (exit {result.exit_code}): "
-            f"{failure_reason(result.stderr + chr(10) + result.stdout)}"
+            f"{spec.name}: preparation failed (exit {result.exit_code}): {failure_reason(output)}"
         )

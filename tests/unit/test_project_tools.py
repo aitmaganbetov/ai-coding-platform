@@ -335,7 +335,8 @@ class _WritesDB(FakeExecutor):
 async def test_prepare_trivy_db_is_networked_and_verified() -> None:
     ex = _WritesDB()
     await prepare(TrivyAdapter(), ex)
-    (spec,) = ex.seen
+    spec, fix_modes = ex.seen
+    assert fix_modes.argv[:3] == ("chmod", "-R", "a+rX") and not fix_modes.network
     assert spec.network and spec.argv[0] == "trivy" and is_prepared(TrivyAdapter())
     with pytest.raises(RuntimeError, match="preparation failed"):
         await prepare(OSVScannerAdapter(), FakeExecutor(results={"osv-scanner": result(1)}))
@@ -345,7 +346,8 @@ async def test_prepare_toolchain_mounts_toolchain_dir() -> None:
     ex = FakeExecutor()
     with pytest.raises(RuntimeError):  # nothing was installed by the fake
         await prepare(ClippyAdapter(), ex)
-    (spec,) = ex.seen
+    spec, fix_modes = ex.seen
+    assert fix_modes.argv[:3] == ("chmod", "-R", "a+rX") and not fix_modes.network
     assert spec.network and spec.mounts[0].target == "/toolchain"
     assert spec.env.get("RUSTUP_HOME", "").startswith("/toolchain")
 
