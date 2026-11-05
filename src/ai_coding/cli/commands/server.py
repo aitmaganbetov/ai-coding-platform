@@ -230,6 +230,49 @@ def worker(
     server.close()
 
 
+@app.command("export")
+def export(
+    project: str,
+    user: Annotated[str, typer.Option("--user", help="Act as this project owner.")],
+    output: Annotated[Path, typer.Option("--output", "-o")],
+) -> None:
+    """Export a project's data as a ZIP (NFR-08; RBAC of --user applies)."""
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from ai_coding.api.lifecycle import export_project  # noqa: PLC0415
+    from ai_coding.api.services import ApiError, Principal  # noqa: PLC0415
+    from ai_coding.persistence.models import Project, User  # noqa: PLC0415
+
+    server = _server()
+    try:
+        with server.session() as s:
+            row = s.scalar(select(User).where(User.username == user))
+            pid = s.scalar(select(Project.id).where(Project.name == project))
+            if row is None or pid is None:
+                error("user or project not found")
+                raise typer.Exit(ExitCode.NOT_FOUND)
+            principal = Principal(row.id, row.username, row.is_admin)
+        output.write_bytes(export_project(server, principal, pid))
+    except ApiError as exc:
+        raise _fail(exc) from exc
+    finally:
+        server.close()
+    info(f"exported {project} to {output}")
+
+
+@app.command("purge")
+def purge() -> None:
+    """Apply the retention policy now (cron-friendly)."""
+    from ai_coding.api.lifecycle import purge_expired  # noqa: PLC0415
+
+    server = _server()
+    try:
+        counts = purge_expired(server)
+    finally:
+        server.close()
+    typer.echo(json.dumps(counts))
+
+
 @app.command("settings")
 def show_settings() -> None:
     """Effective settings (secrets hidden)."""

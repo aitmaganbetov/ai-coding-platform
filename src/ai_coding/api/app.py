@@ -25,6 +25,7 @@ from sqlalchemy import text
 from starlette.concurrency import run_in_threadpool
 
 from ai_coding import __version__
+from ai_coding.api import lifecycle
 from ai_coding.api.kinds import KINDS
 from ai_coding.api.limits import RateLimiter, client_address
 from ai_coding.api.metrics import Metrics
@@ -332,6 +333,24 @@ async def create_project(
 @projects.get("/projects/{project_id}")
 def get_project(project_id: uuid.UUID, caller: Caller, server: Srv) -> dict[str, Any]:
     return server.get_project(caller, project_id)
+
+
+@projects.delete("/projects/{project_id}", status_code=204)
+def delete_project(project_id: uuid.UUID, caller: Caller, server: Srv) -> Response:
+    """Delete the project and its data (owner, NFR-08); the audit trail is kept."""
+    lifecycle.delete_project(server, caller, project_id)
+    return Response(status_code=204)
+
+
+@projects.get("/projects/{project_id}/export")
+def export_project(project_id: uuid.UUID, caller: Caller, server: Srv) -> Response:
+    """ZIP export of everything the platform stores about the project (owner, NFR-08)."""
+    content = lifecycle.export_project(server, caller, project_id)
+    return Response(
+        content,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="project-{project_id}.zip"'},
+    )
 
 
 @projects.put("/projects/{project_id}/members/{username}")

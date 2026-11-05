@@ -136,7 +136,8 @@ class Server:
         with self.db.session() as session:
             yield session
 
-    def _audit(self, s: Session, actor: str, action: str, outcome: Outcome, **kw: Any) -> None:
+    def record(self, s: Session, actor: str, action: str, outcome: Outcome, **kw: Any) -> None:
+        """Audit event in the caller's transaction."""
         self.audit.record(s, actor=actor, action=action, outcome=outcome, **kw)
 
     def _denied(self, actor: str, action: str, **kw: Any) -> None:
@@ -225,7 +226,7 @@ class Server:
             s.add(user)
             s.flush()
             s.add(Credential(user_id=user.id, password_hash=hashed))
-            self._audit(
+            self.record(
                 s,
                 actor,
                 "user.create",
@@ -247,7 +248,7 @@ class Server:
                 s.add(Credential(user_id=user.id, password_hash=hashed))
             else:
                 cred.password_hash = hashed
-            self._audit(s, actor, "user.password", Outcome.SUCCESS, target=username)
+            self.record(s, actor, "user.password", Outcome.SUCCESS, target=username)
 
     def login(self, username: str, password: str) -> Principal | None:
         """Verify a password; ``None`` on failure (same timing for unknown users)."""
@@ -256,11 +257,11 @@ class Server:
             cred = s.get(Credential, user.id) if user is not None else None
             ok = verify_password(cred.password_hash if cred else _DUMMY_HASH, password)
             if not (ok and user is not None and cred is not None and user.is_active):
-                self._audit(s, username[:150] or "-", "auth.login", Outcome.DENIED)
+                self.record(s, username[:150] or "-", "auth.login", Outcome.DENIED)
                 return None
             if needs_rehash(cred.password_hash):
                 cred.password_hash = hash_password(password)
-            self._audit(s, user.username, "auth.login", Outcome.SUCCESS)
+            self.record(s, user.username, "auth.login", Outcome.SUCCESS)
             return Principal(user.id, user.username, user.is_admin)
 
     # ------------------------------------------------------------ tokens --
@@ -306,7 +307,7 @@ class Server:
             )
             s.add(row)
             s.flush()
-            self._audit(
+            self.record(
                 s,
                 principal.username,
                 "token.issue",
@@ -370,7 +371,7 @@ class Server:
             if row is None or (row.user_id != principal.user_id and not principal.is_admin):
                 raise NotFoundError("token not found")
             row.revoked_at = row.revoked_at or utcnow()
-            self._audit(
+            self.record(
                 s,
                 principal.username,
                 "token.revoke",
@@ -478,7 +479,7 @@ class Server:
                     project_id=project.id, user_id=principal.user_id, role=Role.OWNER.value
                 )
             )
-            self._audit(
+            self.record(
                 s,
                 principal.username,
                 "project.create",
@@ -612,7 +613,7 @@ class Server:
                 s.add(ProjectMember(project_id=project_id, user_id=user.id, role=role.value))
             else:
                 member.role = role.value
-            self._audit(
+            self.record(
                 s,
                 principal.username,
                 "project.member",
@@ -673,7 +674,7 @@ class Server:
             exists = s.scalar(select(RunJob).where(RunJob.run_id == run_id))
             if exists is None:
                 s.add(RunJob(run_id=run_id, kind="execute", state="queued"))
-            self._audit(
+            self.record(
                 s,
                 principal.username,
                 "run.create",

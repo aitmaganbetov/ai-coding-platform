@@ -32,6 +32,7 @@ from ai_coding.persistence.types import utcnow
 
 _log = get_logger("ai_coding.worker")
 MAX_ATTEMPTS = 3
+PURGE_INTERVAL = 3600.0
 _ERROR_CHARS = 2000
 
 
@@ -140,8 +141,16 @@ class Worker:
         self._tasks: set[asyncio.Task[None]] = set()
 
     async def run(self, stop: asyncio.Event) -> None:
-        """Lease and execute jobs until ``stop`` is set; then wait for running jobs."""
+        """Lease and execute jobs until ``stop`` is set; then wait for running jobs.
+
+        With ``AI_CODING_SERVER_RETENTION_DAYS`` set, retention is applied hourly.
+        """
+        next_purge = 0.0
         while not stop.is_set():
+            loop_time = asyncio.get_running_loop().time()
+            if self.server.settings.retention_days and loop_time >= next_purge:
+                next_purge = loop_time + PURGE_INTERVAL
+                await self._purge()
             started = await self._fill()
             if not started:
                 with contextlib.suppress(TimeoutError):
@@ -160,6 +169,16 @@ class Worker:
                     done += 1
                     continue
                 await asyncio.wait(self._tasks, return_when=asyncio.FIRST_COMPLETED)
+
+    async def _purge(self) -> None:
+        from ai_coding.api.lifecycle import purge_expired  # noqa: PLC0415
+
+        try:
+            counts = await asyncio.to_thread(purge_expired, self.server)
+        except Exception as exc:
+            _log.warning("retention purge failed", error=str(exc))
+            return
+        _log.info("retention purge", **counts)
 
     async def drain(self) -> None:
         if self._tasks:
