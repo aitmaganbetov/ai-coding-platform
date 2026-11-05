@@ -1,0 +1,8 @@
+# Only what the server image needs: sources, metadata, lock file.
+*
+!src/
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+**/__pycache__

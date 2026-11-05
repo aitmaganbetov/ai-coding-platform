@@ -170,3 +170,36 @@ jobs:
           # Orchestrator end-to-end from the wheel: migrations, FSM, DAG, artifacts.
           "$RUNNER_TEMP/smoke/bin/ai-coding" run discover -C "$RUNNER_TEMP/proj"
           "$RUNNER_TEMP/smoke/bin/ai-coding" run list -C "$RUNNER_TEMP/proj"
+
+  server-image:
+    name: Server image (Docker build & smoke test)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the server image
+        run: docker build -f deploy/Dockerfile -t ai-coding-platform:ci .
+      - name: Validate the compose file
+        run: docker compose -f deploy/docker-compose.yml --env-file deploy/.env.example config -q
+      - name: Run the API from the image and exercise it
+        run: |
+          mkdir -p "$RUNNER_TEMP/data/tmp" && sudo chown -R 10001:10001 "$RUNNER_TEMP/data"
+          docker run -d --name api -p 127.0.0.1:8000:8000 --read-only --cap-drop ALL \
+            --security-opt no-new-privileges -v "$RUNNER_TEMP/data:/srv/ai-coding" \
+            ai-coding-platform:ci
+          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/healthz && break; sleep 1; done
+          test "$(docker exec api id -u)" = "10001"
+          printf 'correct horse battery staple\n' \
+            | docker exec -i api ai-coding server user add admin --admin --password-stdin
+          token=$(curl -fsS -X POST http://127.0.0.1:8000/api/v1/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"username":"admin","password":"correct horse battery staple"}' \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+          curl -fsS http://127.0.0.1:8000/api/v1/me -H "Authorization: Bearer $token"
+          curl -fsS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/api/v1/projects | grep -q 401
+      - name: Server logs
+        if: always()
+        run: docker logs api || true

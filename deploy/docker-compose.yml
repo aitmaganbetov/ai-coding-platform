@@ -1,0 +1,80 @@
+# AI Coding Platform — Self-Hosted profile (ТЗ §15): Caddy (TLS) → API → PostgreSQL,
+# workers executing runs in Docker sandboxes. Usage: docs/server.md.
+name: ai-coding
+
+x-server: &server
+  image: ai-coding-platform:local
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+  restart: unless-stopped
+  environment: &server-env
+    AI_CODING_SERVER_DATABASE_URL: postgresql+psycopg://aicoding:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/aicoding
+    AI_CODING_SERVER_DATA_DIR: ${AI_CODING_DATA:-/srv/ai-coding}
+    TMPDIR: ${AI_CODING_DATA:-/srv/ai-coding}/tmp
+    AI_CODING_SERVER_METRICS_TOKEN: ${AI_CODING_SERVER_METRICS_TOKEN:-}
+    AI_CODING_SERVER_RETENTION_DAYS: ${AI_CODING_SERVER_RETENTION_DAYS:-0}
+    AI_CODING_SERVER_WORKERS: ${AI_CODING_SERVER_WORKERS:-10}
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  read_only: true
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: mirror.gcr.io/library/postgres@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: aicoding
+      POSTGRES_DB: aicoding
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aicoding -d aicoding"]
+      interval: 5s
+      retries: 20
+    networks: [backend]
+
+  api:
+    <<: *server
+    command: ["serve", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      <<: *server-env
+      AI_CODING_SERVER_TRUSTED_PROXIES: caddy
+    volumes:
+      - ${AI_CODING_DATA:-/srv/ai-coding}:${AI_CODING_DATA:-/srv/ai-coding}
+    networks: [backend]
+    # No Docker access: the API never starts containers.
+
+  worker:
+    <<: *server
+    command: ["worker"]
+    # The worker starts the sandboxes through the host's Docker daemon. Paths it mounts
+    # must exist on the host, hence the data directory is mounted at the same path.
+    # Only the worker has the socket; sandboxes never get it (ADR-0018).
+    group_add: ["${DOCKER_GID:-999}"]
+    volumes:
+      - ${AI_CODING_DATA:-/srv/ai-coding}:${AI_CODING_DATA:-/srv/ai-coding}
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [backend]
+
+  caddy:
+    image: mirror.gcr.io/library/caddy@sha256:f6228111e5fafa1a5238258d0858e103f10599b8d1659a146e7726681a002bb9
+    restart: unless-stopped
+    environment:
+      AI_CODING_DOMAIN: ${AI_CODING_DOMAIN:?set AI_CODING_DOMAIN in deploy/.env}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on: [api]
+    networks: [backend]
+
+volumes:
+  pgdata:
+  caddy-data:
+
+networks:
+  backend:
