@@ -72,10 +72,57 @@ def find_config(start: Path) -> Path | None:
     return None
 
 
+MAX_EXPANDED_NODES = 100_000  # a real configuration has a few hundred
+
+
+def _expanded_size(root: yaml.Node, limit: int) -> int:
+    """Number of nodes after alias expansion, computed on the shared graph (memoized).
+
+    Aliases make the composed graph a DAG: "billion laughs" is tiny as a graph but
+    expands to 9**9 nodes, which the schema validator would walk (B-801, found by
+    fuzzing). Stops counting as soon as ``limit`` is exceeded.
+    """
+    sizes: dict[int, int] = {}
+    stack: list[tuple[yaml.Node, bool]] = [(root, False)]
+    while stack:  # iterative post-order: no recursion limit on deep documents
+        node, done = stack.pop()
+        if id(node) in sizes:
+            continue
+        children = _children(node)
+        if done or not children:
+            total = 1 + sum(sizes.get(id(c), 0) for c in children)
+            sizes[id(node)] = min(total, limit + 1)
+            continue
+        stack.append((node, True))
+        stack.extend((c, False) for c in children if id(c) not in sizes)
+    return sizes[id(root)]
+
+
+def _children(node: yaml.Node) -> list[yaml.Node]:
+    if isinstance(node, yaml.SequenceNode):
+        return list(node.value)
+    if isinstance(node, yaml.MappingNode):
+        return [part for pair in node.value for part in pair]
+    return []
+
+
 def parse_yaml(text: str) -> Any:
-    """Parse YAML text safely (no arbitrary object construction, no duplicate keys)."""
+    """Parse YAML text safely (no arbitrary object construction, no duplicate keys,
+    bounded alias expansion)."""
     try:
-        return yaml.load(text, Loader=_UniqueKeySafeLoader)  # noqa: S506 - SafeLoader subclass
+        loader = _UniqueKeySafeLoader(text)
+        try:
+            node = loader.get_single_node()
+            if node is None:
+                return None
+            if _expanded_size(node, MAX_EXPANDED_NODES) > MAX_EXPANDED_NODES:
+                raise ConfigLoadError(
+                    f"the document expands to more than {MAX_EXPANDED_NODES} nodes "
+                    "(YAML aliases); refusing it"
+                )
+            return loader.construct_document(node)
+        finally:
+            loader.dispose()
     except ConfigLoadError:
         raise
     except yaml.MarkedYAMLError as exc:
