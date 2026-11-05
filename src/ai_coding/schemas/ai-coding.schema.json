@@ -345,6 +345,20 @@
           "pattern": "^\\d+(:\\d+)?$",
           "title": "User",
           "type": "string"
+        },
+        "runtime": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9._-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "OCI runtime for the sandbox containers, e.g. 'runsc' (gVisor: a user-space kernel between the project code and the host kernel); the daemon must have it registered. Default: the daemon's default runtime (runc).",
+          "title": "Runtime"
         }
       },
       "title": "DockerConfig",

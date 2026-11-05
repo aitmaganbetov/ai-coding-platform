@@ -195,3 +195,16 @@ def test_docker_unavailable_binary(tmp_path: Path) -> None:
     executor = DockerSandboxExecutor(docker="no-such-docker-binary")
     assert not executor.available()
     assert not executor.image_present(ALPINE)
+
+
+def test_docker_runtime_option(tmp_path: Path) -> None:
+    """B-805: execution.docker.runtime selects the OCI runtime (gVisor: runsc)."""
+    spec = CommandSpec(argv=("true",), cwd=tmp_path, image="img@sha256:" + "a" * 64)
+    default = DockerSandboxExecutor().build_argv(spec, "n")
+    assert "--runtime" not in default
+    gvisor = DockerSandboxExecutor(docker_config=DockerConfig(runtime="runsc")).build_argv(
+        spec, "n"
+    )
+    assert gvisor[gvisor.index("--runtime") + 1] == "runsc"
+    with pytest.raises(ValueError, match="pattern"):
+        DockerConfig(runtime="runsc --privileged")

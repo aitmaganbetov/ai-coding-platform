@@ -102,6 +102,13 @@ class DockerConfig(_Strict):
     read_only_root: bool = True
     network: Literal["none", "bridge"] = "none"
     user: str = Field(default="1000:1000", pattern=r"^\d+(:\d+)?$")
+    runtime: str | None = Field(
+        default=None,
+        pattern=r"^[a-z][a-z0-9._-]{0,63}$",
+        description="OCI runtime for the sandbox containers, e.g. 'runsc' (gVisor: a "
+        "user-space kernel between the project code and the host kernel); the daemon must "
+        "have it registered. Default: the daemon's default runtime (runc).",
+    )
 
 
 class ExecutionConfig(_Strict):

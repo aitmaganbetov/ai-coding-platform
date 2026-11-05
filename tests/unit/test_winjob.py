@@ -1,0 +1,85 @@
+"""Windows Job Objects for the local executor (B-206). The structure is checked on every
+platform; the limits themselves on the Windows CI runners (NFR-01: the CLI on Windows)."""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from ai_coding.executors.process import ProcessOutcome, run_process
+from ai_coding.executors.winjob import (
+    JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
+    JOB_OBJECT_LIMIT_JOB_MEMORY,
+    JOB_OBJECT_LIMIT_JOB_TIME,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JobLimits,
+    limit_information,
+)
+
+windows = pytest.mark.skipif(sys.platform != "win32", reason="Job Objects exist only on Windows")
+
+
+def test_limit_information() -> None:
+    info = limit_information(JobLimits(memory_mb=256, cpu_seconds=30, max_processes=8))
+    flags = info.BasicLimitInformation.LimitFlags
+    for flag in (JOB_OBJECT_LIMIT_JOB_MEMORY, JOB_OBJECT_LIMIT_JOB_TIME,
+                 JOB_OBJECT_LIMIT_ACTIVE_PROCESS, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE):  # fmt: skip
+        assert flags & flag
+    assert info.JobMemoryLimit == 256 * 1024 * 1024
+    assert info.BasicLimitInformation.PerJobUserTimeLimit == 30 * 10_000_000
+    assert info.BasicLimitInformation.ActiveProcessLimit == 8
+
+
+async def _python(code: str, tmp_path: Path, limits: JobLimits) -> ProcessOutcome:
+    return await run_process([sys.executable, "-c", code], cwd=tmp_path, env=dict(os.environ),
+                             timeout=60, max_output_bytes=100_000, job=limits)  # fmt: skip
+
+
+@windows
+async def test_memory_of_the_tree_is_limited(tmp_path: Path) -> None:
+    out = await _python("b = bytearray(512 * 1024 * 1024); print('allocated')", tmp_path,
+                        JobLimits(memory_mb=128, cpu_seconds=60))  # fmt: skip
+    assert out.exit_code != 0 and "allocated" not in out.stdout, out
+    ok = await _python("b = bytearray(16 * 1024 * 1024); print('allocated')", tmp_path,
+                       JobLimits(memory_mb=128, cpu_seconds=60))  # fmt: skip
+    assert ok.exit_code == 0 and "allocated" in ok.stdout
+
+
+@windows
+async def test_process_count_is_limited(tmp_path: Path) -> None:
+    code = (
+        "import subprocess, sys\n"
+        "started = 0\n"
+        "procs = []\n"
+        "for _ in range(6):\n"
+        "    try:\n"
+        "        args = [sys.executable, '-c', 'import time; time.sleep(5)']\n"
+        "        procs.append(subprocess.Popen(args))\n"
+        "        started += 1\n"
+        "    except OSError:\n"
+        "        pass\n"
+        "print('started', started)\n"
+        "for p in procs: p.kill()\n"
+    )
+    out = await _python(code, tmp_path, JobLimits(memory_mb=512, cpu_seconds=60, max_processes=3))
+    assert "started 2" in out.stdout, out  # parent + 2 children
+
+
+@windows
+async def test_nothing_outlives_the_command(tmp_path: Path) -> None:
+    pid_file = tmp_path / "child.pid"
+    code = (
+        "import subprocess, sys\n"
+        "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])\n"
+        f"open(r'{pid_file}', 'w').write(str(p.pid))\n"
+    )  # the parent exits at once and leaves a grandchild behind
+    out = await _python(code, tmp_path, JobLimits(memory_mb=512, cpu_seconds=60))
+    assert out.exit_code == 0, out
+    pid = pid_file.read_text(encoding="utf-8").strip()
+    listing = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True,
+                             text=True, check=False).stdout  # fmt: skip
+    assert pid not in listing, listing  # the job closed: the grandchild was killed

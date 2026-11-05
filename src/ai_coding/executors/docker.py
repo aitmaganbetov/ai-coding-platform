@@ -96,6 +96,7 @@ class DockerSandboxExecutor:
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
             "--user", self._cfg.user,
+            *(("--runtime", self._cfg.runtime) if self._cfg.runtime else ()),
             "--pids-limit", "256",
             "--cpus", str(self._limits.cpus),
             "--memory", f"{self._limits.memory_mb}m",
@@ -205,6 +206,11 @@ class DockerSandboxExecutor:
         )
         if outcome.exit_code == 125 and "Cannot connect to the Docker daemon" in outcome.stderr:
             raise ExecutorUnavailableError("Docker daemon is not reachable")
+        if outcome.exit_code == 125 and "runtime" in outcome.stderr and self._cfg.runtime:
+            raise ExecutorUnavailableError(
+                f"the Docker daemon has no runtime '{self._cfg.runtime}' "
+                "(execution.docker.runtime; see docs/operations.md, gVisor)"
+            )
         if outcome.exit_code == 125 and (
             "No such image" in outcome.stderr or "Unable to find image" in outcome.stderr
         ):
