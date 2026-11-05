@@ -1,0 +1,54 @@
+# AI Coding Platform v2.1
+
+**Local, Self-Hosted & GitHub Hybrid** платформа управления полным жизненным циклом ПО с помощью AI-агентов: от идеи и ТЗ до разработки, аудита, модернизации, выпуска и сопровождения.
+
+| Режим | Назначение |
+| --- | --- |
+| CREATE | Новый проект: требования → архитектура → план → каркас → MVP |
+| DEVELOP | Новые функции и исправления в отдельной ветке/PR с тестами |
+| MODERNIZE | Рефакторинг, обновление зависимостей, миграции с откатом |
+| AUDIT | Технический, архитектурный, security и performance аудит (read-only) |
+| MAINTAIN | Плановое сопровождение и устранение регрессий |
+
+Ключевые принципы: GitHub и LLM **опциональны**; детерминированные Quality Gates (PASS/FAIL/SKIPPED) не зависят от AI; изменения только в отдельных git worktree/ветках; секреты никогда не попадают в конфигурацию, логи и prompts; опасные операции — только с human approval.
+
+> **Статус: Sprint S1 завершён** — архитектура, ADR, схема конфигурации, CLI (`init`, `config validate`, `config schema`), Git-абстракция, контракт агентов, CI. Оркестратор, исполнители, агенты и API — в спринтах S2–S9, см. [backlog](docs/backlog.md).
+
+## Быстрый старт
+
+```bash
+uv sync --frozen
+```
+
+```bash
+uv run ai-coding init /path/to/project --dry-run
+```
+
+```bash
+uv run ai-coding init /path/to/project
+```
+
+```bash
+uv run ai-coding config validate /path/to/project
+```
+
+Подробнее: [установка](docs/installation.md) · [конфигурация](docs/configuration.md) · [CLI](docs/cli.md).
+
+## Документация
+
+- [Архитектура](docs/architecture/overview.md) и [модули/зависимости](docs/architecture/modules.md)
+- [ADR](docs/adr/README.md) — архитектурные решения
+- [Разработка](docs/development.md) — окружение, правила, тесты
+- [Backlog](docs/backlog.md) — все требования ТЗ по спринтам
+- [Замечания к ТЗ](docs/tz-notes.md) — восстановление повреждённой кодировки и интерпретации
+- [Отчёт по S1](docs/sprints/S1-report.md)
+- [Политика безопасности](SECURITY.md)
+- Техническое задание: [AI_Coding_Platform_v2_1_TZ.md](AI_Coding_Platform_v2_1_TZ.md)
+
+## Технологии
+
+Python 3.12+ · Typer · Pydantic v2 · JSON Schema 2020-12 · FastAPI (S8) · React + TypeScript (S8) · SQLite / PostgreSQL (S2/S8) · Redis (опц.) · Docker · GitHub Actions · OpenAI / Anthropic / Ollama / vLLM (S5).
+
+## Лицензия
+
+GPL-3.0-or-later — см. [LICENSE](LICENSE).

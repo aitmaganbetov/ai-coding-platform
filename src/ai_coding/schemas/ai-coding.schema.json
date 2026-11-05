@@ -1,0 +1,770 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/aitmaganbetov/ai-coding-platform/schemas/ai-coding.schema.json",
+  "$defs": {
+    "AIConfig": {
+      "additionalProperties": false,
+      "description": "LLM provider settings. AI is optional: deterministic checks never need it.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "provider": {
+          "$ref": "#/$defs/ProviderName",
+          "default": "none"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "base_url": {
+          "anyOf": [
+            {
+              "maxLength": 2048,
+              "pattern": "^https?://",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Base Url"
+        },
+        "api_key_env": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "pattern": "^[A-Z_][A-Z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Name of the environment variable holding the API key.",
+          "title": "Api Key Env"
+        },
+        "max_output_tokens": {
+          "default": 4096,
+          "maximum": 1000000,
+          "minimum": 1,
+          "title": "Max Output Tokens",
+          "type": "integer"
+        },
+        "temperature": {
+          "default": 0.0,
+          "maximum": 2.0,
+          "minimum": 0.0,
+          "title": "Temperature",
+          "type": "number"
+        },
+        "fallback": {
+          "items": {
+            "$ref": "#/$defs/ModelRoute"
+          },
+          "maxItems": 5,
+          "title": "Fallback",
+          "type": "array"
+        },
+        "routing": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ModelRoute"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/AgentName"
+          },
+          "title": "Routing",
+          "type": "object"
+        }
+      },
+      "title": "AIConfig",
+      "type": "object"
+    },
+    "AgentName": {
+      "description": "The twelve agents defined in ТЗ §6.",
+      "enum": [
+        "requirements",
+        "architect",
+        "planner",
+        "bootstrap",
+        "developer",
+        "reviewer",
+        "security",
+        "qa",
+        "database",
+        "performance",
+        "devops",
+        "maintenance"
+      ],
+      "title": "AgentName",
+      "type": "string"
+    },
+    "AgentsConfig": {
+      "additionalProperties": false,
+      "description": "Which agents may be scheduled by the orchestrator.",
+      "properties": {
+        "enabled": {
+          "items": {
+            "$ref": "#/$defs/AgentName"
+          },
+          "title": "Enabled",
+          "type": "array"
+        }
+      },
+      "title": "AgentsConfig",
+      "type": "object"
+    },
+    "ApprovalOperation": {
+      "description": "Operations that may require human approval (ТЗ §4 Human-in-the-loop, FR-17).",
+      "enum": [
+        "critical_file_change",
+        "delete",
+        "migration",
+        "merge",
+        "deploy",
+        "pr_create",
+        "dependency_update",
+        "external_llm",
+        "host_command"
+      ],
+      "title": "ApprovalOperation",
+      "type": "string"
+    },
+    "ApprovalsConfig": {
+      "additionalProperties": false,
+      "description": "Human-in-the-loop policy (ТЗ §4, FR-17).",
+      "properties": {
+        "required_for": {
+          "items": {
+            "$ref": "#/$defs/ApprovalOperation"
+          },
+          "title": "Required For",
+          "type": "array"
+        },
+        "critical_paths": {
+          "items": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Critical Paths",
+          "type": "array"
+        },
+        "auto_merge": {
+          "const": false,
+          "default": false,
+          "description": "Auto-merge is forbidden.",
+          "title": "Auto Merge",
+          "type": "boolean"
+        }
+      },
+      "title": "ApprovalsConfig",
+      "type": "object"
+    },
+    "ArtifactsConfig": {
+      "additionalProperties": false,
+      "description": "Artifact storage and retention (NFR-08).",
+      "properties": {
+        "store": {
+          "default": "local",
+          "enum": [
+            "local",
+            "minio"
+          ],
+          "title": "Store",
+          "type": "string"
+        },
+        "path": {
+          "default": ".ai-coding/artifacts",
+          "maxLength": 1024,
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "retention_days": {
+          "default": 30,
+          "maximum": 3650,
+          "minimum": 1,
+          "title": "Retention Days",
+          "type": "integer"
+        },
+        "formats": {
+          "items": {
+            "enum": [
+              "json",
+              "markdown",
+              "sarif",
+              "junit"
+            ],
+            "type": "string"
+          },
+          "title": "Formats",
+          "type": "array"
+        }
+      },
+      "title": "ArtifactsConfig",
+      "type": "object"
+    },
+    "BudgetsConfig": {
+      "additionalProperties": false,
+      "description": "Token/cost/time budgets per run (FR-15).",
+      "properties": {
+        "max_tokens_per_run": {
+          "default": 500000,
+          "minimum": 0,
+          "title": "Max Tokens Per Run",
+          "type": "integer"
+        },
+        "max_cost_usd_per_run": {
+          "default": 5.0,
+          "minimum": 0,
+          "title": "Max Cost Usd Per Run",
+          "type": "number"
+        },
+        "max_duration_minutes": {
+          "default": 120,
+          "maximum": 10080,
+          "minimum": 1,
+          "title": "Max Duration Minutes",
+          "type": "integer"
+        }
+      },
+      "title": "BudgetsConfig",
+      "type": "object"
+    },
+    "BuildGate": {
+      "additionalProperties": false,
+      "description": "Fails on build or dependency-installation errors.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "blocking": {
+          "default": true,
+          "title": "Blocking",
+          "type": "boolean"
+        }
+      },
+      "title": "BuildGate",
+      "type": "object"
+    },
+    "CoverageGate": {
+      "additionalProperties": false,
+      "description": "Fails when coverage of critical modules drops below ``min_percent``.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "blocking": {
+          "default": true,
+          "title": "Blocking",
+          "type": "boolean"
+        },
+        "min_percent": {
+          "default": 80.0,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Min Percent",
+          "type": "number"
+        }
+      },
+      "title": "CoverageGate",
+      "type": "object"
+    },
+    "DockerConfig": {
+      "additionalProperties": false,
+      "description": "Docker sandbox settings (ТЗ §12: no privileged, no Docker socket).",
+      "properties": {
+        "image": {
+          "default": "python:3.12-slim",
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Image",
+          "type": "string"
+        },
+        "read_only_root": {
+          "default": true,
+          "title": "Read Only Root",
+          "type": "boolean"
+        },
+        "network": {
+          "default": "none",
+          "enum": [
+            "none",
+            "bridge"
+          ],
+          "title": "Network",
+          "type": "string"
+        },
+        "user": {
+          "default": "1000:1000",
+          "pattern": "^\\d+(:\\d+)?$",
+          "title": "User",
+          "type": "string"
+        }
+      },
+      "title": "DockerConfig",
+      "type": "object"
+    },
+    "ExecutionBackend": {
+      "description": "Executor implementations (ТЗ §4, §15).",
+      "enum": [
+        "local",
+        "docker",
+        "github-actions"
+      ],
+      "title": "ExecutionBackend",
+      "type": "string"
+    },
+    "ExecutionConfig": {
+      "additionalProperties": false,
+      "description": "Where and how commands run.",
+      "properties": {
+        "backend": {
+          "$ref": "#/$defs/ExecutionBackend",
+          "default": "local"
+        },
+        "use_worktree": {
+          "default": true,
+          "description": "Apply code changes in an isolated git worktree.",
+          "title": "Use Worktree",
+          "type": "boolean"
+        },
+        "allow_host_commands": {
+          "default": false,
+          "description": "Allow the local executor to run allow-listed commands on the host.",
+          "title": "Allow Host Commands",
+          "type": "boolean"
+        },
+        "command_allowlist": {
+          "description": "Executables the local executor may invoke without approval.",
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Command Allowlist",
+          "type": "array"
+        },
+        "limits": {
+          "$ref": "#/$defs/ResourceLimits"
+        },
+        "docker": {
+          "$ref": "#/$defs/DockerConfig"
+        }
+      },
+      "title": "ExecutionConfig",
+      "type": "object"
+    },
+    "Mode": {
+      "description": "Lifecycle mode of a run (ТЗ §2).",
+      "enum": [
+        "create",
+        "develop",
+        "modernize",
+        "audit",
+        "maintain"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "ModelRoute": {
+      "additionalProperties": false,
+      "description": "Optional per-agent model override (FR-15 routing).",
+      "properties": {
+        "provider": {
+          "$ref": "#/$defs/ProviderName"
+        },
+        "model": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "model"
+      ],
+      "title": "ModelRoute",
+      "type": "object"
+    },
+    "NetworkPolicy": {
+      "description": "Egress policy (ТЗ §12). ``local-only`` forbids any egress.",
+      "enum": [
+        "local-only",
+        "allowlist",
+        "open"
+      ],
+      "title": "NetworkPolicy",
+      "type": "string"
+    },
+    "ProjectConfig": {
+      "additionalProperties": false,
+      "description": "Project identity.",
+      "properties": {
+        "name": {
+          "description": "Machine-friendly project name (letters, digits, '.', '_', '-').",
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "default_branch": {
+          "default": "main",
+          "maxLength": 255,
+          "pattern": "^[A-Za-z0-9._/*-]+$",
+          "title": "Default Branch",
+          "type": "string"
+        },
+        "protected_branches": {
+          "description": "Branches the platform never pushes or commits to directly (AC-03).",
+          "items": {
+            "pattern": "^[A-Za-z0-9._/*-]+$",
+            "type": "string"
+          },
+          "title": "Protected Branches",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "ProjectConfig",
+      "type": "object"
+    },
+    "ProviderName": {
+      "description": "LLM provider adapters (ТЗ §4). ``none`` disables AI entirely (FR-12).",
+      "enum": [
+        "none",
+        "openai",
+        "anthropic",
+        "ollama",
+        "vllm"
+      ],
+      "title": "ProviderName",
+      "type": "string"
+    },
+    "QualityGatesConfig": {
+      "additionalProperties": false,
+      "description": "Deterministic, AI-independent Quality Gates (ТЗ §10, FR-11).",
+      "properties": {
+        "build": {
+          "$ref": "#/$defs/BuildGate"
+        },
+        "tests": {
+          "$ref": "#/$defs/TestsGate"
+        },
+        "static": {
+          "$ref": "#/$defs/StaticGate"
+        },
+        "security": {
+          "$ref": "#/$defs/SecurityGate"
+        },
+        "coverage": {
+          "$ref": "#/$defs/CoverageGate"
+        },
+        "review": {
+          "$ref": "#/$defs/ReviewGate"
+        }
+      },
+      "title": "QualityGatesConfig",
+      "type": "object"
+    },
+    "ResourceLimits": {
+      "additionalProperties": false,
+      "description": "Per-step resource limits enforced by every executor (ТЗ §4 Executor).",
+      "properties": {
+        "cpus": {
+          "default": 2.0,
+          "exclusiveMinimum": 0,
+          "maximum": 64,
+          "title": "Cpus",
+          "type": "number"
+        },
+        "memory_mb": {
+          "default": 2048,
+          "maximum": 262144,
+          "minimum": 128,
+          "title": "Memory Mb",
+          "type": "integer"
+        },
+        "timeout_seconds": {
+          "default": 1800,
+          "maximum": 86400,
+          "minimum": 1,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        },
+        "max_retries": {
+          "default": 2,
+          "maximum": 10,
+          "minimum": 0,
+          "title": "Max Retries",
+          "type": "integer"
+        },
+        "max_parallel_tasks": {
+          "default": 4,
+          "maximum": 256,
+          "minimum": 1,
+          "title": "Max Parallel Tasks",
+          "type": "integer"
+        }
+      },
+      "title": "ResourceLimits",
+      "type": "object"
+    },
+    "ReviewGate": {
+      "additionalProperties": false,
+      "description": "Fails without the required number of human approvals.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "blocking": {
+          "default": true,
+          "title": "Blocking",
+          "type": "boolean"
+        },
+        "required_approvals": {
+          "default": 1,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Required Approvals",
+          "type": "integer"
+        },
+        "ai_review_blocking": {
+          "default": false,
+          "description": "AI review is advisory unless an approved policy says so.",
+          "title": "Ai Review Blocking",
+          "type": "boolean"
+        }
+      },
+      "title": "ReviewGate",
+      "type": "object"
+    },
+    "SecurityConfig": {
+      "additionalProperties": false,
+      "description": "Egress and data-protection policy (ТЗ §12, FR-18).",
+      "properties": {
+        "network": {
+          "$ref": "#/$defs/NetworkPolicy",
+          "default": "local-only"
+        },
+        "egress_allowlist": {
+          "items": {
+            "maxLength": 260,
+            "pattern": "^(\\*\\.)?[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*(:\\d{1,5})?$",
+            "type": "string"
+          },
+          "title": "Egress Allowlist",
+          "type": "array"
+        },
+        "redact_secrets": {
+          "const": true,
+          "default": true,
+          "description": "Secret redaction cannot be disabled.",
+          "title": "Redact Secrets",
+          "type": "boolean"
+        },
+        "treat_repository_content_as_untrusted": {
+          "const": true,
+          "default": true,
+          "title": "Treat Repository Content As Untrusted",
+          "type": "boolean"
+        },
+        "secret_scan": {
+          "default": true,
+          "title": "Secret Scan",
+          "type": "boolean"
+        }
+      },
+      "title": "SecurityConfig",
+      "type": "object"
+    },
+    "SecurityGate": {
+      "additionalProperties": false,
+      "description": "Fails on confirmed findings at or above ``fail_on`` and on new secrets.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "blocking": {
+          "default": true,
+          "title": "Blocking",
+          "type": "boolean"
+        },
+        "fail_on": {
+          "$ref": "#/$defs/Severity",
+          "default": "high"
+        },
+        "block_new_secrets": {
+          "default": true,
+          "title": "Block New Secrets",
+          "type": "boolean"
+        }
+      },
+      "title": "SecurityGate",
+      "type": "object"
+    },
+    "Severity": {
+      "description": "Finding severity, ordered from most to least severe.",
+      "enum": [
+        "critical",
+        "high",
+        "medium",
+        "low",
+        "info"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "Stack": {
+      "description": "Technology stacks the platform recognises (FR-02).",
+      "enum": [
+        "laravel",
+        "php",
+        "react",
+        "typescript",
+        "javascript",
+        "python",
+        "go",
+        "rust"
+      ],
+      "title": "Stack",
+      "type": "string"
+    },
+    "StaticGate": {
+      "additionalProperties": false,
+      "description": "Fails when linter/type errors exceed the threshold.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "blocking": {
+          "default": true,
+          "title": "Blocking",
+          "type": "boolean"
+        },
+        "max_errors": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Max Errors",
+          "type": "integer"
+        }
+      },
+      "title": "StaticGate",
+      "type": "object"
+    },
+    "TestsGate": {
+      "additionalProperties": false,
+      "description": "Fails when required tests fail.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "blocking": {
+          "default": true,
+          "title": "Blocking",
+          "type": "boolean"
+        }
+      },
+      "title": "TestsGate",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Root of ``.ai-coding.yml``.",
+  "properties": {
+    "schema_version": {
+      "const": "2.1",
+      "description": "Configuration schema version.",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "project": {
+      "$ref": "#/$defs/ProjectConfig"
+    },
+    "mode": {
+      "$ref": "#/$defs/Mode",
+      "default": "audit"
+    },
+    "stacks": {
+      "items": {
+        "$ref": "#/$defs/Stack"
+      },
+      "title": "Stacks",
+      "type": "array"
+    },
+    "execution": {
+      "$ref": "#/$defs/ExecutionConfig"
+    },
+    "ai": {
+      "$ref": "#/$defs/AIConfig"
+    },
+    "agents": {
+      "$ref": "#/$defs/AgentsConfig"
+    },
+    "security": {
+      "$ref": "#/$defs/SecurityConfig"
+    },
+    "quality_gates": {
+      "$ref": "#/$defs/QualityGatesConfig"
+    },
+    "budgets": {
+      "$ref": "#/$defs/BudgetsConfig"
+    },
+    "approvals": {
+      "$ref": "#/$defs/ApprovalsConfig"
+    },
+    "artifacts": {
+      "$ref": "#/$defs/ArtifactsConfig"
+    }
+  },
+  "required": [
+    "schema_version",
+    "project"
+  ],
+  "title": "AI Coding Platform project configuration (.ai-coding.yml)",
+  "type": "object"
+}
