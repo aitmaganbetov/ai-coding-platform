@@ -1,0 +1,7 @@
+{"ImportPath":"example.com/calc [example.com/calc.test]","Action":"build-output","Output":"# example.com/calc\n"}
+{"ImportPath":"example.com/calc [example.com/calc.test]","Action":"build-output","Output":"# [example.com/calc]\n"}
+{"ImportPath":"example.com/calc [example.com/calc.test]","Action":"build-output","Output":"./calc.go:8:2: fmt.Printf format %d has arg \"x\" of wrong type string\n"}
+{"ImportPath":"example.com/calc [example.com/calc.test]","Action":"build-fail"}
+{"Time":"2026-11-05T14:17:51.641108105Z","Action":"start","Package":"example.com/calc"}
+{"Time":"2026-11-05T14:17:51.641226688Z","Action":"output","Package":"example.com/calc","Output":"FAIL\texample.com/calc [build failed]\n"}
+{"Time":"2026-11-05T14:17:51.641450286Z","Action":"fail","Package":"example.com/calc","Elapsed":0,"FailedBuild":"example.com/calc [example.com/calc.test]"}

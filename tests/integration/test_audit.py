@@ -234,7 +234,14 @@ def test_build_audit_selects_tools_by_stack(vulnerable: Path) -> None:
     registry, steps, adapters = build_audit(
         config, vulnerable, AuditOptions(ExecutionBackend.LOCAL)
     )
-    assert [a.spec.name for a in adapters] == ["gitleaks", "ruff", "semgrep"]
+    assert [a.spec.name for a in adapters] == [
+        "gitleaks",
+        "mypy",
+        "osv-scanner",
+        "ruff",
+        "semgrep",
+        "trivy",
+    ]
     keys = [s.key for s in steps]
     assert keys[:4] == ["discover.config", "discover.git", "discover.stacks", "audit.snapshot"]
     assert keys[-3:] == ["quality.gates", "audit.integrity", "report.audit"]

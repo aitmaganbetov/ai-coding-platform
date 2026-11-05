@@ -223,10 +223,17 @@ def parse_counts(output: str) -> tuple[int | None, int | None]:
 
 
 # --------------------------------------------------------------------- run --
-def _copy_tree(source: Path, target: Path) -> None:
+def copy_tree(
+    source: Path,
+    target: Path,
+    *,
+    skip: frozenset[str] | set[str] = frozenset(_SKIP_DIRS),
+    max_bytes: int = _MAX_COPY_BYTES,
+) -> None:
+    """Copy ``source`` into ``target`` (no symlinks followed, size-capped)."""
     total = 0
     for dirpath, dirnames, filenames in os.walk(source):
-        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+        dirnames[:] = [d for d in dirnames if d not in skip]
         rel = Path(dirpath).relative_to(source)
         dest = target / rel
         dest.mkdir(parents=True, exist_ok=True)
@@ -235,12 +242,12 @@ def _copy_tree(source: Path, target: Path) -> None:
             if src.is_symlink():
                 continue  # never follow links out of the tree
             total += src.stat().st_size
-            if total > _MAX_COPY_BYTES:
+            if total > max_bytes:
                 raise ExecutorError("project is too large to copy into the test sandbox")
             shutil.copy2(src, dest / name)
 
 
-def _open_permissions(root: Path) -> None:
+def open_permissions(root: Path) -> None:
     """The sandbox user (1000) must be able to write into the scratch copy."""
     for path in [root, *root.rglob("*")]:
         mode = path.stat().st_mode
@@ -294,9 +301,9 @@ class SandboxTestRunner:
         started = time.monotonic()
         with tempfile.TemporaryDirectory(prefix="ai-coding-tests-") as tmp:
             work, deps = Path(tmp) / "work", Path(tmp) / "deps"
-            _copy_tree(source, work)
+            copy_tree(source, work)
             deps.mkdir()
-            _open_permissions(Path(tmp))
+            open_permissions(Path(tmp))
             mounts = (Mount(work, "/work", read_only=False), Mount(deps, "/deps", read_only=False))
             if plan.install:
                 result = await self.executor.run(CommandSpec(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 from ai_coding.domain.enums import ExecutionBackend
 from ai_coding.executors.base import (
@@ -14,12 +15,15 @@ from ai_coding.executors.base import (
     ExecutorError,
     Mount,
 )
-from ai_coding.tools.base import ToolAdapter, ToolRun
+from ai_coding.tools.base import ToolAdapter, ToolRun, skipped_run
+from ai_coding.tools.cache import tool_cache
+from ai_coding.tools.project import ProjectTool
 from ai_coding.tools.semgrep import SemgrepAdapter, bundled_rules_dir
 
 SANDBOX_SRC = "/src"
 VERSION_TIMEOUT_SECONDS = 60.0
 SANDBOX_RULES = "/rules"
+SANDBOX_CACHE = "/cache"
 _MAX_ERROR_CHARS = 400
 
 
@@ -52,7 +56,7 @@ class ToolRunner:
         """Whether commands run in a container."""
         return self.executor.backend is ExecutionBackend.DOCKER
 
-    def available(self, adapter: ToolAdapter) -> tuple[bool, str]:
+    def available(self, adapter: ToolAdapter | ProjectTool) -> tuple[bool, str]:
         """Whether ``adapter`` can run here, with a human-readable reason."""
         if self.sandboxed:
             ok = self.executor.available()
@@ -70,6 +74,10 @@ class ToolRunner:
         timeout: float | None = None,
     ) -> CommandSpec:
         env = dict(adapter.spec.env)
+        scan_env = getattr(adapter, "scan_env", None)
+        if scan_env is not None:
+            _, extra, _ = self._target_and_mounts(adapter)
+            env.update(scan_env(extra))
         seconds = timeout or self.timeout
         if self.sandboxed:
             return CommandSpec(
@@ -89,8 +97,13 @@ class ToolRunner:
         self, adapter: ToolAdapter
     ) -> tuple[str, dict[str, str], tuple[Mount, ...]]:
         extra: dict[str, str] = {}
+        cache = self._cache(adapter)
         if self.sandboxed:
             mounts = [Mount(self.root, SANDBOX_SRC, read_only=True)]
+            if cache is not None:
+                # Platform cache (not the project): the DB engine needs write access.
+                mounts.append(Mount(cache, SANDBOX_CACHE, read_only=False))
+                extra["cache"] = SANDBOX_CACHE
             if isinstance(adapter, SemgrepAdapter):
                 config = self.semgrep_config or (bundled_rules_dir() / "ai-coding-baseline.yml")
                 mounts.append(Mount(config.parent, SANDBOX_RULES, read_only=True))
@@ -99,7 +112,14 @@ class ToolRunner:
         if isinstance(adapter, SemgrepAdapter):
             config = self.semgrep_config or (bundled_rules_dir() / "ai-coding-baseline.yml")
             extra["config"] = str(config)
+        if cache is not None:
+            extra["cache"] = str(cache)
         return str(self.root), extra, ()
+
+    @staticmethod
+    def _cache(adapter: ToolAdapter) -> Path | None:
+        name = getattr(adapter, "cache_name", None)
+        return tool_cache(name) if name else None
 
     async def version(self, adapter: ToolAdapter) -> str | None:
         """Tool version (cached), recorded in reports for reproducibility (NFR-05)."""
@@ -125,13 +145,26 @@ class ToolRunner:
 
     async def run(self, adapter: ToolAdapter) -> ToolRun:
         """Scan the project with ``adapter``."""
+        cache = self._cache(adapter)
+        metadata: dict[str, Any] = {}
+        if cache is not None:
+            ready = getattr(adapter, "cache_ready", None)
+            if not cache.is_dir() or (ready is not None and not ready(cache)):
+                return skipped_run(
+                    adapter.spec, self.executor.backend.value,
+                    f"offline database missing in {cache} (run `ai-coding tools pull "
+                    f"-t {adapter.spec.name}`)",
+                )  # fmt: skip
+            describe = getattr(adapter, "cache_metadata", None)
+            metadata = dict(describe(cache)) if describe is not None else {}
         target, extra, mounts = self._target_and_mounts(adapter)
         version = await self.version(adapter)
         spec = self._spec(
             adapter, list(adapter.scan_args(target, extra=extra)), target=target, mounts=mounts
         )
         result = await self.executor.run(spec)
-        return self._to_run(adapter, result, version, target)
+        run = self._to_run(adapter, result, version, target)
+        return replace(run, metadata=metadata) if metadata else run
 
     def _to_run(
         self, adapter: ToolAdapter, result: ExecutionResult, version: str | None, target: str

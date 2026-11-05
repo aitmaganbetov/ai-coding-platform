@@ -38,8 +38,10 @@ from ai_coding.persistence.types import utcnow
 from ai_coding.quality import QualityGateEngine, load_baseline
 from ai_coding.quality.baseline import BaselineError
 from ai_coding.reports import AuditReport, render_markdown
-from ai_coding.tools import ToolAdapter, ToolRun, ToolRunner, default_tool_registry
-from ai_coding.tools.base import Finding
+from ai_coding.tools import ToolRun, ToolRunner, default_tool_registry
+from ai_coding.tools.base import Finding, skipped_run
+from ai_coding.tools.project import ProjectTool, ProjectToolRunner
+from ai_coding.tools.registry import AnyTool
 
 _SNAPSHOT_EXCLUDES = {".git", ".ai-coding"}
 
@@ -93,7 +95,7 @@ class SnapshotHandler(_Handler):
 class ToolScanHandler(_Handler):
     """Runs one analysis tool through the selected executor."""
 
-    def __init__(self, adapter: ToolAdapter, runner: ToolRunner) -> None:
+    def __init__(self, adapter: AnyTool, runner: ToolRunner) -> None:
         self.adapter = adapter
         self.runner = runner
         self.name = f"tool.{adapter.spec.name}"
@@ -101,21 +103,15 @@ class ToolScanHandler(_Handler):
 
     async def run(self, ctx: StepContext) -> StepResult:
         spec = self.adapter.spec
-        ctx.authorize(
-            ctx.policy.tool(
-                spec.name,
-                executes_project_code=spec.executes_project_code,
-                backend=self.runner.executor.backend,
-            )
-        )
-        available, reason = await asyncio.to_thread(self.runner.available, self.adapter)
-        if not available:
-            tool_run = self._failed(f"unavailable: {reason}")
+        backend = self.runner.executor.backend
+        if isinstance(self.adapter, ProjectTool) and backend is not ExecutionBackend.DOCKER:
+            tool_run = skipped_run(spec, backend.value,
+                                   "runs the project's toolchain: Docker sandbox only")  # fmt: skip
         else:
-            try:
-                tool_run = await self.runner.run(self.adapter)
-            except (ExecutorError, ExecutorUnavailableError) as exc:
-                tool_run = self._failed(str(exc)[:400])
+            ctx.authorize(ctx.policy.tool(spec.name,
+                                          executes_project_code=spec.executes_project_code,
+                                          backend=backend))  # fmt: skip
+            tool_run = await self._scan(ctx)
         ctx.record_findings(tool_run.findings)
         evidence: list[str] = []
         if tool_run.raw_output:
@@ -124,6 +120,24 @@ class ToolScanHandler(_Handler):
             )
             evidence.append(ref.uri)
         return StepResult(output=tool_run.to_dict(), evidence_refs=evidence)
+
+    async def _scan(self, ctx: StepContext) -> ToolRun:
+        available, reason = await asyncio.to_thread(self.runner.available, self.adapter)
+        if not available:
+            return self._failed(f"unavailable: {reason}")
+        try:
+            if isinstance(self.adapter, ProjectTool):
+                docker = ctx.config.execution.docker
+                project = ProjectToolRunner(
+                    self.runner.executor, ctx.project_root,
+                    network_allowed=lambda host: ctx.policy.network(host).allowed,
+                    sandbox_network=docker.network == "bridge",
+                    timeout_seconds=self.runner.timeout,
+                )  # fmt: skip
+                return await project.run(self.adapter)
+            return await self.runner.run(self.adapter)
+        except (ExecutorError, ExecutorUnavailableError) as exc:
+            return self._failed(str(exc)[:400])
 
     def _failed(self, error: str) -> ToolRun:
         spec = self.adapter.spec
@@ -257,12 +271,15 @@ def effective_stacks(config: AICodingConfig, root: Path) -> list[Stack]:
 
 def build_audit(
     config: AICodingConfig, root: Path, options: AuditOptions
-) -> tuple[HandlerRegistry, list[StepSpec], list[ToolAdapter]]:
+) -> tuple[HandlerRegistry, list[StepSpec], list[AnyTool]]:
     """Handlers, DAG steps and selected tools of an audit run."""
     adapters = default_tool_registry().select(
         effective_stacks(config, root), only=list(options.tools) or None
     )
-    executor = make_executor(config, options.backend, {a.spec.binary for a in adapters})
+    executor = make_executor(
+        config, options.backend,
+        {a.spec.binary for a in adapters if not isinstance(a, ProjectTool)},
+    )  # fmt: skip
     runner = ToolRunner(
         executor,
         root,

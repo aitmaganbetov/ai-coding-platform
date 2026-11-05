@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import shutil
 from typing import Annotated
 
@@ -13,6 +15,9 @@ from ai_coding.cli.exit_codes import ExitCode
 from ai_coding.executors import DockerSandboxExecutor, docker_available
 from ai_coding.executors.base import ExecutorError, ExecutorUnavailableError
 from ai_coding.tools import default_tool_registry
+from ai_coding.tools.cache import cache_root
+from ai_coding.tools.prepare import is_prepared, needs_prepare, prepare
+from ai_coding.tools.project import ProjectTool
 from ai_coding.tools.testrun import RUNTIME_IMAGES
 
 app = typer.Typer(help="Analysis tools and their sandbox images.", no_args_is_help=True)
@@ -23,35 +28,55 @@ def _group() -> None:
     """Analysis tools and their sandbox images."""
 
 
-@app.command("list")
-def list_tools() -> None:
-    """Show tools, categories, pinned images and local availability."""
+def _image_state(executor: DockerSandboxExecutor, image: str, docker_ok: bool) -> str:
+    if not docker_ok:
+        return "docker unavailable"
+    return "present" if executor.image_present(image) else "missing"
+
+
+def _rows(docker_ok: bool) -> list[dict[str, str]]:
     registry = default_tool_registry()
-    docker_ok = docker_available()
     executor = DockerSandboxExecutor()
-    table = Table("tool", "category", "stacks", "host binary", "sandbox image")
+    rows = []
     for name in registry.names():
-        spec = registry.get(name).spec
-        image_state = (
-            ("present" if executor.image_present(spec.image) else "missing") if docker_ok
-            else "docker unavailable"
-        )  # fmt: skip
-        table.add_row(
-            name,
-            spec.category.value,
-            ", ".join(sorted(s.value for s in spec.stacks)) or "all",
-            shutil.which(spec.binary) or "not found",
-            f"{spec.image.split('@')[0]} ({image_state})",
-        )
+        adapter = registry.get(name)
+        spec = adapter.spec
+        host = "found" if shutil.which(spec.binary) else "not found"
+        rows.append({
+            "tool": name, "category": spec.category.value,
+            "stacks": ", ".join(sorted(s.value for s in spec.stacks)) or "all",
+            "runs": ("project toolchain (sandbox)" if isinstance(adapter, ProjectTool)
+                     else f"analyser (host: {host})"),
+            "image": spec.image, "image_state": _image_state(executor, spec.image, docker_ok),
+            "offline_data": (("ready" if is_prepared(adapter) else "missing")
+                             if needs_prepare(adapter) else "-"),
+        })  # fmt: skip
     for name, image in RUNTIME_IMAGES.items():
-        state = (
-            ("present" if executor.image_present(image) else "missing")
-            if docker_ok
-            else ("docker unavailable")
-        )
-        table.add_row(name, "tests runtime", "python" if "python" in name else "node",
-                      "-", f"{image.split('@')[0]} ({state})")  # fmt: skip
+        rows.append({
+            "tool": name, "category": "tests runtime",
+            "stacks": "python" if "python" in name else "node",
+            "runs": "project tests (sandbox)", "image": image,
+            "image_state": _image_state(executor, image, docker_ok), "offline_data": "-",
+        })  # fmt: skip
+    return rows
+
+
+@app.command("list")
+def list_tools(
+    as_json: Annotated[bool, typer.Option("--json", help="Machine-readable output.")] = False,
+) -> None:
+    """Show tools, categories, pinned images, offline data and local availability."""
+    rows = _rows(docker_available())
+    if as_json:
+        stdout.print_json(json.dumps({"cache": str(cache_root()), "tools": rows}))
+        return
+    table = Table("tool", "category", "stacks", "runs", "sandbox image", "offline data")
+    for r in rows:
+        table.add_row(r["tool"], r["category"], r["stacks"], r["runs"],
+                      f"{r['image'].split('@')[0]} ({r['image_state']})",
+                      r["offline_data"])  # fmt: skip
     stdout.print(table)
+    info(f"platform cache: {cache_root()}")
 
 
 @app.command("pull")
@@ -59,9 +84,12 @@ def pull(
     tool: Annotated[
         list[str] | None, typer.Option("--tool", "-t", help="Only these tools.")
     ] = None,
+    refresh: Annotated[
+        bool, typer.Option("--refresh", help="Re-download offline data (new DB snapshot).")
+    ] = False,
 ) -> None:
-    """Download the digest-pinned sandbox images: analysis tools and test runtimes
-    (``python-runtime``, ``node-runtime``). Needs network; audits and tests then run offline."""
+    """Download the digest-pinned sandbox images and the offline data (vulnerability
+    databases, toolchains). The only networked step: audits and tests then run offline."""
     if not docker_available():
         error("Docker daemon is not reachable")
         raise typer.Exit(ExitCode.NOT_FOUND)
@@ -69,21 +97,29 @@ def pull(
     executor = DockerSandboxExecutor()
     failed = 0
     for name in tool or [*registry.names(), *RUNTIME_IMAGES]:
+        adapter = None
         if name in RUNTIME_IMAGES:
             image = RUNTIME_IMAGES[name]
         else:
             try:
-                image = registry.get(name).spec.image
+                adapter = registry.get(name)
             except KeyError as exc:
                 error(str(exc).strip("'\""))
                 raise typer.Exit(ExitCode.USAGE) from exc
-        if executor.image_present(image):
-            info(f"{name}: already present")
-            continue
+            image = adapter.spec.image
         try:
-            executor.pull(image)
-            info(f"{name}: pulled {image}")
-        except (ExecutorError, ExecutorUnavailableError) as exc:
+            if executor.image_present(image):
+                info(f"{name}: image already present")
+            else:
+                executor.pull(image)
+                info(f"{name}: pulled {image}")
+            if adapter is not None and needs_prepare(adapter):
+                if is_prepared(adapter) and not refresh:
+                    info(f"{name}: offline data already prepared")
+                else:
+                    asyncio.run(prepare(adapter))
+                    info(f"{name}: offline data prepared in {cache_root()}")
+        except (ExecutorError, ExecutorUnavailableError, RuntimeError) as exc:
             failed += 1
             error(f"{name}: {exc}")
     raise typer.Exit(ExitCode.INVALID if failed else ExitCode.OK)
