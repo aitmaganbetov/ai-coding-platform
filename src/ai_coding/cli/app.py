@@ -22,6 +22,7 @@ from ai_coding.cli.commands import project as project_cmd
 from ai_coding.cli.commands import report as report_cmd
 from ai_coding.cli.commands import review as review_cmd
 from ai_coding.cli.commands import run as run_cmd
+from ai_coding.cli.commands import server as server_cmd
 from ai_coding.cli.commands import tools as tools_cmd
 
 app = typer.Typer(
@@ -51,6 +52,7 @@ app.command("modernize")(modernize_cmd.modernize)
 app.command("maintain")(maintain_cmd.maintain)
 app.command("review")(review_cmd.review)
 app.add_typer(agents_cmd.app, name="agents")
+app.add_typer(server_cmd.app, name="server")
 
 
 def _version(value: bool) -> None:

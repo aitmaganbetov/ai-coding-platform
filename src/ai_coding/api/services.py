@@ -37,7 +37,7 @@ from ai_coding.api.security import (
 )
 from ai_coding.api.settings import ServerSettings
 from ai_coding.config.generator import render_initial_config, sanitize_project_name
-from ai_coding.config.loader import find_config
+from ai_coding.config.loader import STATE_CONFIG, find_config, find_project_config
 from ai_coding.config.models import AICodingConfig
 from ai_coding.config.validator import validate_file
 from ai_coding.detection import detect_stacks
@@ -48,7 +48,7 @@ from ai_coding.orchestrator import HandlerRegistry, Orchestrator, RunOptions, Ta
 from ai_coding.orchestrator.audit import AuditLogger
 from ai_coding.orchestrator.errors import OrchestratorError
 from ai_coding.persistence import Database, upgrade_to_head
-from ai_coding.persistence.db import STATE_DIR, ensure_state_dir
+from ai_coding.persistence.db import ensure_state_dir
 from ai_coding.persistence.models import (
     ApiToken,
     Artifact,
@@ -64,7 +64,6 @@ from ai_coding.persistence.models import (
 )
 from ai_coding.persistence.types import utcnow
 
-SERVER_CONFIG = "config.yml"  # <checkout>/.ai-coding/config.yml when the repo has none
 _DUMMY_HASH = hash_password("dummy-password-for-timing")
 _LAST_USED_GRANULARITY = timedelta(minutes=1)
 _KEY = re.compile(r"[\x21-\x7e]{1,200}")
@@ -516,15 +515,15 @@ class Server:
         """A server-side config in ``.ai-coding/`` when the repository has none."""
         if find_config(root) is not None:
             return
-        state = ensure_state_dir(root)
+        ensure_state_dir(root)
         stacks = [e.stack for e in detect_stacks(root)]
         text, _ = render_initial_config(name=name, stacks=stacks)
-        (state / SERVER_CONFIG).write_text(text, encoding="utf-8")
+        (root / STATE_CONFIG).write_text(text, encoding="utf-8")
 
     def project_config(self, project: Project) -> tuple[Path, AICodingConfig]:
         """Root and configuration of a project; the name is the server's project name."""
         root = Path(project.root_path or "")
-        path = find_config(root) or (root / STATE_DIR / SERVER_CONFIG)
+        path = find_project_config(root) or (root / STATE_CONFIG)
         report = validate_file(path)
         if not report.ok or report.config is None:
             raise InvalidError(f"the project configuration is invalid ({path.name})")

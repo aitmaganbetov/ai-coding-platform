@@ -45,6 +45,22 @@ _UniqueKeySafeLoader.add_constructor(
 )
 
 
+STATE_CONFIG = ".ai-coding/config.yml"
+
+
+def find_project_config(root: Path) -> Path | None:
+    """The repository's configuration, else the platform-managed one in ``.ai-coding/``.
+
+    ``.ai-coding/config.yml`` is written by ``ai-coding create`` and by the server for
+    repositories without their own configuration; it is never committed.
+    """
+    found = find_config(root)
+    if found is not None:
+        return found
+    state = root / STATE_CONFIG
+    return state if state.is_file() else None
+
+
 def find_config(start: Path) -> Path | None:
     """Return the configuration file in ``start`` (a directory or a file path)."""
     if start.is_file():

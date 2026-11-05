@@ -8,9 +8,11 @@ TLS is terminated by the reverse proxy (``deploy/Caddyfile``).
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -455,10 +457,32 @@ def download_artifact(
 
 
 # --------------------------------------------------------------------- app --
-def create_app(server: Server, *, ui_dir: Path | None = None) -> FastAPI:
-    """The API application bound to ``server`` (and the Web UI, when built)."""
+def create_app(server: Server, *, ui_dir: Path | None = None, run_worker: bool = False) -> FastAPI:
+    """The API application bound to ``server`` (and the Web UI, when built).
+
+    ``run_worker`` runs a worker pool inside the API process (small installations);
+    larger ones run ``ai-coding server worker`` processes separately.
+    """
     settings = server.settings
+    metrics = Metrics(server)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        if not run_worker:
+            yield
+            return
+        from ai_coding.api.worker import Worker  # noqa: PLC0415 - only when embedded
+
+        stop = asyncio.Event()
+        task = asyncio.create_task(Worker(server, metrics=metrics).run(stop))
+        try:
+            yield
+        finally:
+            stop.set()
+            await task
+
     app = FastAPI(
+        lifespan=lifespan,
         title="AI Coding Platform API",
         version=__version__,
         openapi_url=f"{API}/openapi.json",
@@ -468,7 +492,7 @@ def create_app(server: Server, *, ui_dir: Path | None = None) -> FastAPI:
     app.state.server = server
     app.state.limiter = RateLimiter(settings.rate_limit_per_minute)
     app.state.login_limiter = RateLimiter(settings.login_rate_limit_per_minute)
-    app.state.metrics = Metrics(server)
+    app.state.metrics = metrics
     _install_handlers(app)
     app.middleware("http")(_guard)
     for router in (ops, auth, projects, runs):
