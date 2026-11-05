@@ -22,6 +22,11 @@ from ai_coding.executors.winjob import (
 
 windows = pytest.mark.skipif(sys.platform != "win32", reason="Job Objects exist only on Windows")
 
+# In a virtual environment on Windows sys.executable is a launcher that starts the real
+# interpreter as a child: every Python would be two processes in the job. The scripts here
+# use only the standard library, so they run on the base interpreter (one process each).
+PYTHON = getattr(sys, "_base_executable", None) or sys.executable
+
 
 def test_limit_information() -> None:
     info = limit_information(JobLimits(memory_mb=256, cpu_seconds=30, max_processes=8))
@@ -35,7 +40,7 @@ def test_limit_information() -> None:
 
 
 async def _python(code: str, tmp_path: Path, limits: JobLimits) -> ProcessOutcome:
-    return await run_process([sys.executable, "-c", code], cwd=tmp_path, env=dict(os.environ),
+    return await run_process([PYTHON, "-c", code], cwd=tmp_path, env=dict(os.environ),
                              timeout=60, max_output_bytes=100_000, job=limits)  # fmt: skip
 
 
