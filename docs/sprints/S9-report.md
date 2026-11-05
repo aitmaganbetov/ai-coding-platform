@@ -118,6 +118,23 @@ CI на GitHub, run [42110402088](https://github.com/aitmaganbetov/ai-coding-pla
 12. **Тест лимита процессов Job Object падал на Windows в CI.** Лимит работал, ошибка была в подсчёте процессов в тесте. В venv uv на Windows `sys.executable` — лаунчер, который запускает настоящий интерпретатор дочерним процессом, поэтому каждый Python занимал в задании 2 слота. Тесты запускают базовый интерпретатор. Операторам стоит учитывать: `max_processes` считает и лаунчеры.
 13. **Обёртка `build_argv` в тесте AC-05** не принимала новый аргумент `egress`. Это поймала матрица приёмки в CI.
 
+### Исправлено после ревью кода (после merge S9, до тега v2.1.0)
+
+Ревью merge-коммита S9 нашло 10 дефектов, большинство — в коде самого S9. Все исправлены. На каждый написан регрессионный тест, и он падает на прежнем коде.
+
+| # | Где | Дефект | Исправление | Тест |
+| --- | --- | --- | --- | --- |
+| 1 | `config/loader.py` | Защита от «billion laughs» зацикливалась на узле, содержащем себя (`a: &x [*x]`, воспроизведено), — DoS | Узлы на текущем пути обхода отслеживаются; такой документ отклоняется ошибкой «recursive YAML alias» | `test_config_fuzz.py` (5 документов в подпроцессе с таймаутом, и через валидатор) |
+| 2 | `tools/project.py` | Симлинк `node_modules` → каталог хоста монтировался в песочницу | Зависимости копируются; каталог-симлинк пропускается; внутренние ссылки — только относительные и внутри проекта | `test_dependency_links_never_lead_out_of_the_project` |
+| 3 | `tools/project.py` | `node_modules` только для чтения: EROFS для кэшей Vite/Babel/ESLint | Копия доступна для записи | `test_writable_copy_keeps_installed_dependencies_writable`, Playwright в Docker |
+| 4 | `egress_proxy.py` | HTTP: чужой `Host` и второй запрос по keep-alive — domain fronting | Прокси пересобирает ровно один запрос: `Host` = цель, тело по `Content-Length`, `Connection: close` | `test_plain_http_cannot_front_or_smuggle_a_second_request` (на старом прокси чужой `Host` получал 200) |
+| 5 | `executors/local.py` | `JOB_TIME` = таймаут, хотя считает CPU всех ядер | Бюджет = таймаут × ядра; везде используется действующий таймаут | `test_job_cpu_budget_covers_every_core` |
+| 6 | `api/limits.py` | Недоступная БД задерживала каждый запрос | Пауза 1 → 30 с, одна проба за раз | `test_unreachable_database_is_not_retried_on_every_request`, `test_database_recovery_resets_the_back_off` |
+| 7 | `api/limits.py` | Переполнение ключей стирало неотправленные счётчики | Сначала устаревшие и записанные ключи, затем отправка одной транзакцией | `test_key_overflow_never_loses_unsent_counts`, `…_drops_stale_and_synced_keys_first` |
+| 8 | `llm_factory.py` | `local-only`: адрес проверялся один раз (DNS rebinding) | `LocalOnlyTransport`: разрешение и проверка на каждый запрос, подключение к проверенному IP; `Host` и SNI сохраняются | `test_every_request_is_checked_…`, `test_https_keeps_the_name_for_tls` |
+| 9 | `executors/process.py` | Ошибка назначения Job Object оставляла процесс без надзора | Процесс убивается, шаг завершается ошибкой | `test_command_is_killed_when_its_job_cannot_be_applied` |
+| 10 | `api/app.py` | `serve --workers N` на SQLite — свой лимит у каждого процесса | `auto` выбирает общий лимитер при нескольких процессах; `memory` — с предупреждением | `test_several_api_processes_share_the_limit_on_sqlite_too`, `test_app_from_env_uses_the_shared_limiter_on_sqlite` |
+
 ## 7. Ограничения и незавершённое
 
 - **Публикация релиза не выполнена — это действия владельца:**
@@ -131,6 +148,7 @@ CI на GitHub, run [42110402088](https://github.com/aitmaganbetov/ai-coding-pla
 - **MinIO как таковой не запускался:** образы MinIO в среде недоступны. Используется VersityGW — другой S3-совместимый сервер, который сам проверяет SigV4.
 - **Redis-адаптер очереди и OpenTelemetry** (опциональны в ТЗ) не реализованы. Общий rate limiter работает через БД.
 - **Job Object назначается сразу после запуска процесса:** asyncio не создаёт приостановленный процесс. Потомок, порождённый в это мгновение, может остаться вне задания. Недоверенный код выполняется только в Docker-песочнице.
+- **Остаточный риск egress:** внутри HTTPS-туннеля прокси не видит имя сервера TLS. Через разрешённое имя на общем CDN можно обратиться к другому сайту этого CDN (ADR-0033). Список хостов держите минимальным.
 - **gVisor не проверен в этой среде** (установка runsc запрещена) — только в CI.
 - **Локальная задержка под нагрузкой** (p95 ~0,5–0,6 с) — шум виртуальной машины разработки; в CI p95 66 мс.
 - **e2e smoke Web UI** по-прежнему выполняется локально, не в CI.

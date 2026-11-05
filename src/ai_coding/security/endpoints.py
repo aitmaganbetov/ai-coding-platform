@@ -7,16 +7,23 @@ where prompts — which contain source code — are sent. Two checks:
   private IP literals, ``localhost``, single-label names (Docker/Kubernetes service
   names) and the private-use suffixes ``.local``, ``.internal``, ``.lan``,
   ``.home.arpa``, ``.localhost``;
-* :func:`resolves_locally` — at run time, every address the name resolves to must be
-  loopback, private or link-local, so DNS cannot redirect a "local" name outside.
+* :func:`resolves_locally` — when the model is set up, every address the name resolves
+  to must be loopback, private or link-local (an early, readable refusal);
+* :class:`LocalOnlyTransport` — on *every* request: the HTTP client resolves the name
+  itself, checks the addresses and connects to the checked address. Checking once and
+  letting the client resolve again would let a short-TTL DNS answer point the name
+  outside in between (DNS rebinding).
 """
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import socket
 from collections.abc import Callable, Iterable
 from urllib.parse import urlsplit
+
+import httpx
 
 LOCAL_SUFFIXES = (".local", ".internal", ".lan", ".home.arpa", ".localhost")
 
@@ -73,3 +80,53 @@ def resolves_locally(url: str, resolver: Resolver | None = None) -> tuple[bool, 
     if public:
         return False, f"{host} resolves to public address(es) {', '.join(public)}"
     return True, ""
+
+
+class LocalOnlyTransport(httpx.AsyncBaseTransport):
+    """Sends a request only to a local address, resolved and checked for this request.
+
+    The request goes to the checked IP address; the ``Host`` header keeps the name, and
+    over HTTPS the TLS server name (and certificate check) stays the name as well.
+    """
+
+    def __init__(
+        self, inner: httpx.AsyncBaseTransport | None = None, resolver: Resolver | None = None
+    ) -> None:
+        self._inner = inner or httpx.AsyncHTTPTransport()
+        self._resolver = resolver
+
+    async def _addresses(self, host: str, port: int) -> list[str]:
+        resolver = self._resolver
+        if resolver is not None:
+            return sorted(set(await asyncio.to_thread(lambda: list(resolver(host)))))
+        infos = await asyncio.get_running_loop().getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+        return sorted({str(info[4][0]) for info in infos})
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        host = request.url.host.rstrip(".").lower()
+        literal = _local_ip(host)
+        if literal is False:
+            raise httpx.ConnectError(f"local-only policy: {host} is a public address",
+                                     request=request)  # fmt: skip
+        if literal is None:
+            try:
+                addresses = await self._addresses(host, request.url.port or 0)
+            except OSError as exc:
+                raise httpx.ConnectError(f"local-only policy: {host} does not resolve ({exc})",
+                                         request=request) from exc  # fmt: skip
+            public = [a for a in addresses if not _local_ip(a)]
+            if not addresses or public:
+                raise httpx.ConnectError(
+                    f"local-only policy: {host} resolves to public address(es) "
+                    f"{', '.join(public) or '(none)'}",
+                    request=request,
+                )
+            if "host" not in request.headers:
+                request.headers["Host"] = request.url.netloc.decode("ascii")
+            if request.url.scheme == "https":
+                request.extensions = {**request.extensions, "sni_hostname": host}
+            request.url = request.url.copy_with(host=addresses[0])
+        return await self._inner.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()

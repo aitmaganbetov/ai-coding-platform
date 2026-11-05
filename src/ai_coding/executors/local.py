@@ -17,6 +17,7 @@ caller (Policy Engine) before reaching the executor.
 
 from __future__ import annotations
 
+import math
 import os
 import shutil
 import sys
@@ -54,6 +55,18 @@ def _limits_preexec(limits: ResourceLimits, timeout: float) -> Callable[[], None
         # Real memory limits need cgroups, i.e. the Docker sandbox (ADR-0018).
 
     return apply
+
+
+def job_limits(limits: ResourceLimits, timeout: float, cpus: int | None = None) -> JobLimits:
+    """Windows Job Object limits of one command (B-206).
+
+    ``JOB_TIME`` counts the user CPU time of *all* processes of the job together, so a
+    command using every core (``pytest -n 8``, ``cargo test``) spends ``cores ×`` its
+    wall time: the budget is the timeout times the cores, and the wall-clock timeout
+    stays the limit that normally stops a command.
+    """
+    cores = max(1, cpus if cpus is not None else (os.cpu_count() or 1))
+    return JobLimits(memory_mb=limits.memory_mb, cpu_seconds=math.ceil(timeout * cores) + 5)
 
 
 class LocalExecutor:
@@ -107,16 +120,15 @@ class LocalExecutor:
         if not spec.cwd.is_dir():
             raise ExecutorError(f"working directory {spec.cwd} does not exist")
         argv = (self.resolve(spec.argv[0]), *spec.argv[1:])
+        timeout = min(spec.timeout_seconds, float(self._limits.timeout_seconds))
         outcome = await run_process(
             argv,
             cwd=spec.cwd,
             env=self._env(spec.env),
-            timeout=min(spec.timeout_seconds, float(self._limits.timeout_seconds)),
+            timeout=timeout,
             max_output_bytes=spec.max_output_bytes,
-            preexec=_limits_preexec(self._limits, spec.timeout_seconds),
-            job=JobLimits(
-                memory_mb=self._limits.memory_mb, cpu_seconds=int(spec.timeout_seconds) + 5
-            ),  # Windows Job Object (B-206)
+            preexec=_limits_preexec(self._limits, timeout),  # RLIMIT_CPU is per process
+            job=job_limits(self._limits, timeout),  # Windows Job Object (B-206)
         )
         return ExecutionResult(
             backend=self.backend,

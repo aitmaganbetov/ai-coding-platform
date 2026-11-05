@@ -254,6 +254,8 @@ def open_permissions(root: Path, *, recursive: bool = True) -> None:
     the host user (use ``recursive=False`` for a directory that already holds them).
     """
     for path in [root, *root.rglob("*")] if recursive else [root]:
+        if path.is_symlink():
+            continue  # a link's own mode does not matter; chmod would follow it
         mode = path.stat().st_mode
         extra = (
             stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO

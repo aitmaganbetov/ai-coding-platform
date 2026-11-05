@@ -39,7 +39,9 @@ from ai_coding.api.services import (
     UnauthorizedError,
 )
 from ai_coding.domain.enums import Role
+from ai_coding.observability import get_logger
 
+_log = get_logger(__name__)
 API = "/api/v1"
 LOGIN_TOKEN_HOURS = 12
 SECURITY_HEADERS = {
@@ -488,11 +490,36 @@ _HTTP_CODES = {
 
 
 # --------------------------------------------------------------------- app --
-def create_app(server: Server, *, ui_dir: Path | None = None, run_worker: bool = False) -> FastAPI:
+def shared_rate_limits(backend: str, *, is_sqlite: bool, multi_process: bool) -> bool:
+    """Whether the API counts rate limits in the database (one budget for all processes).
+
+    ``auto`` shares them on PostgreSQL and whenever several API processes serve the same
+    database (``serve --workers N``, SQLite included): an in-process limiter would give
+    each process its own budget, N times the limit and the login brute-force budget.
+    """
+    if backend == "database":
+        return True
+    if backend == "memory":
+        if multi_process:
+            _log.warning("rate limits are per process with several API processes "
+                         "(AI_CODING_SERVER_RATE_LIMIT_BACKEND=memory): each process "
+                         "allows the full limit")  # fmt: skip
+        return False
+    return multi_process or not is_sqlite
+
+
+def create_app(
+    server: Server,
+    *,
+    ui_dir: Path | None = None,
+    run_worker: bool = False,
+    multi_process: bool = False,
+) -> FastAPI:
     """The API application bound to ``server`` (and the Web UI, when built).
 
     ``run_worker`` runs a worker pool inside the API process (small installations);
-    larger ones run ``ai-coding server worker`` processes separately.
+    larger ones run ``ai-coding server worker`` processes separately. ``multi_process``:
+    this is one of several API processes on the same database (``serve --workers N``).
     """
     settings = server.settings
     metrics = Metrics(server)
@@ -521,8 +548,8 @@ def create_app(server: Server, *, ui_dir: Path | None = None, run_worker: bool =
         redoc_url=None,
     )
     app.state.server = server
-    shared = settings.rate_limit_backend == "database" or (
-        settings.rate_limit_backend == "auto" and not server.db.is_sqlite
+    shared = shared_rate_limits(
+        settings.rate_limit_backend, is_sqlite=server.db.is_sqlite, multi_process=multi_process
     )
     if shared:  # one budget for all API processes and replicas
         app.state.limiter = SharedRateLimiter(server.db, settings.rate_limit_per_minute)
@@ -626,4 +653,5 @@ def app_from_env() -> FastAPI:
 
     configure_logging(json=True, level="INFO")
     ui = os.environ.get(UI_DIR_ENV)
-    return create_app(Server(ServerSettings.from_env()), ui_dir=Path(ui) if ui else None)
+    return create_app(Server(ServerSettings.from_env()), ui_dir=Path(ui) if ui else None,
+                      multi_process=True)  # fmt: skip

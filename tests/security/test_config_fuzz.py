@@ -103,3 +103,40 @@ def test_ordinary_anchors_still_work() -> None:
 
     doc = parse_yaml("defaults: &d {timeout: 60, retries: 2}\nlint: *d\ntests: *d\n")
     assert doc["lint"] == doc["tests"] == {"timeout": 60, "retries": 2}
+
+
+RECURSIVE_DOCUMENTS = [
+    "a: &x [*x]",
+    "a: &x {k: *x}",
+    "a: &x [1, [2, *x]]",
+    "a: &x {k: &y [*x, *y]}",
+    "&r [*r]",
+]
+
+
+def test_recursive_aliases_are_rejected_not_looped() -> None:
+    """A node that contains itself (PyYAML registers the anchor before composing its
+    children) must be refused at once. The expansion check used to loop forever on it.
+    Run in a subprocess so a regression fails on the timeout instead of hanging the suite."""
+    import subprocess  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    script = (
+        "import sys\n"
+        "from ai_coding.config.loader import ConfigLoadError, parse_yaml\n"
+        "for text in sys.argv[1:]:\n"
+        "    try:\n"
+        "        parse_yaml(text)\n"
+        "    except ConfigLoadError as exc:\n"
+        "        assert 'recursive' in str(exc), exc\n"
+        "    else:\n"
+        "        raise SystemExit(f'accepted: {text!r}')\n"
+    )
+    out = subprocess.run([sys.executable, "-c", script, *RECURSIVE_DOCUMENTS],
+                         capture_output=True, text=True, timeout=30, check=False)  # fmt: skip
+    assert out.returncode == 0, out.stderr
+
+
+def test_recursive_alias_in_a_config_is_a_validation_error() -> None:
+    report = validate_text("schema_version: '2.1'\nproject: &p {name: *p}\n")
+    assert not report.ok

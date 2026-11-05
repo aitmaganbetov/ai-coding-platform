@@ -21,7 +21,7 @@ from ai_coding.llm.cache import ResponseCache
 from ai_coding.llm.guard import Budget, PolicyGate, UsageRecorder
 from ai_coding.llm.providers import OLLAMA_BASE_URL, make_provider
 from ai_coding.llm.router import Route, RoutedLLM
-from ai_coding.security.endpoints import Resolver, resolves_locally
+from ai_coding.security.endpoints import LocalOnlyTransport, Resolver, resolves_locally
 
 
 class LLMUnavailableError(RuntimeError):
@@ -94,6 +94,9 @@ def build_llm(
     if not plan.routes:
         raise LLMUnavailableError("no usable model route: " + "; ".join(plan.skipped))
     ai = config.ai
+    if config.security.network is NetworkPolicy.LOCAL_ONLY:
+        # Checked again on every request, against the address actually connected to.
+        transport = LocalOnlyTransport(transport, resolver)
     pricing = {m: (p.input_per_mtok, p.output_per_mtok) for m, p in ai.pricing.items()}
     routes = [
         Route(
