@@ -43,7 +43,7 @@ uv run ai-coding config validate /path/to/project
 - [Замечания к ТЗ](docs/tz-notes.md) — сверка PDF и `.md`, интерпретации
 - [Отчёт по S1](docs/sprints/S1-report.md)
 - [Политика безопасности](SECURITY.md)
-- Техническое задание: [AI_Coding_Platform_v2_1_TZ.pdf](AI_Coding_Platform_v2_1_TZ.pdf) (основной документ; `.md` — конвертация с дефектами)
+- Техническое задание: [AI_Coding_Platform_v2_1_TZ.pdf](AI_Coding_Platform_v2_1_TZ.pdf) (основной документ) · [Markdown-версия](AI_Coding_Platform_v2_1_TZ.md), сгенерированная из PDF
 
 ## Технологии
 
