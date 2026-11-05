@@ -46,6 +46,16 @@ Documentation = "https://github.com/aitmaganbetov/ai-coding-platform/tree/main/d
 [project.scripts]
 ai-coding = "ai_coding.cli.app:main"
 
+[project.optional-dependencies]
+server = [
+    "argon2-cffi>=23.1,<26",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.32,<1",
+]
+postgres = [
+    "psycopg[binary]>=3.2,<4",
+]
+
 [dependency-groups]
 dev = [
   "pytest>=8.3",
@@ -56,6 +66,10 @@ dev = [
   "types-PyYAML>=6.0.12",
   "types-jsonschema>=4.23",
   "import-linter>=2.1",
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.32,<1",
+  "argon2-cffi>=23.1,<26",
+  "psycopg[binary]>=3.2,<4",
 ]
 
 [tool.hatch.version]
@@ -139,6 +153,7 @@ name = "Layered architecture"
 type = "layers"
 layers = [
   "ai_coding.cli",
+  "ai_coding.api",
   "ai_coding.workflows",
   "ai_coding.orchestrator",
   "ai_coding.reports",

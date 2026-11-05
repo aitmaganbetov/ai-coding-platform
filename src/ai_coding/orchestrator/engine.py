@@ -136,10 +136,13 @@ class RunOptions:
     """Per-run options (CLI flags)."""
 
     require_approval: bool = False
+    # Caller data stored with the run (the server keeps the run kind and parameters
+    # here so any worker can rebuild the handlers); not part of the plan digest.
+    extra: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """JSON form stored on the run."""
-        return {"require_approval": self.require_approval}
+        return {**dict(self.extra), "require_approval": self.require_approval}
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,8 +218,12 @@ class Orchestrator:
         lease_ttl: float = 30.0,
         retry_policy: RetryPolicy | None = None,
         poll_interval: float = 0.2,
+        local_owner: bool = True,
     ) -> None:
         self.db = db
+        # Local mode: the single local user owns the project. The server passes False:
+        # projects, users and roles are managed explicitly and never granted implicitly.
+        self.local_owner = local_owner
         self.config = config
         self.project_root = project_root.resolve()
         self.registry = registry
@@ -241,8 +248,16 @@ class Orchestrator:
 
     # ------------------------------------------------------------ project --
     def ensure_project(self, session: Session) -> Project:
-        """Project row for this configuration; the local actor is its Owner."""
+        """Project row for this configuration; the local actor is its Owner.
+
+        With ``local_owner=False`` (server) the project must exist and nothing is
+        created or granted here.
+        """
         project = session.scalar(select(Project).where(Project.name == self.config.project.name))
+        if not self.local_owner:
+            if project is None:
+                raise RunNotFoundError(f"project '{self.config.project.name}' is not registered")
+            return project
         if project is None:
             project = Project(name=self.config.project.name, root_path=str(self.project_root))
             session.add(project)

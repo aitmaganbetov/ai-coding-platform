@@ -71,6 +71,57 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(150), unique=True)
     display_name: Mapped[str | None] = mapped_column(String(200))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)  # instance admin (S8)
+    created_at: Mapped[datetime] = _created()
+
+
+class Credential(Base):
+    """Password hash of a user (argon2id; Self-Hosted server, ADR-0030)."""
+
+    __tablename__ = "user_credentials"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    password_hash: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
+class ApiToken(Base):
+    """API token: only its SHA-256 is stored; optionally limited to one project/role."""
+
+    __tablename__ = "api_tokens"
+
+    id: Mapped[uuid.UUID] = _pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(100))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE")
+    )
+    max_role: Mapped[str | None] = mapped_column(String(20))
+    created_at: Mapped[datetime] = _created()
+    expires_at: Mapped[datetime | None] = mapped_column()
+    last_used_at: Mapped[datetime | None] = mapped_column()
+    revoked_at: Mapped[datetime | None] = mapped_column()
+
+
+class IdempotencyRecord(Base):
+    """Stored response of a create request, replayed for the same Idempotency-Key."""
+
+    __tablename__ = "idempotency_records"
+    __table_args__ = (UniqueConstraint("user_id", "key", name="uq_idempotency_user_key"),)
+
+    id: Mapped[uuid.UUID] = _pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    key: Mapped[str] = mapped_column(String(200))
+    method: Mapped[str] = mapped_column(String(10))
+    path: Mapped[str] = mapped_column(String(500))
+    body_sha256: Mapped[str] = mapped_column(String(64))
+    status_code: Mapped[int] = mapped_column(Integer)
+    response: Mapped[dict[str, Any]] = mapped_column(default=dict)
     created_at: Mapped[datetime] = _created()
 
 
@@ -155,6 +206,25 @@ class Run(Base):
     )
 
     __mapper_args__ = {"version_id_col": version}  # noqa: RUF012 - SQLAlchemy API
+
+
+class RunJob(Base):
+    """Server work queue entry: execute or resume a run (ADR-0013; leased by workers)."""
+
+    __tablename__ = "run_jobs"
+    __table_args__ = (Index("ix_run_jobs_state_available", "state", "available_at"),)
+
+    id: Mapped[uuid.UUID] = _pk()
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(20))  # execute | resume
+    state: Mapped[str] = mapped_column(String(16))  # queued | leased | done | failed
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    lease_owner: Mapped[str | None] = mapped_column(String(200))
+    lease_expires_at: Mapped[datetime | None] = mapped_column()
+    available_at: Mapped[datetime] = mapped_column(default=utcnow)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = _created()
+    finished_at: Mapped[datetime | None] = mapped_column()
 
 
 class RunEvent(Base):
