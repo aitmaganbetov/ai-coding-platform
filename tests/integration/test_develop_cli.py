@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
@@ -23,6 +24,14 @@ from tests.integration.test_modernize import PLAN, STEP1, STEP2
 
 pytestmark = pytest.mark.integration
 runner = CliRunner()
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def invoke(args: list[str], **kw: Any) -> Any:
+    """CLI result with plain-text output (CI sets FORCE_COLOR, Rich adds ANSI codes)."""
+    result = runner.invoke(app, args, **kw)
+    result.plain = _ANSI.sub("", result.output)
+    return result
 
 
 @pytest.fixture
@@ -59,7 +68,7 @@ def repo(tmp_path: Path, fake_llm: FakeLLM, git_env: None) -> LocalGitRepository
 
 
 def last_run(root: Path) -> str:
-    out = runner.invoke(app, ["run", "list", "-C", str(root), "--json"]).output
+    out = invoke(["run", "list", "-C", str(root), "--json"]).plain
     return str(json.loads(out)[0]["id"])
 
 
@@ -73,10 +82,10 @@ def test_develop_task(repo: LocalGitRepository, fake_llm: FakeLLM) -> None:
         str(repo.root),
         "--no-interactive",
     ]
-    result = runner.invoke(app, args)
-    assert result.exit_code == 0, result.output
-    assert "committed on ai/add-multiply-function" in result.output
-    assert "tests:" in result.output and "AI review (advisory): approve" in result.output
+    result = invoke(args)
+    assert result.exit_code == 0, result.plain
+    assert "committed on ai/add-multiply-function" in result.plain
+    assert "tests:" in result.plain and "AI review (advisory): approve" in result.plain
     assert "src/multiply.js" in repo.list_files("ai/add-multiply-function")
     prompt = fake_llm.requests[0]["body"]["messages"][1]["content"]
     assert "We need multiply(a, b)." in prompt
@@ -97,18 +106,18 @@ def test_develop_approval_resume_and_errors(repo: LocalGitRepository, fake_llm: 
         )
     ]
     base = ["-C", str(repo.root), "--no-interactive"]
-    waiting = runner.invoke(app, ["develop", "Add multiply", *base])
-    assert waiting.exit_code == ExitCode.PENDING, waiting.output
-    assert "approval needed: critical_file_change" in waiting.output
-    assert "develop --resume" in waiting.output
+    waiting = invoke(["develop", "Add multiply", *base])
+    assert waiting.exit_code == ExitCode.PENDING, waiting.plain
+    assert "approval needed: critical_file_change" in waiting.plain
+    assert "develop --resume" in waiting.plain
     run_id = last_run(repo.root)
-    assert runner.invoke(app, ["run", "approve", run_id, "-C", str(repo.root)]).exit_code == 0
-    done = runner.invoke(app, ["develop", "--resume", run_id, *base])
-    assert done.exit_code == 0, done.output
+    assert invoke(["run", "approve", run_id, "-C", str(repo.root)]).exit_code == 0
+    done = invoke(["develop", "--resume", run_id, *base])
+    assert done.exit_code == 0, done.plain
     assert ".github/workflows/ci.yml" in repo.list_files("ai/add-multiply")
-    assert runner.invoke(app, ["develop", *base]).exit_code == ExitCode.USAGE
-    dry = runner.invoke(app, ["develop", "Do x", *base, "--dry-run"])
-    assert dry.exit_code == 0 and "develop.implement" in dry.output and "ai/do-x" in dry.output
+    assert invoke(["develop", *base]).exit_code == ExitCode.USAGE
+    dry = invoke(["develop", "Do x", *base, "--dry-run"])
+    assert dry.exit_code == 0 and "develop.implement" in dry.plain and "ai/do-x" in dry.plain
 
 
 def test_develop_issue_with_pr_interactive(
@@ -129,13 +138,12 @@ def test_develop_issue_with_pr_interactive(
 
     fake_github.head_shas = Shas()
     fake_llm.scripts["developer"] = [GOOD]
-    result = runner.invoke(
-        app,
+    result = invoke(
         ["develop", "--issue", "7", "-C", str(repo.root), "--pr", "--interactive"],
         input="approve\n",
     )
-    assert result.exit_code == 0, result.output
-    assert "approval needed: pr_create" in result.output and "pull request:" in result.output
+    assert result.exit_code == 0, result.plain
+    assert "approval needed: pr_create" in result.plain and "pull request:" in result.plain
     pr = fake_github.pulls[1]
     assert pr["head"]["ref"] == "ai/7-add-multiply-function" and "Closes #7" in pr["body"]
 
@@ -145,23 +153,21 @@ def test_modernize_plan_continue_rollback(repo: LocalGitRepository, fake_llm: Fa
     fake_llm.scripts["migration"] = [PLAN]
     fake_llm.scripts["developer"] = [STEP1, STEP2]
     base = ["-C", str(repo.root)]
-    first = runner.invoke(
-        app, ["modernize", PLAN["goal"], *base, "--interactive"], input="approve\n"
-    )
-    assert first.exit_code == 0, first.output
-    assert "Plan p1-" in first.output and "M-02 [low] Document style" in first.output
-    assert "next: ai-coding modernize --continue" in first.output
+    first = invoke(["modernize", PLAN["goal"], *base, "--interactive"], input="approve\n")
+    assert first.exit_code == 0, first.plain
+    assert "Plan p1-" in first.plain and "M-02 [low] Document style" in first.plain
+    assert "next: ai-coding modernize --continue" in first.plain
     run1 = last_run(repo.root)
-    second = runner.invoke(app, ["modernize", "--continue", run1, *base, "--no-interactive"])
-    assert second.exit_code == 0, second.output
+    second = invoke(["modernize", "--continue", run1, *base, "--no-interactive"])
+    assert second.exit_code == 0, second.plain
     run2 = last_run(repo.root)
     assert "README.md" in repo.list_files("ai/modernize-convert-functions-to-arrow-syntax-m-02")
-    back = runner.invoke(app, ["modernize", "--rollback", run2, *base, "--no-interactive"])
-    assert back.exit_code == 0, back.output
-    assert "not merged into main: close its PR and delete branch" in back.output
-    assert runner.invoke(app, ["modernize", *base]).exit_code == ExitCode.USAGE
-    nothing = runner.invoke(app, ["modernize", "--continue", run2, *base, "--no-interactive"])
-    assert nothing.exit_code == ExitCode.USAGE and "no further steps" in nothing.output
+    back = invoke(["modernize", "--rollback", run2, *base, "--no-interactive"])
+    assert back.exit_code == 0, back.plain
+    assert "not merged into main: close its PR and delete branch" in back.plain
+    assert invoke(["modernize", *base]).exit_code == ExitCode.USAGE
+    nothing = invoke(["modernize", "--continue", run2, *base, "--no-interactive"])
+    assert nothing.exit_code == ExitCode.USAGE and "no further steps" in nothing.plain
 
 
 # ------------------------------------------------------------------ review --
@@ -199,9 +205,9 @@ def test_review_comment_and_check(
         "--comment",
         "--check",
     ]
-    result = runner.invoke(app, args)
-    assert result.exit_code == 0, result.output  # advisory: neutral, not failure
-    assert "subtracts instead of adding" in result.output
+    result = invoke(args)
+    assert result.exit_code == 0, result.plain  # advisory: neutral, not failure
+    assert "subtracts instead of adding" in result.plain
     comment = next(iter(fake_github.comments.values()))
     assert comment["body"].startswith("<!-- ai-coding:ai-review -->")
     check = next(iter(fake_github.check_runs.values()))
@@ -232,18 +238,15 @@ def test_review_policy_blocking_and_skip(tmp_path: Path, fake_llm: FakeLLM, git_
         }
     ]
     out = tmp_path / "review.json"
-    blocked = runner.invoke(
-        app,
+    blocked = invoke(
         ["review", "--base", "main", "--head", "f", "-C", str(repo.root), "--json", "-o", str(out)],
     )
     assert blocked.exit_code == ExitCode.INVALID
     assert json.loads(out.read_text(encoding="utf-8"))["verdict"] == "request_changes"
-    nothing = runner.invoke(app, ["review", "--base", "f", "--head", "f", "-C", str(repo.root)])
-    assert nothing.exit_code == 0 and "No changes to review" in nothing.output
+    nothing = invoke(["review", "--base", "f", "--head", "f", "-C", str(repo.root)])
+    assert nothing.exit_code == 0 and "No changes to review" in nothing.plain
     plain = make_repo(tmp_path / "q", fake_llm, ai__enabled=False, ai__provider="none")
-    skipped = runner.invoke(
-        app, ["review", "--base", "main", "-C", str(plain.root), "--skip-if-disabled"]
-    )
-    assert skipped.exit_code == 0 and "skipped" in skipped.output
-    usage = runner.invoke(app, ["review", "--base", "main", "-C", str(repo.root), "--comment"])
+    skipped = invoke(["review", "--base", "main", "-C", str(plain.root), "--skip-if-disabled"])
+    assert skipped.exit_code == 0 and "skipped" in skipped.plain
+    usage = invoke(["review", "--base", "main", "-C", str(repo.root), "--comment"])
     assert usage.exit_code == ExitCode.USAGE
