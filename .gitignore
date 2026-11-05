@@ -34,3 +34,4 @@ Thumbs.db
 
 # Web UI (S8)
 node_modules/
+acceptance/

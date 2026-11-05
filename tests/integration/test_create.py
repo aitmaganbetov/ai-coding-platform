@@ -73,6 +73,7 @@ async def drive(orch: Orchestrator, run_id: Any) -> Any:
     return status, approved
 
 
+@pytest.mark.acceptance("AC-01")
 async def test_create_offline_with_local_model(
     project: LocalGitRepository, fake_llm: FakeLLM
 ) -> None:
@@ -253,6 +254,7 @@ async def test_external_provider_needs_approval_and_key_stays_secret(
     assert len(costs) == 3 and all(c > 0 for c in costs)  # priced from ai.pricing
 
 
+@pytest.mark.acceptance("AC-01")
 async def test_create_with_pull_request(
     project: LocalGitRepository, fake_llm: FakeLLM, tmp_path: Path
 ) -> None:

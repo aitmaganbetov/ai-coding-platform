@@ -25,6 +25,7 @@ from ai_coding.domain.enums import (
     Severity,
     Stack,
 )
+from ai_coding.security.endpoints import is_local_endpoint
 
 SCHEMA_VERSION = "2.1"
 SUPPORTED_SCHEMA_VERSIONS: frozenset[str] = frozenset({SCHEMA_VERSION})
@@ -222,6 +223,16 @@ class AIConfig(_Strict):
             base_url=route.base_url or (self.base_url if same else None),
             api_key_env=route.api_key_env or (self.api_key_env if same else None),
         )
+
+    def routes_in_use(self) -> list[tuple[str, ModelRoute]]:
+        """Every fully specified route that may receive requests, with its location."""
+        if not self.enabled:
+            return []
+        return [
+            ("ai", self.resolve()),
+            *((f"ai.fallback[{i}]", self.resolve(r)) for i, r in enumerate(self.fallback)),
+            *((f"ai.routing.{a.value}", self.resolve(r)) for a, r in self.routing.items()),
+        ]
 
     def providers_in_use(self) -> set[ProviderName]:
         """All providers that may receive requests."""
@@ -454,6 +465,14 @@ class AICodingConfig(_Strict):
                 f"security.network 'local-only' forbids egress, but external AI provider(s) "
                 f"are configured: {names}"
             )
+        if self.security.network is NetworkPolicy.LOCAL_ONLY:
+            # A local provider type is not enough: base_url decides where the code goes.
+            for where, route in self.ai.routes_in_use():
+                if route.base_url and not is_local_endpoint(route.base_url):
+                    raise ValueError(
+                        f"security.network 'local-only' forbids egress, but {where} sends "
+                        f"requests to {route.base_url} (not a local or private host)"
+                    )
         if self.execution.backend is ExecutionBackend.GITHUB_ACTIONS and (
             self.security.network is NetworkPolicy.LOCAL_ONLY
         ):

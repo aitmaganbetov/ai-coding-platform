@@ -122,8 +122,13 @@ jobs:
       - name: Pull the digest-pinned PostgreSQL used by the server tests
         # Keep in sync with POSTGRES_IMAGE in tests/integration/test_postgres.py.
         run: docker pull --quiet mirror.gcr.io/library/postgres@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
-      - name: Sandbox and audit integration tests (no skips allowed)
-        run: uv run pytest -m "docker or integration" -rs --junitxml=junit-sandbox.xml
+      - name: Sandbox, audit and acceptance tests AC-01…AC-10 (no skips allowed)
+        run: >-
+          uv run pytest -m "docker or integration" -rs --junitxml=junit-sandbox.xml
+          --acceptance-report=acceptance/acceptance.json
+      - name: Acceptance matrix in the job summary
+        if: always()
+        run: if [ -f acceptance/acceptance.md ]; then cat acceptance/acceptance.md >> "$GITHUB_STEP_SUMMARY"; fi
       - name: Fail if any Docker test was skipped
         run: |
           if grep -q '<skipped' junit-sandbox.xml; then
@@ -142,6 +147,7 @@ jobs:
           path: |
             audit-out/
             junit-sandbox.xml
+            acceptance/
           retention-days: 30
 
   build:

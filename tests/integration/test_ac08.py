@@ -195,6 +195,7 @@ def check_audit(s: Scene) -> None:
     }
 
 
+@pytest.mark.acceptance("AC-08")
 async def test_two_projects_rbac_and_no_context_leak(server: Server) -> None:
     with TestClient(create_app(server)) as c:
         s = Scene(c, server.settings.allowed_roots[0])

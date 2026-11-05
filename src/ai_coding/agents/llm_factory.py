@@ -16,11 +16,12 @@ from pathlib import Path
 import httpx
 
 from ai_coding.config.models import AICodingConfig, ModelRoute
-from ai_coding.domain.enums import AgentName
+from ai_coding.domain.enums import AgentName, NetworkPolicy, ProviderName
 from ai_coding.llm.cache import ResponseCache
 from ai_coding.llm.guard import Budget, PolicyGate, UsageRecorder
-from ai_coding.llm.providers import make_provider
+from ai_coding.llm.providers import OLLAMA_BASE_URL, make_provider
 from ai_coding.llm.router import Route, RoutedLLM
+from ai_coding.security.endpoints import Resolver, resolves_locally
 
 
 class LLMUnavailableError(RuntimeError):
@@ -59,6 +60,22 @@ def plan_chain(
     return ChainPlan(routes=tuple(routes), skipped=tuple(skipped))
 
 
+def _local_only(config: AICodingConfig, plan: ChainPlan, resolver: Resolver | None) -> ChainPlan:
+    """Under ``security.network: local-only`` drop routes whose host resolves outside the
+    local environment (ТЗ §12): the configuration check alone cannot see DNS."""
+    if config.security.network is not NetworkPolicy.LOCAL_ONLY:
+        return plan
+    routes, skipped = [], list(plan.skipped)
+    for route in plan.routes:
+        url = route.base_url or (OLLAMA_BASE_URL if route.provider is ProviderName.OLLAMA else "")
+        ok, reason = resolves_locally(url, resolver) if url else (False, "no endpoint")
+        if ok:
+            routes.append(route)
+        else:
+            skipped.append(f"{route.provider.value}/{route.model}: local-only policy: {reason}")
+    return ChainPlan(routes=tuple(routes), skipped=tuple(skipped))
+
+
 def build_llm(
     config: AICodingConfig,
     agent: AgentName,
@@ -69,10 +86,11 @@ def build_llm(
     cache_dir: Path | None = None,
     env: Mapping[str, str] | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
+    resolver: Resolver | None = None,
 ) -> RoutedLLM:
     """Routed, guarded LLM for ``agent``; raises :class:`LLMUnavailableError`."""
     env = os.environ if env is None else env
-    plan = plan_chain(config, agent, env)
+    plan = _local_only(config, plan_chain(config, agent, env), resolver)
     if not plan.routes:
         raise LLMUnavailableError("no usable model route: " + "; ".join(plan.skipped))
     ai = config.ai

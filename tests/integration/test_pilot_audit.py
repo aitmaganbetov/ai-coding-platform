@@ -49,6 +49,7 @@ def audit(root: Path, out: Path) -> tuple[int, dict]:  # type: ignore[type-arg]
     return result.exit_code, json.loads(result.output)
 
 
+@pytest.mark.acceptance("AC-02")
 def test_laravel_react_pilot_audit(pilot: Path, tmp_path: Path) -> None:
     require_images(GITLEAKS_IMAGE, SEMGREP_IMAGE, TRIVY_IMAGE, COMPOSER_IMAGE)
     with_osv = DockerSandboxExecutor().image_present(OSV_IMAGE)
