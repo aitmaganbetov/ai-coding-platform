@@ -1,10 +1,10 @@
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Bot, Code2, CornerDownLeft, FolderGit2, FolderPlus, LogOut, Moon, PanelLeft, Search, ShieldCheck, Sparkles, Sun } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { api, errorText } from "../api";
+import { api, errorText, type Me } from "../api";
 import { queryClient, useProjects, useRuns } from "../data/queries";
 import { Kbd, RUN_STATES, toast } from "../ui";
-import { href, NAV } from "./routes";
+import { href, visibleNav } from "./routes";
 import { useUi } from "./store";
 
 interface Command {
@@ -21,7 +21,7 @@ const go = (target: string) => () => {
   window.location.hash = target;
 };
 
-export function CommandPalette({ onLogout }: { onLogout: () => void }) {
+export function CommandPalette({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const { paletteOpen, setPalette, projectId, setProject, toggleSidebar, setCopilot, theme, setTheme } = useUi();
   const projects = useProjects();
   const runs = useRuns();
@@ -49,7 +49,7 @@ export function CommandPalette({ onLogout }: { onLogout: () => void }) {
 
   const commands = useMemo<Command[]>(() => {
     const current = projects.data?.find((p) => p.id === projectId);
-    const out: Command[] = NAV.map((item) => ({
+    const out: Command[] = visibleNav(me).map((item) => ({
       id: `nav-${item.id}`,
       group: "Перейти",
       label: item.label,
@@ -118,7 +118,7 @@ export function CommandPalette({ onLogout }: { onLogout: () => void }) {
       });
     }
     return out;
-  }, [projects.data, runs.data, projectId, theme, onLogout, setCopilot, setProject, setTheme, toggleSidebar]);
+  }, [me, projects.data, runs.data, projectId, theme, onLogout, setCopilot, setProject, setTheme, toggleSidebar]);
 
   const shown = useMemo(() => {
     const words = text.toLowerCase().split(/\s+/).filter(Boolean);

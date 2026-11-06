@@ -61,7 +61,7 @@ from ai_coding.api.workspace_broker import (
     WorkspaceRef,
     make_broker,
 )
-from ai_coding.domain.enums import Role
+from ai_coding.domain.enums import Role, Severity
 from ai_coding.observability import get_logger
 
 _log = get_logger(__name__)
@@ -317,7 +317,7 @@ def login(body: LoginIn, request: Request, server: Srv) -> dict[str, Any]:
 
 
 @auth.get("/me")
-def me(caller: Caller, server: Srv) -> dict[str, Any]:
+def me(request: Request, caller: Caller, server: Srv) -> dict[str, Any]:
     scope = caller.token_project_id
     return {
         "username": caller.username,
@@ -326,6 +326,8 @@ def me(caller: Caller, server: Srv) -> dict[str, Any]:
         "token_id": str(caller.token_id) if caller.token_id else None,
         "token_project_id": str(scope) if scope else None,
         "token_max_role": caller.token_max_role.value if caller.token_max_role else None,
+        # Opt-in modules the Web UI may show; access is still checked per request.
+        "features": {"security_center": bool(request.app.state.security_center)},
     }
 
 
@@ -687,6 +689,42 @@ def system(request: Request, caller: Caller, server: Srv) -> dict[str, Any]:
     return server.system_status(caller, workspaces=request.app.state.broker is not None)
 
 
+# ------------------------------------------------------ AI Security Center --
+# Opt-in (AI_CODING_SERVER_SECURITY_CENTER, docs/security-center.md): mounted only when
+# enabled, so a disabled server has neither these routes nor their OpenAPI entries.
+center = APIRouter(prefix=API, tags=["security-center"])
+SourceFilter = Annotated[str | None, Query(pattern=r"^[a-z0-9][a-z0-9._-]{0,99}$")]
+StatusFilter = Annotated[str | None, Query(pattern=r"^[a-z][a-z_-]{0,19}$")]
+
+
+@center.get("/projects/{project_id}/security-center/runs/{run_id}")
+def security_center(
+    project_id: uuid.UUID,
+    run_id: uuid.UUID,
+    caller: Caller,
+    server: Srv,
+    *,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    offset: Annotated[int, Query(ge=0, le=100_000)] = 0,
+    severity: Annotated[Severity | None, Query()] = None,
+    source: SourceFilter = None,
+    status: StatusFilter = None,
+) -> dict[str, Any]:
+    """Coverage, severity counts and a filtered page of safe findings of one run."""
+    return server.security_center(
+        caller, project_id, run_id, limit=limit, offset=offset,
+        severity=severity.value if severity else None, source=source, status=status,
+    )  # fmt: skip
+
+
+@center.get("/projects/{project_id}/security-center/runs/{run_id}/findings/{finding_id}")
+def security_center_finding(
+    project_id: uuid.UUID, run_id: uuid.UUID, finding_id: uuid.UUID, caller: Caller, server: Srv
+) -> dict[str, Any]:
+    """One finding of the run: allowlisted facts, no scanner message or raw evidence."""
+    return server.security_center_finding(caller, project_id, run_id, finding_id)
+
+
 # --------------------------------------------------------------- workspace --
 workspace = APIRouter(prefix=API, tags=["workspace"])
 Scope = Annotated[Literal["workspace", "project"], Query()]
@@ -921,6 +959,7 @@ def create_app(
     run_worker: bool = False,
     multi_process: bool = False,
     broker: Broker | Literal["auto"] | None = "auto",
+    security_center_enabled: bool | None = None,
 ) -> FastAPI:
     """The API application bound to ``server`` (and the Web UI, when built).
 
@@ -928,8 +967,12 @@ def create_app(
     larger ones run ``ai-coding server worker`` processes separately. ``multi_process``:
     this is one of several API processes on the same database (``serve --workers N``).
     ``broker`` drives the workspace terminals (default: from ``AI_CODING_SERVER_WORKSPACES``).
+    ``security_center_enabled`` mounts the AI Security Center (default: from
+    ``AI_CODING_SERVER_SECURITY_CENTER``, off).
     """
     settings = server.settings
+    if security_center_enabled is None:
+        security_center_enabled = settings.security_center
     metrics = Metrics(server)
     terminals = make_broker(settings) if broker == "auto" else broker
 
@@ -962,6 +1005,7 @@ def create_app(
     )
     app.state.server = server
     app.state.broker = terminals
+    app.state.security_center = security_center_enabled
     shared = shared_rate_limits(
         settings.rate_limit_backend, is_sqlite=server.db.is_sqlite, multi_process=multi_process
     )
@@ -976,6 +1020,8 @@ def create_app(
     app.middleware("http")(_guard)
     for router in (ops, auth, projects, runs, insights, workspace):
         app.include_router(router)
+    if security_center_enabled:
+        app.include_router(center)
     if ui_dir is not None and (ui_dir / "index.html").is_file():
         app.mount("/", StaticFiles(directory=ui_dir, html=True), name="ui")
     return app
