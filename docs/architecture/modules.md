@@ -58,7 +58,8 @@ ai-coding-platform/
 │   ├── integrations/  ✅ S4 порт RepositoryHost; github/: клиент, App/token, PR, checks, rulesets, Actions executor
 │   ├── agents/        ✅ S5 requirements, architect, planner, bootstrap; ✅ S6 developer, reviewer, database, planner.migration; ✅ S7 security, qa, performance, devops, maintenance
 │   ├── workflows/     ✅ S3 audit; ✅ S4 pull_request; ✅ S5 create; ✅ S6 develop, modernize, review, implement-цикл; ✅ S7 maintain
-│   └── api/           ✅ S8 services (auth, RBAC, изоляция), app (FastAPI), worker (очередь в БД, пул),
+│   └── api/           ✅ S8 services — фасад Server из core (ошибки, доступ, RBAC, изоляция), idempotency,
+│                           accounts (пользователи, токены), projects, runs; app (FastAPI), worker (очередь в БД, пул),
 │                           kinds, lifecycle (экспорт, retention), metrics, limits (ADR-0030); ✅ S9 общий rate limiter (ADR-0034)
 ├── tests/
 │   ├── unit/          ✅
