@@ -94,6 +94,8 @@ def test_networked_step_reaches_only_allowed_hosts(tmp_path: Path) -> None:
     sandbox = DockerSandboxExecutor(
         docker_config=DockerConfig(network="bridge")
     )  # policy allows it
+    # Long-lived gateways of workspace terminals (ADR-0036) may run on the same daemon.
+    before = _leftovers()
     result = asyncio.run(sandbox.run(spec))
     assert result.exit_code == 0, result.stderr
     seen = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
@@ -102,7 +104,7 @@ def test_networked_step_reaches_only_allowed_hosts(tmp_path: Path) -> None:
     assert seen["direct"] == "NO-ROUTE" and seen["dns"] == "NO-DNS"  # no way around
     assert "egress denied by policy: example.com:443" in result.stderr
     assert "localhost.:443 (resolves to non-public" in result.stderr
-    assert _leftovers() == ""  # the network and the proxy are gone
+    assert _leftovers() == before  # the step's network and proxy are gone
     if not _internet():
         pytest.skip("no verified HTTPS to the internet from containers here (CI checks it)")
     assert seen["allowed"].startswith("OK"), seen  # the allowlisted registry works

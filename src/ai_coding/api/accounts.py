@@ -8,6 +8,7 @@ from datetime import timedelta
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from ai_coding.api.core import (
     ConflictError,
@@ -86,6 +87,87 @@ class AccountService(ServerCore):
             else:
                 cred.password_hash = hashed
             self.record(s, actor, "user.password", Outcome.SUCCESS, target=username)
+
+    # ------------------------------------------------------------- admin --
+    def require_admin(self, principal: Principal, action: str) -> None:
+        """Instance administrators with an unscoped token only; a refusal is recorded."""
+        if principal.is_admin and principal.token_project_id is None:
+            return
+        self._denied(principal.username, "access.admin", target=action)
+        raise ForbiddenError(f"only instance administrators may {action}")
+
+    def list_users(self, principal: Principal) -> list[dict[str, Any]]:
+        """All users of the instance (administrators)."""
+        self.require_admin(principal, "list users")
+        with self.session() as s:
+            return [_user_row(u) for u in s.scalars(select(User).order_by(User.username))]
+
+    def update_user(
+        self,
+        principal: Principal,
+        username: str,
+        *,
+        display_name: str | None = None,
+        is_admin: bool | None = None,
+        is_active: bool | None = None,
+    ) -> dict[str, Any]:
+        """Change a user's name, administrator flag or status (administrators).
+
+        Blocking revokes every token of the user: a blocked user is signed out at once
+        and, once unblocked, signs in again. An administrator can neither demote nor block
+        themselves, so the instance always keeps an active administrator.
+        """
+        self.require_admin(principal, "change users")
+        with self.session() as s:
+            user = s.scalar(select(User).where(User.username == username))
+            if user is None:
+                raise NotFoundError(f"user '{username}' not found")
+            if user.id == principal.user_id and (is_admin is False or is_active is False):
+                raise ConflictError("administrators cannot demote or block themselves")
+            changes: dict[str, Any] = {}
+            shown = (display_name.strip() or user.username) if display_name is not None else None
+            if shown is not None and shown != user.display_name:
+                user.display_name = shown
+                changes["display_name"] = shown
+            if is_admin is not None and is_admin != user.is_admin:
+                user.is_admin = is_admin
+                changes["is_admin"] = is_admin
+            if is_active is not None and is_active != user.is_active:
+                user.is_active = is_active
+                changes["is_active"] = is_active
+                if not is_active:
+                    changes["tokens_revoked"] = _revoke_all_tokens(s, user.id)
+            if changes:
+                self.record(
+                    s,
+                    principal.username,
+                    "user.update",
+                    Outcome.SUCCESS,
+                    target=user.username,
+                    details=changes,
+                )
+            s.flush()
+            return _user_row(user)
+
+    def reset_password(self, principal: Principal, username: str, password: str) -> None:
+        """Set another user's password (administrators)."""
+        self.require_admin(principal, "reset passwords")
+        self.set_password(username, password, actor=principal.username)
+
+    def change_own_password(self, principal: Principal, current: str, new: str) -> None:
+        """Replace the caller's password after checking the current one."""
+        if principal.token_project_id is not None:
+            raise ForbiddenError("a project-scoped token cannot change the password")
+        with self.session() as s:
+            cred = s.get(Credential, principal.user_id)
+            if cred is None or not verify_password(cred.password_hash, current):
+                self._denied(principal.username, "user.password", target=principal.username)
+                # Not 401: the caller's token is valid, only the old password is wrong.
+                raise InvalidError("the current password is incorrect")
+            cred.password_hash = hash_password(new)
+            self.record(
+                s, principal.username, "user.password", Outcome.SUCCESS, target=principal.username
+            )
 
     def login(self, username: str, password: str) -> Principal | None:
         """Verify a password; ``None`` on failure (same timing for unknown users)."""
@@ -235,3 +317,25 @@ class AccountService(ServerCore):
         )
         self.revoke_token(principal, token_id)
         return token, new_id
+
+
+def _user_row(user: User) -> dict[str, Any]:
+    return {
+        "id": str(user.id),
+        "username": user.username,
+        "display_name": user.display_name,
+        "is_admin": user.is_admin,
+        "is_active": user.is_active,
+        "created_at": iso_or_none(user.created_at),
+    }
+
+
+def _revoke_all_tokens(s: Session, user_id: uuid.UUID) -> int:
+    """Revoke the user's live tokens; their number."""
+    now = utcnow()
+    live = s.scalars(
+        select(ApiToken).where(ApiToken.user_id == user_id, ApiToken.revoked_at.is_(None))
+    ).all()
+    for row in live:
+        row.revoked_at = now
+    return len(live)

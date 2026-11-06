@@ -12,9 +12,15 @@ x-server: &server
     AI_CODING_SERVER_DATABASE_URL: postgresql+psycopg://aicoding:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/aicoding
     AI_CODING_SERVER_DATA_DIR: ${AI_CODING_DATA:-/srv/ai-coding}
     TMPDIR: ${AI_CODING_DATA:-/srv/ai-coding}/tmp
+    # Offline data of the analysers (vulnerability databases of Trivy and OSV-Scanner):
+    # under the data directory, at the same path on the host, so the sandboxes can mount
+    # it and it outlives the containers. Filled by: docker compose exec worker ai-coding tools pull
+    AI_CODING_CACHE_DIR: ${AI_CODING_DATA:-/srv/ai-coding}/cache
     AI_CODING_SERVER_METRICS_TOKEN: ${AI_CODING_SERVER_METRICS_TOKEN:-}
     AI_CODING_SERVER_RETENTION_DAYS: ${AI_CODING_SERVER_RETENTION_DAYS:-0}
     AI_CODING_SERVER_WORKERS: ${AI_CODING_SERVER_WORKERS:-10}
+    # Signs the API's requests to the workspace service (browser terminals, ADR-0036).
+    AI_CODING_SERVER_WORKSPACE_SECRET: ${AI_CODING_SERVER_WORKSPACE_SECRET:?set AI_CODING_SERVER_WORKSPACE_SECRET in deploy/.env (openssl rand -hex 32)}
   security_opt: [no-new-privileges:true]
   cap_drop: [ALL]
   read_only: true
@@ -43,6 +49,8 @@ services:
     environment:
       <<: *server-env
       AI_CODING_SERVER_TRUSTED_PROXIES: caddy
+      # The API has no Docker access: terminals are started by the workspace service.
+      AI_CODING_SERVER_WORKSPACES: http://workspace:8001
     volumes:
       - ${AI_CODING_DATA:-/srv/ai-coding}:${AI_CODING_DATA:-/srv/ai-coding}
     networks: [backend]
@@ -55,10 +63,44 @@ services:
     # must exist on the host, hence the data directory is mounted at the same path.
     # Only the worker has the socket; sandboxes never get it (ADR-0018).
     group_add: ["${DOCKER_GID:-999}"]
+    # The image's healthcheck probes the API's /healthz, which the worker does not serve.
+    # The worker's own dependency is the daemon: this fails on a missing socket or an
+    # unsupported API version.
+    healthcheck:
+      test: ["CMD", "docker", "version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     volumes:
       - ${AI_CODING_DATA:-/srv/ai-coding}:${AI_CODING_DATA:-/srv/ai-coding}
       - /var/run/docker.sock:/var/run/docker.sock
     networks: [backend]
+
+  workspace:
+    <<: *server
+    command: ["workspaces", "--host", "0.0.0.0", "--port", "8001"]
+    # Browser terminals of the users' workspaces (ADR-0036): a container per user and
+    # project from the ai-coding-workspace image, started through the host's Docker daemon
+    # like the worker's sandboxes (same-path data directory). Only the API reaches this
+    # service, with signed tickets; the workspace containers never get the socket.
+    group_add: ["${DOCKER_GID:-999}"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(urllib.request.urlopen('http://127.0.0.1:8001/healthz',timeout=4).status!=200)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - ${AI_CODING_DATA:-/srv/ai-coding}:${AI_CODING_DATA:-/srv/ai-coding}
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [backend]
+
+  # Image of the workspace terminals (Claude Code, Codex, git, Node, Python). Built, never
+  # run as a service: docker compose -f deploy/docker-compose.yml --profile build build workspace-image
+  workspace-image:
+    image: ai-coding-workspace:local
+    build:
+      context: ./workspace
+    profiles: ["build"]
 
   caddy:
     image: mirror.gcr.io/library/caddy@sha256:f6228111e5fafa1a5238258d0858e103f10599b8d1659a146e7726681a002bb9

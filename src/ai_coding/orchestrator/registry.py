@@ -67,6 +67,14 @@ class StepContext:
     record_usage: Callable[[ProviderName, str, TokenUsage, float], None]
     record_findings: Callable[[Sequence[Finding]], int]
     project_id: uuid.UUID | None = None
+    # The tree a server run examines when it is not the project's own: a snapshot of a
+    # user's workspace (ADR-0038). Configuration, baseline and state stay the project's.
+    source_root: Path | None = None
+
+    @property
+    def tree(self) -> Path:
+        """The files the step examines (scanners, stacks, context)."""
+        return self.source_root or self.project_root
 
     @property
     def cancelled(self) -> bool:

@@ -31,7 +31,13 @@ pytestmark = pytest.mark.integration
 PASSWORD = "correct horse battery staple"
 MARKER = "VICTIM_SECRET_MARKER_5e1d"
 PUBLIC = {("POST", "/api/v1/auth/login")}  # everything else needs credentials
-ADMIN_ONLY = {("POST", "/api/v1/users"), ("POST", "/api/v1/projects")}
+ADMIN_ONLY = {
+    ("GET", "/api/v1/users"),
+    ("POST", "/api/v1/users"),
+    ("PATCH", "/api/v1/users/{username}"),
+    ("PUT", "/api/v1/users/{username}/password"),
+    ("GET", "/api/v1/system"),
+}
 
 
 @pytest.fixture

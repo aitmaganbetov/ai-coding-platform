@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 from dataclasses import replace
 from pathlib import Path
@@ -41,6 +42,24 @@ def sandbox_entry(adapter: object) -> tuple[str, ...]:
     """
     entry = getattr(adapter, "sandbox_entry", None)
     return tuple(entry) if entry else (adapter.spec.binary,)  # type: ignore[attr-defined]
+
+
+def stage_rules(config: Path) -> Path:
+    """A copy of a Semgrep rules file in the platform cache, for the sandbox to mount.
+
+    The Docker daemon mounts paths of its host: in a containerised worker (docker-compose)
+    the platform package's own rules exist only inside the worker's image, while the cache
+    lives in the data directory, at the same path on the host (ADR-0018). One copy per
+    content, written atomically.
+    """
+    data = config.read_bytes()
+    target = tool_cache("semgrep-rules") / hashlib.sha256(data).hexdigest()[:16] / config.name
+    if not target.is_file():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        partial = target.with_name(f".{target.name}.partial")
+        partial.write_bytes(data)
+        partial.replace(target)
+    return target
 
 
 class ToolRunner:
@@ -115,8 +134,9 @@ class ToolRunner:
                 extra["cache"] = SANDBOX_CACHE
             if isinstance(adapter, SemgrepAdapter):
                 config = self.semgrep_config or (bundled_rules_dir() / "ai-coding-baseline.yml")
-                mounts.append(Mount(config.parent, SANDBOX_RULES, read_only=True))
-                extra["config"] = f"{SANDBOX_RULES}/{config.name}"
+                staged = stage_rules(config)
+                mounts.append(Mount(staged.parent, SANDBOX_RULES, read_only=True))
+                extra["config"] = f"{SANDBOX_RULES}/{staged.name}"
             return SANDBOX_SRC, extra, tuple(mounts)
         if isinstance(adapter, SemgrepAdapter):
             config = self.semgrep_config or (bundled_rules_dir() / "ai-coding-baseline.yml")

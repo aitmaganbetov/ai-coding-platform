@@ -8,8 +8,11 @@
 | auditor | read reports, logs and the audit trail; no changes |
 | agent | read the project's runs and results with a short-lived, project-scoped token |
 
-Instance administrators create users and projects; they get no implicit access to a
-project's data (least privilege): they must be made members like anyone else.
+Instance administrators manage users. Every user creates projects (Git URL, uploaded
+folder, server directory) and becomes their owner, unless
+``AI_CODING_SERVER_PROJECT_CREATORS=admins`` reserves that to administrators.
+Administrators get no implicit access to a project's data (least privilege): they must
+be made members like anyone else.
 """
 
 from __future__ import annotations
@@ -32,6 +35,8 @@ class Permission(StrEnum):
     FINDINGS_VIEW = "findings.view"
     ARTIFACTS_VIEW = "artifacts.view"
     AUDIT_VIEW = "audit.view"
+    FILES_VIEW = "files.view"  # read the project's files in the Web UI
+    WORKSPACE_USE = "workspace.use"  # own workspace: terminal, editing, commits
     MEMBERS_MANAGE = "members.manage"
     PROJECT_EXPORT = "project.export"
     PROJECT_DELETE = "project.delete"
@@ -55,12 +60,21 @@ MATRIX: dict[Role, frozenset[Permission]] = {
             Permission.RUN_CANCEL_ANY,
             Permission.RUN_APPROVE,
             Permission.AUDIT_VIEW,
+            Permission.FILES_VIEW,
+            Permission.WORKSPACE_USE,
         }
     ),
     Role.DEVELOPER: frozenset(
-        {*_READ, Permission.RUN_CREATE, Permission.RUN_CREATE_CHANGES, Permission.RUN_CANCEL_OWN}
+        {
+            *_READ,
+            Permission.RUN_CREATE,
+            Permission.RUN_CREATE_CHANGES,
+            Permission.RUN_CANCEL_OWN,
+            Permission.FILES_VIEW,
+            Permission.WORKSPACE_USE,
+        }
     ),
-    Role.AUDITOR: frozenset({*_READ, Permission.AUDIT_VIEW}),
+    Role.AUDITOR: frozenset({*_READ, Permission.AUDIT_VIEW, Permission.FILES_VIEW}),
     Role.AGENT: frozenset(_READ),
 }
 

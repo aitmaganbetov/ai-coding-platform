@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import io
+import subprocess
+import tarfile
 import uuid
 from collections.abc import Iterator
 from dataclasses import replace
@@ -138,6 +141,252 @@ def test_users_projects_members_and_isolation(client: TestClient, server: Server
     assert client.get(f"/api/v1/runs/{rid}", headers=dev).status_code == 404
     events = client.get("/api/v1/audit-events", params={"project_id": pid}, headers=admin).json()
     assert {"run.create", "run.cancel", "project.member"} <= {e["action"] for e in events}
+
+
+def test_user_administration(client: TestClient, server: Server) -> None:
+    admin, dev = login(client, "admin"), login(client, "dev")
+    for method, path, body in (("GET", "/api/v1/users", None),
+                               ("PATCH", "/api/v1/users/outsider", {"is_active": False}),
+                               ("PUT", "/api/v1/users/outsider/password",
+                                {"password": "x" * 12})):  # fmt: skip
+        assert client.request(method, path, headers=dev, json=body).status_code == 403
+    users = client.get("/api/v1/users", headers=admin).json()
+    assert [u["username"] for u in users] == ["admin", "dev", "outsider"]
+    assert users[0]["is_admin"] is True and users[1]["is_active"] is True
+
+    # Blocking signs the user out at once and refuses new logins; unblocking restores them.
+    blocked = client.patch("/api/v1/users/dev", headers=admin, json={"is_active": False})
+    assert blocked.status_code == 200 and blocked.json()["is_active"] is False
+    assert client.get("/api/v1/me", headers=dev).status_code == 401
+    creds = {"username": "dev", "password": PASSWORD}
+    assert client.post("/api/v1/auth/login", json=creds).status_code == 401
+    client.patch("/api/v1/users/dev", headers=admin, json={"is_active": True})
+    dev = login(client, "dev")
+    assert client.get("/api/v1/me", headers=dev).status_code == 200
+
+    promoted = client.patch("/api/v1/users/dev", headers=admin,
+                            json={"is_admin": True, "display_name": "  Dev One "})  # fmt: skip
+    assert promoted.json()["is_admin"] is True and promoted.json()["display_name"] == "Dev One"
+    assert client.get("/api/v1/me", headers=dev).json()["is_admin"] is True
+    for change in ({"is_admin": False}, {"is_active": False}):  # never lock oneself out
+        own = client.patch("/api/v1/users/admin", headers=admin, json=change)
+        assert own.status_code == 409
+    missing = client.patch("/api/v1/users/nobody", headers=admin, json={"is_admin": True})
+    assert missing.status_code == 404
+
+    new_password = "a brand new password"
+    reset = client.put("/api/v1/users/outsider/password", headers=admin,
+                       json={"password": new_password})  # fmt: skip
+    assert reset.status_code == 204
+    assert (
+        client.post(
+            "/api/v1/auth/login", json={"username": "outsider", "password": new_password}
+        ).status_code
+        == 201
+    )
+    short = client.put("/api/v1/users/outsider/password", headers=admin, json={"password": "short"})
+    assert short.status_code == 422
+
+    events = client.get("/api/v1/audit-events", headers=admin).json()
+    actions = {(e["action"], e["outcome"]) for e in events}
+    assert {("user.update", "success"), ("user.password", "success"),
+            ("access.admin", "denied")} <= actions  # fmt: skip
+
+
+def test_change_own_password(client: TestClient, server: Server) -> None:
+    admin, dev = login(client, "admin"), login(client, "dev")
+    wrong = client.put("/api/v1/me/password", headers=dev,
+                       json={"current_password": "not it", "new_password": "x" * 12})  # fmt: skip
+    # 422, not 401: the UI drops its session on a 401, the token itself is fine.
+    assert wrong.status_code == 422 and "current password" in wrong.json()["error"]["message"]
+    changed = client.put("/api/v1/me/password", headers=dev,
+                         json={"current_password": PASSWORD,
+                               "new_password": "my new long password"})  # fmt: skip
+    assert changed.status_code == 204
+    assert client.get("/api/v1/me", headers=dev).status_code == 200  # the session stays
+    old = client.post("/api/v1/auth/login", json={"username": "dev", "password": PASSWORD})
+    assert old.status_code == 401
+    # /me names the session's token, so the UI can tell it apart in the token list.
+    me = client.get("/api/v1/me", headers=dev).json()
+    assert me["token_id"] in {t["id"] for t in client.get("/api/v1/tokens", headers=dev).json()}
+
+    # A project-scoped token cannot change the password.
+    pid = client.post("/api/v1/projects", headers=admin,
+                      json={"name": "pw", "path": repo(server, "pw")}).json()["id"]  # fmt: skip
+    client.put(f"/api/v1/projects/{pid}/members/dev", headers=admin, json={"role": "developer"})
+    scoped = client.post("/api/v1/tokens", headers=dev,
+                         json={"name": "p", "project_id": pid}).json()["token"]  # fmt: skip
+    denied = client.put("/api/v1/me/password", headers={"Authorization": f"Bearer {scoped}"},
+                        json={"current_password": "my new long password",
+                              "new_password": "yet another password"})  # fmt: skip
+    assert denied.status_code == 403
+
+
+def test_project_sources(client: TestClient, server: Server) -> None:
+    admin, dev = login(client, "admin"), login(client, "dev")
+    root = server.settings.allowed_roots[0]
+    repo(server, "alpha")
+    (root / "alpha" / ".git").mkdir()
+    repo(server, "beta")
+    (root / ".hidden").mkdir()
+    (root / "file.txt").write_text("x", encoding="utf-8")
+    outside = root.parent / "outside"
+    outside.mkdir()
+    (root / "escape").symlink_to(outside, target_is_directory=True)
+    created = client.post("/api/v1/projects", headers=admin,
+                          json={"name": "beta", "path": str(root / "beta")})  # fmt: skip
+    assert created.status_code == 201
+    sources = client.get("/api/v1/project-sources", headers=admin).json()
+    assert sources["git"] is True and sources["upload_max_bytes"] > 0
+    (listed,) = sources["roots"]
+    assert listed["path"] == str(root) and listed["used"] is True  # it contains "beta"
+    alpha = {"name": "alpha", "path": str(root / "alpha"), "git": True, "used": False,
+             "project": None}  # fmt: skip
+    beta = {"name": "beta", "path": str(root / "beta"), "git": False, "used": True}
+    assert listed["directories"] == [alpha, {**beta, "project": "beta"}]
+    # Every user sees the sources; another project's name only its members and admins.
+    (for_dev,) = client.get("/api/v1/project-sources", headers=dev).json()["roots"]
+    assert for_dev["directories"] == [alpha, {**beta, "project": None}]
+
+
+def test_every_user_creates_projects(client: TestClient, server: Server) -> None:
+    dev, outsider = login(client, "dev"), login(client, "outsider")
+    assert client.get("/api/v1/me", headers=dev).json()["can_create_projects"] is True
+    path = repo(server, "devproj")
+    made = client.post("/api/v1/projects", headers=dev, json={"name": "devproj", "path": path})
+    assert made.status_code == 201 and made.json()["role"] == "owner"
+    # A directory belongs to one project: the same one, a parent or a child are refused,
+    # or another user would reach the first project's files through a project of theirs.
+    (Path(path) / "sub").mkdir()
+    for other in (path, str(Path(path) / "sub"), str(Path(path).parent)):
+        r = client.post("/api/v1/projects", headers=outsider, json={"name": "steal", "path": other})
+        assert r.status_code == 409, (other, r.text)
+    assert client.get("/api/v1/projects", headers=outsider).json() == []
+    misuse = client.post("/api/v1/projects", headers=dev,
+                         json={"name": "x", "path": path, "git_token": "t"})  # fmt: skip
+    assert misuse.status_code == 422
+    # A token limited to a role below owner, or to a project, creates nothing.
+    capped = client.post("/api/v1/tokens", headers=dev,
+                         json={"name": "ro", "max_role": "auditor"}).json()["token"]  # fmt: skip
+    ro = {"Authorization": f"Bearer {capped}"}
+    assert client.get("/api/v1/me", headers=ro).json()["can_create_projects"] is False
+    denied = client.post("/api/v1/projects", headers=ro,
+                         json={"name": "ro", "path": repo(server, "ro")})  # fmt: skip
+    assert denied.status_code == 403
+
+
+def test_project_creation_restricted_to_admins(tmp_path: Path) -> None:
+    srv = Server(settings_for(tmp_path, project_creators="admins"))
+    srv.migrate()
+    srv.create_user("admin", PASSWORD, is_admin=True)
+    srv.create_user("dev", PASSWORD)
+    try:
+        with TestClient(create_app(srv)) as c:
+            dev = login(c, "dev")
+            assert c.get("/api/v1/me", headers=dev).json()["can_create_projects"] is False
+            assert c.get("/api/v1/project-sources", headers=dev).status_code == 403
+            body = {"name": "p", "path": repo(srv, "p")}
+            assert c.post("/api/v1/projects", headers=dev, json=body).status_code == 403
+            tar_headers = {**dev, "Content-Type": "application/x-tar"}
+            upload = c.post("/api/v1/projects/upload", params={"name": "u"},
+                            headers=tar_headers, content=_tar({"a.py": b"1"}))  # fmt: skip
+            assert upload.status_code == 403
+            assert c.post("/api/v1/projects", headers=login(c, "admin"), json=body).status_code \
+                == 201  # fmt: skip
+    finally:
+        srv.close()
+
+
+def _tar(files: dict[str, bytes], *, extra: list[tarfile.TarInfo] | None = None) -> bytes:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w", format=tarfile.PAX_FORMAT) as tar:
+        for name, data in files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        for info in extra or []:
+            tar.addfile(info)
+    return buffer.getvalue()
+
+
+def test_upload_a_project_folder(client: TestClient, server: Server) -> None:
+    dev = login(client, "dev")
+    tar_headers = {**dev, "Content-Type": "application/x-tar"}
+    link = tarfile.TarInfo("escape")
+    link.type, link.linkname = tarfile.SYMTYPE, "/etc/passwd"
+    archive = _tar(
+        {
+            "src/app.py": b"print('hi')\n",
+            "Мой файл.txt": "привет".encode(),
+            "README.md": b"# demo\n",
+            # Never taken from an upload: git config can make git run commands.
+            ".git/config": b"[core]\n\tfsmonitor = touch /tmp/pwned\n",
+            "vendor/lib/.git": b"gitdir: /etc\n",
+            ".ai-coding/state.db": b"local state",
+        },
+        extra=[link],
+    )
+    made = client.post("/api/v1/projects/upload", params={"name": "uploaded"},
+                       headers=tar_headers, content=archive)  # fmt: skip
+    assert made.status_code == 201, made.text
+    assert made.json()["role"] == "owner"
+    pid = uuid.UUID(made.json()["id"])
+    root = server.settings.projects_dir / str(pid)
+    assert (root / "src" / "app.py").read_text(encoding="utf-8") == "print('hi')\n"
+    assert (root / "Мой файл.txt").is_file()
+    assert not (root / "escape").exists() and not (root / "vendor" / "lib" / ".git").exists()
+    assert not (root / ".ai-coding" / "state.db").exists()
+    config = (root / ".git" / "config").read_text(encoding="utf-8")
+    assert "fsmonitor" not in config  # a fresh repository, not the uploaded one
+    log = subprocess.run(["git", "log", "--format=%an|%s", "main"], cwd=root, check=True,
+                         capture_output=True, text=True).stdout.splitlines()  # fmt: skip
+    assert log == ["dev|Import uploaded uploaded via the Web UI"]
+    tracked = subprocess.run(["git", "ls-files"], cwd=root, check=True, capture_output=True,
+                             text=True).stdout.split()  # fmt: skip
+    assert "src/app.py" in tracked and not any(t.startswith(".ai-coding") for t in tracked)
+    events = client.get("/api/v1/audit-events", params={"project_id": str(pid)}, headers=dev)
+    assert [e["target"] for e in events.json() if e["action"] == "project.create"] == ["uploaded"]
+    # A run works on the uploaded project like on any other.
+    run = client.post(f"/api/v1/projects/{pid}/runs", headers=dev, json={"kind": "discover"})
+    assert run.status_code == 201, run.text
+
+
+def test_upload_refusals(tmp_path: Path) -> None:
+    srv = Server(settings_for(tmp_path, max_upload_bytes=64 * 1024))  # tars pad to 10 KiB
+    srv.migrate()
+    srv.create_user("dev", PASSWORD)
+    try:
+        with TestClient(create_app(srv)) as c:
+            h = {**login(c, "dev"), "Content-Type": "application/x-tar"}
+
+            def upload(body: bytes, name: str = "p", **headers: str) -> int:
+                r = c.post("/api/v1/projects/upload", params={"name": name},
+                           headers={**h, **headers}, content=body)  # fmt: skip
+                assert r.status_code >= 400 or r.status_code == 201
+                if r.status_code >= 400:
+                    assert set(r.json()["error"]) >= {"code", "message"}
+                    assert str(tmp_path) not in r.text  # no server paths in errors
+                return r.status_code
+
+            assert upload(_tar({"a.py": b"1"}), **{"Content-Type": "application/zip"}) == 415
+            assert upload(b"not a tar archive at all" * 10) == 422
+            assert upload(_tar({})) == 422  # no files
+            assert upload(_tar({"../outside.py": b"x"})) == 422
+            assert not (tmp_path / "data" / "outside.py").exists()
+            assert upload(_tar({"big.bin": b"x" * 100_000})) == 413  # Content-Length
+            chunks = iter([b"x" * 40_000, b"x" * 40_000])
+            streamed = c.post("/api/v1/projects/upload", params={"name": "p"}, headers=h,
+                              content=chunks)  # fmt: skip
+            assert streamed.status_code == 413  # chunked, no Content-Length
+            assert upload(_tar({"a.py": b"1"}), name="bad name") == 422
+            assert upload(_tar({"a.py": b"1"})) == 201
+            assert upload(_tar({"a.py": b"1"})) == 409  # the name is taken
+            # Nothing is left behind by the refused uploads.
+            projects = srv.settings.projects_dir
+            assert len(list(projects.iterdir())) == 1
+            assert list((srv.settings.data_dir / "uploads").iterdir()) == []
+    finally:
+        srv.close()
 
 
 def test_idempotency_key(client: TestClient, server: Server) -> None:

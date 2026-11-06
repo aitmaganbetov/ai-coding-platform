@@ -10,7 +10,10 @@ assembled from one service per area, all built on :class:`~ai_coding.api.core.Se
 * :mod:`.idempotency` — ``Idempotency-Key`` replay;
 * :mod:`.accounts` — users, login and API tokens;
 * :mod:`.projects` — projects, their configuration and members;
-* :mod:`.runs` — runs, approvals, cancellation, artifacts, findings and the audit trail.
+* :mod:`.runs` — runs, approvals, cancellation, artifacts, findings and the audit trail;
+* :mod:`.insights` — read-only views for the Web UI: the agent catalogue, runs and
+  findings across the caller's projects, agent executions, LLM usage, system status;
+* :mod:`.workspaces` — members' workspaces and project files for the Web UI.
 
 Each operation is recorded in the append-only audit trail with actor, project, run and
 outcome (ТЗ §3).
@@ -27,13 +30,17 @@ from ai_coding.api.core import (
     NotFoundError,
     Principal,
     ServerCore,
+    TooLargeError,
     UnauthorizedError,
+    UnsupportedMediaTypeError,
 )
 from ai_coding.api.idempotency import IdempotencyService
+from ai_coding.api.insights import InsightService
 from ai_coding.api.runs import RunService
+from ai_coding.api.workspaces import WorkspaceService
 
 
-class Server(IdempotencyService, AccountService, RunService):
+class Server(IdempotencyService, InsightService, AccountService, RunService, WorkspaceService):
     """Facade used by the HTTP layer, the CLI and the workers."""
 
 
@@ -46,5 +53,7 @@ __all__ = [
     "Principal",
     "Server",
     "ServerCore",
+    "TooLargeError",
     "UnauthorizedError",
+    "UnsupportedMediaTypeError",
 ]

@@ -217,6 +217,31 @@ def serve(
     server.close()
 
 
+@app.command("workspaces")
+def workspaces(
+    host: Annotated[str, typer.Option("--host")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", min=1, max=65535)] = 8001,
+) -> None:
+    """Run the workspace service: browser terminals and git of the users' workspaces.
+
+    For deployments whose API has no Docker access (docker-compose): the API reaches this
+    service with ``AI_CODING_SERVER_WORKSPACES=http://<host>:<port>`` and tickets signed
+    by ``AI_CODING_SERVER_WORKSPACE_SECRET``. Never expose it outside the backend network.
+    """
+    import uvicorn  # noqa: PLC0415
+
+    from ai_coding.api.terminal import create_workspace_app  # noqa: PLC0415
+    from ai_coding.api.workspace_broker import LocalBroker  # noqa: PLC0415
+
+    server = _server(level="INFO")
+    if not server.settings.workspace_secret:
+        error("set AI_CODING_SERVER_WORKSPACE_SECRET (the same value as for the API)")
+        raise typer.Exit(ExitCode.USAGE)
+    app_ = create_workspace_app(server, LocalBroker(server.settings))
+    uvicorn.run(app_, host=host, port=port, server_header=False, log_level="info")
+    server.close()
+
+
 @app.command("worker")
 def worker(
     concurrency: Annotated[int | None, typer.Option("--concurrency", min=1, max=256)] = None,
@@ -301,6 +326,13 @@ def show_settings() -> None:
                 "trusted_proxies": sorted(s.trusted_proxies),
                 "metrics_token": "set" if s.metrics_token else None,
                 "retention_days": s.retention_days,
+                "project_creators": s.project_creators,
+                "max_upload_mb": s.max_upload_bytes // (1024 * 1024),
+                "workspaces": s.workspaces,
+                "workspace_secret": "set" if s.workspace_secret else None,
+                "workspace_image": s.workspace_image,
+                "workspace_egress": list(s.workspace_egress),
+                "workspace_runtime": s.workspace_runtime,
             },
             indent=2,
         )

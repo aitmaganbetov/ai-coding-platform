@@ -1,0 +1,15 @@
+#!/bin/sh
+# Entry point of a workspace container. It runs as the server's uid, which has no entry in
+# the image's /etc/passwd (read-only): write one for nss_wrapper (LD_PRELOAD) to /tmp.
+set -eu
+uid=$(id -u)
+gid=$(id -g)
+{
+  printf 'dev:x:%s:%s:dev:/home/dev:/bin/bash\n' "$uid" "$gid"
+  grep -v "^[^:]*:[^:]*:${uid}:" /etc/passwd || true
+} > /tmp/passwd
+{
+  printf 'dev:x:%s:\n' "$gid"
+  grep -v "^[^:]*:[^:]*:${gid}:" /etc/group || true
+} > /tmp/group
+exec "$@"

@@ -232,6 +232,9 @@ class Orchestrator:
         self.local_owner = local_owner
         self.config = config
         self.project_root = project_root.resolve()
+        # The tree the steps examine when it is not the project's own (the server's audits
+        # of a workspace snapshot); state, artifacts and configuration stay the project's.
+        self.source_root: Path | None = None
         self.registry = registry
         self.actor = actor or local_actor()
         self.worker_id = worker_id or f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
@@ -837,6 +840,7 @@ class Orchestrator:
             input=attempt.input,
             dependencies=self._dependency_outputs(task_id),
             project_root=self.project_root,
+            source_root=self.source_root,
             config=self.config,
             policy=rc.policy,
             cancel_event=rc.cancel_event,

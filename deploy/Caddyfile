@@ -1,7 +1,14 @@
 # TLS termination (automatic certificates) in front of the API (NFR-04).
 {$AI_CODING_DOMAIN} {
 	encode zstd gzip
-	request_body {
+	# A project folder uploaded from the Web UI is large; the API enforces its own limit
+	# (AI_CODING_SERVER_MAX_UPLOAD_MB, 500 MB by default). Everything else stays at 1 MB.
+	@upload path /api/v1/projects/upload
+	@other not path /api/v1/projects/upload
+	request_body @upload {
+		max_size 2GB
+	}
+	request_body @other {
 		max_size 1MB
 	}
 	reverse_proxy api:8000 {

@@ -1,0 +1,1424 @@
+#!/usr/bin/env python3
+"""AI chat agents of a workspace container (ADR-0037). Standard library only.
+
+``ai-coding-agent serve`` runs in the background in the user's workspace container and
+drives the official CLIs there, for the chat panel of the Web UI — the way the Claude
+Code and Codex extensions of VS Code drive them:
+
+* Claude Code: ``claude -p`` with stream-json input and output. Permission prompts come
+  back to this host (``--permission-prompts host --permission-prompt-tool stdio``) and
+  are answered from the chat: allow, allow for the session, deny.
+* Codex: ``codex app-server`` (JSON-RPC over stdio, the protocol of the Codex IDE
+  extension): threads, turns, approvals of commands and file changes, ChatGPT sign-in
+  with a device code.
+
+Chats outlive the browser: the daemon keeps the agents running, records every chat as
+JSON lines in ``~/.ai-coding/chats/<project>/`` and replays it to each client that
+connects (``ai-coding-agent connect``: stdio <-> the daemon's Unix socket). Users sign
+in to their own accounts in the official CLIs; this program never reads credentials.
+
+Client -> daemon (one JSON object per line): ``hello``, ``new`` {agent, mode},
+``open`` {session}, ``send`` {session, text, mode}, ``approve`` {session, id, decision},
+``interrupt`` {session}, ``login`` {agent}, ``status``.
+Daemon -> client: events ``{"t": ..., "session": ...}`` (see ``Session.emit``).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import hashlib
+import json
+import os
+import re
+import shlex
+import socket
+import subprocess
+import sys
+import threading
+import time
+import uuid
+from pathlib import Path
+from typing import Any, Callable
+
+SOCKET = os.environ.get("AI_CODING_AGENT_SOCKET", "/tmp/ai-coding-agent.sock")
+PROJECT = os.environ.get("AI_CODING_PROJECT", "default")
+CHATS = Path(os.environ.get("AI_CODING_CHATS") or Path.home() / ".ai-coding" / "chats" / PROJECT)
+WORKDIR = os.environ.get("AI_CODING_WORKDIR", "/workspace")
+# Requests to the platform (ADR-0038): a directory the API serves, mounted for this
+# workspace only. The agent acts as its user in this project; people approve runs.
+MAILBOX = os.environ.get("AI_CODING_PLATFORM_MAILBOX", "/platform")
+SELF = os.path.realpath(__file__)
+OUTPUT_LIMIT = 8000
+LINE_LIMIT = 16 * 1024 * 1024
+AGENTS = ("claude", "codex")
+MODES = ("ask", "edits", "plan", "full")
+CLAUDE_MODES = {"ask": "default", "edits": "acceptEdits", "plan": "plan", "full": "bypassPermissions"}
+# Codex runs without its own sandbox (bubblewrap needs user namespaces, which the
+# container does not have): the container is the sandbox. Approvals still apply.
+CODEX_POLICIES = {"ask": "untrusted", "edits": "on-request", "plan": "untrusted", "full": "never"}
+EXTERNAL_SANDBOX = {"type": "externalSandbox", "networkAccess": "enabled"}  # egress: the proxy
+# Given to both agents through their official options (--append-system-prompt,
+# developerInstructions): the answer follows the language of the question.
+LANGUAGE_PROMPT = (
+    "Always reply in the language of the user's most recent message (for example Kazakh, "
+    "Russian or English), including progress notes and the final summary. Keep code, "
+    "commands, file names and quoted output unchanged."
+)
+# The platform's modes (ТЗ): each chat works in one of them, chosen when it is created.
+# The rules reach the agent through its official options (--append-system-prompt,
+# developerInstructions); AUDIT is also enforced: writing tools are disabled and any action
+# that would need a permission is refused.
+COMMON_RULES = (
+    "You work inside the AI Coding Platform, in the user's own workspace: a git clone of the "
+    "project at /workspace (the project repository is the read-only remote 'project'). The "
+    "user chose a platform mode for this chat. Follow its process strictly and stay within "
+    "its scope: if a request belongs to another mode, name the mode that fits and do not do "
+    "it here. Never push and never commit to protected branches (main, master, release/*)."
+)
+PLATFORM_RULES = (
+    "PLATFORM TOOLS. The `platform` MCP server connects this chat to the AI Coding "
+    "Platform's orchestrator. `audit` runs the real analysers (Semgrep, Gitleaks, "
+    "Trivy/OSV, linters, tests...) in an isolated sandbox and evaluates the Quality Gates: "
+    "its findings are evidence; your own observations are opinions, label them so. Follow a "
+    "run with `run_status` (wait_seconds up to 45; call it again until the run finishes), "
+    "then read `run_report`. `start_task` hands a task to the orchestrator's own agents (a "
+    "branch or pull request in the project): use it only when the user asks for it. Runs "
+    "that need an approval wait for a person in the web UI: give the link, never claim an "
+    "approval. Write run links as #/runs/<id>."
+)
+WORKFLOWS: dict[str, dict[str, Any]] = {
+    "create": {"plan_first": True, "read_only": False, "prompt": (
+        "MODE: CREATE - a new project from the user's description. Work one stage at a "
+        "time; each stage ends with the user's approval. 1) Requirements: goals, functional "
+        "and non-functional requirements, user stories with acceptance criteria, assumptions, "
+        "open questions, in docs/requirements.md (versions v1, v2...); ask the user to approve "
+        "the version or answer the open questions. 2) Architecture: stack, modules without "
+        "circular dependencies, API and data model; one ADR per decision in docs/adr/. "
+        "3) Backlog: docs/backlog.md with tasks, dependencies, estimates, priorities and "
+        "milestones; every requirement covered. 4) Scaffold: module structure with structure "
+        "tests, CI, README and .ai-coding.yml, committed on branch ai/bootstrap; then run the "
+        "platform `audit` of the workspace and report its Quality Gates. Before changing "
+        "files, present the plan of the current stage and wait for approval.")},
+    "develop": {"plan_first": True, "read_only": False, "prompt": (
+        "MODE: DEVELOP - implement a feature or task in the existing project. 1) Read the "
+        "relevant code and restate the task with acceptance criteria. 2) Present a short plan "
+        "(files to change, tests to add, risks) and wait for the user's approval. 3) Create a "
+        "work branch ai/<short-task-name> from the current branch and implement the change with "
+        "tests, following the project's conventions; do not refactor unrelated code. 4) Run "
+        "the project's tests and linters and fix what you broke. 5) Commit with a clear "
+        "message, run the platform `audit` of the workspace and fix what blocks its Quality "
+        "Gates. 6) Report what changed, how it was verified (with the audit run) and what "
+        "remains. If the user asks to hand the task to the platform, use `start_task` with "
+        "kind 'develop' instead of implementing it here.")},
+    "modernize": {"plan_first": True, "read_only": False, "prompt": (
+        "MODE: MODERNIZE - refactor or modernize without changing behaviour. 1) Run the "
+        "existing tests and the platform `audit` of the workspace first (baseline); if the "
+        "tests fail, report and stop. At the end audit again and compare. 2) Analyse the "
+        "impact and present a plan of small, independently verifiable steps M-01, M-02, ... "
+        "and wait for approval. 3) On branch ai/modernize-<name>, one step at a time: change, "
+        "run the tests, commit as 'M-NN: <summary>' so each step can be reverted with git "
+        "revert, then stop and ask before the next step. No new features, no unrelated "
+        "changes: behaviour must stay the same.")},
+    "audit": {"plan_first": False, "read_only": True, "prompt": (
+        "MODE: AUDIT - read-only analysis. Never create, modify or delete files, never "
+        "commit, never install packages or run commands that change anything: writing tools "
+        "are disabled here. Read files with the read tools or read-only commands (cat, "
+        "sed -n, grep, rg, find, ls, git log/diff/show); anything else is refused. Start with "
+        "the platform `audit` of the workspace, wait for it "
+        "and base the report on its findings (cite the run); then add what tools cannot see, "
+        "marked as your review. Examine security (secrets, injection, authentication and "
+        "authorization, dependencies), code quality, architecture, performance and tests. "
+        "Report findings grouped by severity (critical, high, medium, low), each with "
+        "file:line, evidence, impact and a concrete recommendation; end with a short summary, "
+        "the top priorities, and the mode to fix them in (MAINTAIN, MODERNIZE or DEVELOP).")},
+    "maintain": {"plan_first": True, "read_only": False, "prompt": (
+        "MODE: MAINTAIN - fix bugs, update dependencies, keep the project healthy. 1) For each "
+        "issue reproduce or locate it, then present a prioritised plan (issue, fix, regression "
+        "test; dependency updates only to versions that fix known problems) and wait for "
+        "approval. 2) On branch ai/maintain-<name>, one item at a time: add a regression test "
+        "that fails before the fix, fix, run the tests, commit. 3) Report each item: cause, "
+        "fix, test, verification; before reporting, run the platform `audit` of the workspace "
+        "and fix what blocks its Quality Gates. No new features. If the user asks to hand the "
+        "work to the platform, use `start_task` with kind 'maintain'.")},
+}
+READ_ONLY_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
+PLATFORM_READ_TOOLS = ("info", "audit", "run_status", "run_report")  # change no file
+LOGIN_HINTS = ("/login", "not logged in", "invalid api key", "authentication", "oauth token")
+
+
+def clip(text: Any, limit: int = OUTPUT_LIMIT) -> str:
+    text = "" if text is None else str(text)
+    return text if len(text) <= limit else text[:limit] + f"\n… (+{len(text) - limit} символов)"
+
+
+def rel(path: Any) -> str:
+    text = str(path or "")
+    return text[len(WORKDIR) + 1 :] if text.startswith(WORKDIR + "/") else text
+
+
+# ---------------------------------------------------------- read-only commands --
+# AUDIT reads only. Claude Code's read tools work without a question; a shell command (both
+# agents read files with them) is let through when this conservative check proves that it
+# only reads: known reading programs, without writing options, substitutions, background
+# jobs or redirections other than to /dev/null. Anything else is refused, as before.
+READ_TOOLS = ("Read", "Grep", "Glob", "LS", "NotebookRead", "Task", "Agent", "TodoWrite")
+READ_PROGRAMS = {
+    "cat", "head", "tail", "ls", "tree", "find", "grep", "egrep", "fgrep", "rg", "wc",
+    "sort", "uniq", "cut", "tr", "nl", "file", "stat", "du", "df", "pwd", "echo", "printf",
+    "diff", "cmp", "comm", "basename", "dirname", "realpath", "readlink", "sed", "jq",
+    "column", "md5sum", "sha1sum", "sha256sum", "true", "test", "cd", "date", "id",
+    "whoami", "uname", "which", "git", "xargs",
+}  # fmt: skip
+GIT_READ = {"status", "log", "diff", "show", "blame", "ls-files", "ls-tree", "grep",
+            "rev-parse", "describe", "shortlog", "cat-file", "branch", "tag", "reflog"}  # fmt: skip
+FIND_WRITES = {"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0",
+               "-fprintf", "-fls"}  # fmt: skip
+SED_SCRIPT = re.compile(r"^(?:(?:\d+|\$|/[^/]*/)(?:,(?:\d+|\$|/[^/]*/))?)?[pq=]$")
+OPERATORS = {"|", "||", "&&", ";"}
+SHELLS = {"bash", "sh", "zsh"}
+
+
+def read_only_command(command: str) -> bool:
+    """Whether a shell command certainly only reads (see READ_PROGRAMS)."""
+    if any(s in command for s in ("\n", "\r", "$(", "${", "`", "<(", ">(")):
+        return False
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        return False
+    if len(tokens) == 3 and tokens[0] in SHELLS and tokens[1] in ("-c", "-lc"):
+        return read_only_command(tokens[2])  # Codex runs commands as `bash -lc '...'`
+    commands: list[list[str]] = [[]]
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token in OPERATORS:
+            commands.append([])
+        elif token in (">", ">>", ">|", "&>"):
+            target = tokens[index + 1] if index + 1 < len(tokens) else ""
+            if target != "/dev/null":
+                return False
+            if commands[-1] and commands[-1][-1].isdigit():
+                commands[-1].pop()  # the descriptor of 2>/dev/null
+            index += 1
+        elif token == ">&":
+            target = tokens[index + 1] if index + 1 < len(tokens) else ""
+            if not target.isdigit():
+                return False
+            if commands[-1] and commands[-1][-1].isdigit():
+                commands[-1].pop()
+            index += 1
+        elif token == "<":
+            index += 1  # reading a file is reading
+        elif set(token) <= set("|&;<>()"):
+            return False  # "&" (background) and anything unusual
+        else:
+            commands[-1].append(token)
+        index += 1
+    return all(command and _reads(command) for command in commands)
+
+
+def _reads(argv: list[str]) -> bool:
+    program, args = os.path.basename(argv[0]), argv[1:]
+    if program not in READ_PROGRAMS or "=" in argv[0]:
+        return False
+    if program == "find":
+        return not FIND_WRITES & set(args)
+    if program == "sed":
+        if any(a.startswith(("-i", "--in-place")) or a in ("-f", "--file") for a in args):
+            return False
+        scripts = [a for a in args if not a.startswith("-")][:1] if "-e" not in args else \
+            [args[i + 1] for i, a in enumerate(args[:-1]) if a == "-e"]  # fmt: skip
+        return bool(scripts) and all(SED_SCRIPT.match(s.strip()) for s in scripts)
+    if program == "rg":
+        return not any(a.startswith(("--pre", "--search-zip", "-z")) for a in args)
+    if program in ("sort", "tree"):
+        return not any(a.startswith(("-o", "--output")) for a in args)
+    if program == "uniq":
+        return len([a for a in args if not a.startswith("-")]) <= 1  # uniq IN OUT writes
+    if program == "git":
+        if not args or args[0] not in GIT_READ:
+            return False  # also refuses global options such as -c (config, pager)
+        if any(a.startswith(("--output", "--ext-diff", "-o")) for a in args):
+            return False
+        if args[0] in ("branch", "tag"):  # listing only
+            return all(a.startswith("-") and a not in ("-d", "-D", "-m", "-M", "-c", "-C", "-f",
+                                                       "--delete", "--move", "--copy", "--force")
+                       for a in args[1:])  # fmt: skip
+        return True
+    if program == "xargs":
+        rest = list(args)
+        while rest and rest[0].startswith("-"):
+            option = rest.pop(0)
+            if option in ("-n", "-I", "-d", "-P", "-L", "-s", "-E") and rest:
+                rest.pop(0)
+        return bool(rest) and rest[0] != "xargs" and _reads(rest)
+    return True
+
+
+def workflow(meta: dict[str, Any]) -> dict[str, Any] | None:
+    return WORKFLOWS.get(str(meta.get("workflow")))
+
+
+def system_prompt(meta: dict[str, Any]) -> str:
+    """Language rule, then the chat's platform mode (chats made before modes have none)."""
+    mode = workflow(meta)
+    parts = [LANGUAGE_PROMPT, PLATFORM_RULES]
+    if mode is not None:
+        parts += [COMMON_RULES, mode["prompt"]]
+    return "\n\n".join(parts)
+
+
+def mcp_server(read_only: bool) -> dict[str, Any]:
+    """The `platform` MCP server, as both CLIs configure one (stdio)."""
+    return {"command": sys.executable, "args": [SELF, "mcp", *(["--read-only"] if read_only else [])],
+            "env": {"AI_CODING_PLATFORM_MAILBOX": MAILBOX, "AI_CODING_WORKDIR": WORKDIR}}  # fmt: skip
+
+
+def latest_plan() -> str:
+    """The plan Claude Code wrote in plan mode (2.1.x keeps it in ~/.claude/plans/)."""
+    plans = Path.home() / ".claude" / "plans"
+    try:
+        newest = max(plans.glob("*.md"), key=lambda p: p.stat().st_mtime)
+    except (ValueError, OSError):
+        return ""
+    if time.time() - newest.stat().st_mtime > 3600:
+        return ""
+    return clip(newest.read_text(encoding="utf-8", errors="replace"), 12000)
+
+
+async def workspace_state() -> set[str]:
+    """`git status` of the workspace with a hash of each changed file's content."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "status", "--porcelain=v1", "-uall", cwd=WORKDIR,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)  # fmt: skip
+        out, _ = await asyncio.wait_for(proc.communicate(), 30)
+    except (OSError, TimeoutError):
+        return set()
+    state = set()
+    for line in out.decode(errors="replace").splitlines():
+        path = Path(WORKDIR) / line[3:].split(" -> ")[-1]
+        try:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()[:16] if path.is_file() else "-"
+        except OSError:
+            digest = "?"
+        state.add(f"{line} {digest}")
+    return state
+
+
+def needs_login(text: str) -> bool:
+    lower = text.lower()
+    return any(hint in lower for hint in LOGIN_HINTS)
+
+
+# ------------------------------------------------------------- descriptions --
+def platform_title(tool: str, data: dict[str, Any]) -> str:
+    run = str(data.get("run_id") or "")[:8]
+    titles = {
+        "info": "Платформа: сведения о проекте",
+        "audit": "Платформа: аудит " + ("проекта" if data.get("source") == "project"
+                                        else "рабочей области"),
+        "run_status": f"Платформа: статус run {run}",
+        "run_report": f"Платформа: отчёт run {run}",
+        "start_task": f"Платформа: задача оркестратору ({data.get('kind', '')})",
+        "cancel_run": f"Платформа: отмена run {run}",
+    }  # fmt: skip
+    return titles.get(tool, f"Платформа: {tool}")
+
+
+def describe_claude_tool(name: str, data: dict[str, Any]) -> tuple[str, str]:
+    """(title, detail) of a Claude Code tool call for the chat."""
+    path = rel(data.get("file_path") or data.get("notebook_path") or data.get("path") or "")
+    if name == "Bash":
+        return f"$ {data.get('command', '')}", str(data.get("description") or "")
+    if name == "Write":
+        return f"Записать {path}", clip(data.get("content"), 4000)
+    if name == "Edit":
+        old = "\n".join("- " + line for line in str(data.get("old_string", "")).splitlines())
+        new = "\n".join("+ " + line for line in str(data.get("new_string", "")).splitlines())
+        return f"Изменить {path}", clip(f"{old}\n{new}", 4000)
+    if name == "MultiEdit":
+        return f"Изменить {path} ({len(data.get('edits') or [])} правок)", ""
+    if name == "Read":
+        return f"Прочитать {path}", ""
+    if name in ("Glob", "Grep"):
+        return f"Поиск {data.get('pattern', '')}", path
+    if name == "WebFetch":
+        return f"Открыть {data.get('url', '')}", str(data.get("prompt") or "")
+    if name == "WebSearch":
+        return f"Поиск в интернете: {data.get('query', '')}", ""
+    if name == "TodoWrite":
+        todos = data.get("todos") or []
+        marks = {"completed": "[x]", "in_progress": "[~]"}
+        return "План задач", "\n".join(
+            f"{marks.get(t.get('status'), '[ ]')} {t.get('content', '')}" for t in todos
+        )
+    if name.startswith("mcp__platform__"):
+        return platform_title(name.removeprefix("mcp__platform__"), data), ""
+    if name == "ExitPlanMode":
+        return "План работы", str(data.get("plan") or "") or latest_plan()
+    if name in ("Task", "Agent"):
+        return f"Подзадача: {data.get('description', '')}", clip(data.get("prompt"), 2000)
+    return name, clip(json.dumps(data, ensure_ascii=False), 2000)
+
+
+def patch_text(result: Any) -> dict[str, Any]:
+    """The diff of a Claude Code Write/Edit result (``structuredPatch``)."""
+    if not isinstance(result, dict):
+        return {}
+    out: dict[str, Any] = {}
+    if result.get("filePath"):
+        out["file"] = rel(result["filePath"])
+    hunks = result.get("structuredPatch") or []
+    if hunks:
+        lines = []
+        for h in hunks:
+            lines.append(f"@@ -{h.get('oldStart')},{h.get('oldLines')} "
+                         f"+{h.get('newStart')},{h.get('newLines')} @@")
+            lines.extend(h.get("lines") or [])
+        out["diff"] = clip("\n".join(lines), 12000)
+    elif result.get("type") == "create" and isinstance(result.get("content"), str):
+        out["diff"] = clip("\n".join("+" + line for line in result["content"].splitlines()), 12000)
+    return out
+
+
+def block_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(b.get("text", "") for b in content if isinstance(b, dict))
+    return "" if content is None else json.dumps(content, ensure_ascii=False)
+
+
+# ------------------------------------------------------------------ session --
+class Session:
+    """One chat: its metadata, its log, its clients, its pending approvals."""
+
+    def __init__(self, hub: Hub, meta: dict[str, Any]) -> None:
+        self.hub = hub
+        self.meta = meta
+        self.clients: set[Client] = set()
+        self.pending: dict[str, Callable[[str], Any]] = {}
+        self.busy = False
+        self.turn: str | None = None  # Codex turn id, for interrupts
+        self.claude: Claude | None = None
+        self.snapshot: set[str] | None = None  # AUDIT: the workspace before the turn
+
+    @property
+    def id(self) -> str:
+        return str(self.meta["id"])
+
+    @property
+    def log(self) -> Path:
+        return CHATS / f"{self.id}.jsonl"
+
+    def save(self) -> None:
+        self.meta["updated"] = time.time()
+        CHATS.mkdir(parents=True, exist_ok=True)
+        tmp = CHATS / f".{self.id}.json.tmp"
+        tmp.write_text(json.dumps(self.meta, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(CHATS / f"{self.id}.json")
+
+    def emit(self, event: dict[str, Any], *, durable: bool = True) -> None:
+        event = {**event, "session": self.id, "ts": round(time.time(), 3)}
+        if durable:
+            CHATS.mkdir(parents=True, exist_ok=True)
+            with self.log.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+        for client in list(self.clients):
+            client.send(event)
+
+    def history(self) -> list[dict[str, Any]]:
+        if not self.log.exists():
+            return []
+        events = []
+        for line in self.log.read_text(encoding="utf-8").splitlines():
+            with contextlib.suppress(ValueError):
+                events.append(json.loads(line))
+        return events
+
+    def end_turn(self, state: str, **extra: Any) -> None:
+        self.busy = False
+        self.turn = None
+        for approval_id in list(self.pending):
+            self.pending.pop(approval_id)
+            self.emit({"t": "approval_done", "id": approval_id, "decision": "expired"})
+        self.emit({"t": "turn", "state": state, **extra})
+        self.save()
+        if self.snapshot is not None:
+            before, self.snapshot = self.snapshot, None
+            asyncio.get_running_loop().create_task(self.check_untouched(before))
+
+    @property
+    def read_only(self) -> bool:
+        mode = workflow(self.meta)
+        return bool(mode and mode["read_only"])
+
+    @property
+    def planning(self) -> bool:
+        """A mode that changes code, before the user approved its plan."""
+        mode = workflow(self.meta)
+        return bool(mode and mode["plan_first"] and not self.meta.get("planned"))
+
+    def approve_plan(self) -> None:
+        if self.meta.get("planned"):
+            return
+        self.meta["planned"] = True
+        self.save()
+        self.emit({"t": "planned"})
+
+    async def check_untouched(self, before: set[str]) -> None:
+        """AUDIT reads only: report any file the turn changed anyway."""
+        changed = sorted({line[3:].rsplit(" ", 1)[0] for line in await workspace_state() ^ before})
+        if changed:
+            self.emit({"t": "error", "message": "Режим «Аудит»: в рабочей области изменились файлы: "
+                       + ", ".join(changed[:10]) + ". Проверьте их в панели Git."})
+
+
+# ------------------------------------------------------------------- claude --
+class Claude:
+    """``claude -p`` in stream-json mode, kept running between turns of a chat."""
+
+    def __init__(self, session: Session) -> None:
+        self.s = session
+        self.proc: asyncio.subprocess.Process | None = None
+        self.mode: str | None = None
+        self.stderr = b""
+        self.tools: dict[str, str] = {}  # tool_use_id -> tool name
+        self.interrupted = False
+        self.actual: str | None = None  # the CLI's permission mode, as it reports it
+
+    def desired(self, mode: str) -> str:
+        """The CLI permission mode for a turn: AUDIT reads only, whatever the user chose;
+        the other modes plan first until the user approves a plan."""
+        if self.s.read_only:
+            return "default"
+        if self.s.planning:
+            return "plan"
+        return CLAUDE_MODES[mode]
+
+    async def ensure(self, mode: str) -> None:
+        wanted = self.desired(mode)
+        if self.proc is not None and self.proc.returncode is None:
+            if wanted != self.actual:
+                self.control({"subtype": "set_permission_mode", "mode": wanted})
+                self.actual = wanted
+            self.mode = mode
+            return
+        argv = ["claude", "-p", "--input-format", "stream-json", "--output-format",
+                "stream-json", "--verbose", "--include-partial-messages",
+                "--permission-prompts", "host", "--permission-prompt-tool", "stdio",
+                "--append-system-prompt", system_prompt(self.s.meta)]  # fmt: skip
+        argv += ["--mcp-config", json.dumps({"mcpServers": {"platform": {
+            "type": "stdio", **mcp_server(self.s.read_only)}}}),
+            "--allowedTools", *(f"mcp__platform__{n}" for n in PLATFORM_READ_TOOLS)]  # fmt: skip
+        if self.s.read_only:
+            argv += ["--disallowedTools", *READ_ONLY_TOOLS]
+        else:  # "full access" may be chosen later (after the plan): allow switching to it
+            argv += ["--allow-dangerously-skip-permissions"]
+        argv += ["--permission-mode", wanted]
+        native = self.s.meta.get("native")
+        if native:
+            argv += ["--resume", native]
+        else:
+            native = str(uuid.uuid4())
+            self.s.meta["native"] = native
+            self.s.save()
+            argv += ["--session-id", native]
+        self.stderr = b""
+        self.proc = await asyncio.create_subprocess_exec(
+            *argv, cwd=WORKDIR, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE, limit=LINE_LIMIT)  # fmt: skip
+        self.mode = mode
+        self.actual = wanted
+        asyncio.create_task(self.read(self.proc))
+        asyncio.create_task(self.read_stderr(self.proc))
+
+    def write(self, obj: dict[str, Any]) -> None:
+        if self.proc is None or self.proc.stdin is None:
+            return
+        self.proc.stdin.write((json.dumps(obj) + "\n").encode())
+
+    def control(self, request: dict[str, Any]) -> None:
+        self.write({"type": "control_request", "request_id": str(uuid.uuid4()),
+                    "request": request})  # fmt: skip
+
+    async def send(self, text: str, mode: str) -> None:
+        await self.ensure(mode)
+        self.write({"type": "user", "message": {"role": "user",
+                                                "content": [{"type": "text", "text": text}]}})  # fmt: skip
+
+    async def interrupt(self) -> None:
+        if self.proc is not None and self.proc.returncode is None:
+            self.interrupted = True
+            self.control({"subtype": "interrupt"})
+
+    async def read_stderr(self, proc: asyncio.subprocess.Process) -> None:
+        assert proc.stderr is not None
+        while chunk := await proc.stderr.read(4096):
+            self.stderr = (self.stderr + chunk)[-4000:]
+
+    async def read(self, proc: asyncio.subprocess.Process) -> None:
+        assert proc.stdout is not None
+        while True:
+            try:
+                line = await proc.stdout.readline()
+            except ValueError:  # a line over the limit: skip it
+                continue
+            if not line:
+                break
+            with contextlib.suppress(ValueError):
+                event = json.loads(line)
+                if isinstance(event, dict):
+                    self.handle(event)
+        await proc.wait()
+        if self.proc is proc:
+            self.proc = None
+        if self.s.busy:
+            message = self.stderr.decode(errors="replace").strip()[-1500:] or "Claude Code exited"
+            if needs_login(message):
+                self.s.emit({"t": "auth_required", "agent": "claude"})
+            self.s.end_turn("error", message=message)
+
+    def handle(self, ev: dict[str, Any]) -> None:
+        kind = ev.get("type")
+        if kind == "stream_event":
+            inner = ev.get("event") or {}
+            delta = inner.get("delta") or {}
+            msg = f"{ev.get('api_message_id') or ev.get('uuid')}:{inner.get('index')}"
+            if inner.get("type") == "content_block_delta" and delta.get("type") == "text_delta":
+                self.s.emit({"t": "delta", "msg": msg, "text": delta.get("text", "")}, durable=False)
+            elif inner.get("type") == "content_block_delta" and delta.get("type") == "thinking_delta":
+                self.s.emit({"t": "thinking_delta", "msg": msg,
+                             "text": delta.get("thinking", "")}, durable=False)  # fmt: skip
+        elif kind == "assistant":
+            message = ev.get("message") or {}
+            for index, block in enumerate(message.get("content") or []):
+                self.assistant_block(f"{message.get('id')}:{index}", block)
+        elif kind == "user":
+            self.tool_results(ev)
+        elif kind == "control_request":
+            self.permission(ev)
+        elif kind == "system" and ev.get("subtype") == "init":
+            self.s.meta["model"] = ev.get("model")
+            self.actual = ev.get("permissionMode") or self.actual
+            self.s.save()
+        elif kind == "system" and ev.get("permissionMode"):
+            self.actual = ev["permissionMode"]  # e.g. plan -> default once a plan is approved
+        elif kind == "result":
+            text = str(ev.get("result") or "")
+            if self.interrupted:
+                self.interrupted = False
+                self.s.end_turn("interrupted")
+                return
+            if ev.get("is_error") and needs_login(text):
+                self.s.emit({"t": "auth_required", "agent": "claude"})
+            self.s.end_turn("error" if ev.get("is_error") else "done",
+                            cost=ev.get("total_cost_usd"), duration_ms=ev.get("duration_ms"),
+                            **({"message": clip(text, 2000)} if ev.get("is_error") else {}))  # fmt: skip
+
+    def assistant_block(self, msg: str, block: dict[str, Any]) -> None:
+        kind = block.get("type")
+        if kind == "text":
+            self.s.emit({"t": "message", "msg": msg, "text": block.get("text", "")})
+        elif kind == "thinking" and block.get("thinking"):
+            self.s.emit({"t": "thinking", "msg": msg, "text": clip(block["thinking"], 6000)})
+        elif kind == "tool_use":
+            name = str(block.get("name"))
+            self.tools[str(block.get("id"))] = name
+            title, detail = describe_claude_tool(name, block.get("input") or {})
+            self.s.emit({"t": "tool", "id": block.get("id"), "name": name, "title": title,
+                         "detail": detail})  # fmt: skip
+
+    def tool_results(self, ev: dict[str, Any]) -> None:
+        content = (ev.get("message") or {}).get("content")
+        if not isinstance(content, list):
+            return
+        structured = patch_text(ev.get("tool_use_result"))
+        for block in content:
+            if block.get("type") != "tool_result":
+                continue
+            self.s.emit({"t": "tool_result", "id": block.get("tool_use_id"),
+                         "ok": not block.get("is_error"),
+                         "text": clip(block_text(block.get("content"))), **structured})  # fmt: skip
+
+    def permission(self, ev: dict[str, Any]) -> None:
+        request = ev.get("request") or {}
+        rid = str(ev.get("request_id"))
+        if request.get("subtype") != "can_use_tool":
+            # Requests this host does not implement: answer, never leave Claude waiting.
+            self.write({"type": "control_response", "response": {
+                "subtype": "error", "request_id": rid, "error": "not supported"}})  # fmt: skip
+            return
+        name = str(request.get("tool_name"))
+        title, detail = describe_claude_tool(name, request.get("input") or {})
+        suggestions = request.get("permission_suggestions") or []
+        planning = name == "ExitPlanMode"
+
+        def answer(decision: str) -> None:
+            if decision in ("allow", "allow_session"):
+                response: dict[str, Any] = {"behavior": "allow",
+                                            "updatedInput": request.get("input") or {}}  # fmt: skip
+                if decision == "allow_session" and suggestions:
+                    response["updatedPermissions"] = suggestions
+                if planning:  # agreed: the work goes on in the permission mode the user chose
+                    if self.mode in ("edits", "full"):
+                        response["updatedPermissions"] = [{
+                            "type": "setMode", "mode": CLAUDE_MODES[self.mode],
+                            "destination": "session"}]  # fmt: skip
+                    self.s.approve_plan()
+            elif decision == "read_only":
+                response = {"behavior": "deny", "message": (
+                    "This chat is in AUDIT mode, which is read-only: nothing may be changed. "
+                    "Continue the analysis without this action.")}  # fmt: skip
+            elif planning:
+                response = {"behavior": "deny", "message": "The user did not approve the plan. "
+                            "Ask what to change and present a revised plan."}  # fmt: skip
+            else:
+                response = {"behavior": "deny", "message": "The user declined this in the chat."}
+            self.write({"type": "control_response", "response": {
+                "subtype": "success", "request_id": rid, "response": response}})  # fmt: skip
+
+        command = str((request.get("input") or {}).get("command") or "")
+        if self.s.read_only and (name in READ_TOOLS or (name == "Bash" and read_only_command(command))):
+            answer("allow")  # AUDIT: it only reads
+            return
+        if self.s.read_only:  # AUDIT: anything else may change something
+            answer("read_only")
+            self.s.emit({"t": "notice", "text": f"Режим «Аудит» только читает: «{title}» не выполнено."})
+            return
+
+        self.s.pending[rid] = answer
+        self.s.emit({"t": "approval", "id": rid, "name": name, "title": title, "detail": detail,
+                     "tool": request.get("tool_use_id"),
+                     "session_option": bool(suggestions)})  # fmt: skip
+
+
+# -------------------------------------------------------------------- codex --
+class CodexError(Exception):
+    pass
+
+
+class Codex:
+    """One ``codex app-server`` for the Codex chats of this container."""
+
+    def __init__(self, hub: Hub) -> None:
+        self.hub = hub
+        self.proc: asyncio.subprocess.Process | None = None
+        self.next_id = 0
+        self.waiters: dict[int, asyncio.Future[Any]] = {}
+        self.threads: dict[str, Session] = {}  # thread id -> chat
+        self.items: dict[str, dict[str, Any]] = {}  # item id -> item (for approvals)
+        self.lock = asyncio.Lock()
+
+    async def start(self) -> None:
+        async with self.lock:
+            if self.proc is not None and self.proc.returncode is None:
+                return
+            self.threads.clear()
+            self.proc = await asyncio.create_subprocess_exec(
+                "codex", "app-server", cwd=WORKDIR, stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+                limit=LINE_LIMIT)  # fmt: skip
+            asyncio.create_task(self.read(self.proc))
+            await self.request("initialize", {"clientInfo": {
+                "name": "ai-coding-platform", "title": "AI Coding Platform", "version": "1"}})  # fmt: skip
+            self.write({"method": "initialized"})
+
+    def write(self, obj: dict[str, Any]) -> None:
+        if self.proc is not None and self.proc.stdin is not None:
+            self.proc.stdin.write((json.dumps(obj) + "\n").encode())
+
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> Any:
+        self.next_id += 1
+        rid = self.next_id
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        self.waiters[rid] = future
+        self.write({"id": rid, "method": method, "params": params or {}})
+        return await asyncio.wait_for(future, 120)
+
+    async def read(self, proc: asyncio.subprocess.Process) -> None:
+        assert proc.stdout is not None
+        while True:
+            try:
+                line = await proc.stdout.readline()
+            except ValueError:
+                continue
+            if not line:
+                break
+            with contextlib.suppress(ValueError):
+                msg = json.loads(line)
+                if isinstance(msg, dict):
+                    self.dispatch(msg)
+        await proc.wait()
+        for future in self.waiters.values():
+            if not future.done():
+                future.set_exception(CodexError("codex app-server exited"))
+        self.waiters.clear()
+        for session in set(self.threads.values()):
+            if session.busy:
+                session.end_turn("error", message="codex app-server exited")
+        if self.proc is proc:
+            self.proc = None
+
+    def dispatch(self, msg: dict[str, Any]) -> None:
+        if "id" in msg and ("result" in msg or "error" in msg) and "method" not in msg:
+            future = self.waiters.pop(msg["id"], None)
+            if future is not None and not future.done():
+                if "error" in msg:
+                    future.set_exception(CodexError(str((msg["error"] or {}).get("message"))))
+                else:
+                    future.set_result(msg.get("result"))
+            return
+        params = msg.get("params") or {}
+        if "id" in msg:
+            self.server_request(msg["id"], str(msg.get("method")), params)
+        else:
+            self.notification(str(msg.get("method")), params)
+
+    def session_of(self, params: dict[str, Any]) -> Session | None:
+        return self.threads.get(str(params.get("threadId")))
+
+    def notification(self, method: str, params: dict[str, Any]) -> None:
+        if method == "account/login/completed":
+            self.hub.broadcast({"t": "login_done", "agent": "codex",
+                                "success": bool(params.get("success")),
+                                "error": params.get("error")})  # fmt: skip
+            asyncio.create_task(self.hub.send_auth())
+            return
+        session = self.session_of(params)
+        if session is None:
+            return
+        if method == "item/agentMessage/delta":
+            session.emit({"t": "delta", "msg": params.get("itemId"), "text": params.get("delta", "")},
+                         durable=False)  # fmt: skip
+        elif method == "item/started":
+            self.item_started(session, params.get("item") or {})
+        elif method == "item/completed":
+            self.item_completed(session, params.get("item") or {})
+        elif method == "turn/started":
+            session.turn = (params.get("turn") or {}).get("id")
+        elif method == "turn/completed":
+            turn = params.get("turn") or {}
+            status = turn.get("status")
+            state = {"completed": "done", "interrupted": "interrupted"}.get(str(status), "error")
+            error = (turn.get("error") or {}).get("message") if turn.get("error") else None
+            if error and needs_login(str(error)):
+                session.emit({"t": "auth_required", "agent": "codex"})
+            session.end_turn(state, **({"message": clip(error, 2000)} if error else {}),
+                             duration_ms=turn.get("durationMs"))  # fmt: skip
+        elif method == "error":
+            error = params.get("error") or {}
+            if not params.get("willRetry"):
+                session.emit({"t": "error", "message": clip(error.get("message"), 2000)})
+
+    def item_started(self, session: Session, item: dict[str, Any]) -> None:
+        self.items[str(item.get("id"))] = item
+        kind = item.get("type")
+        if kind == "commandExecution":
+            session.emit({"t": "tool", "id": item.get("id"), "name": "command",
+                          "title": f"$ {item.get('command', '')}", "detail": ""})  # fmt: skip
+        elif kind == "fileChange":
+            changes = item.get("changes") or []
+            session.emit({"t": "tool", "id": item.get("id"), "name": "fileChange",
+                          "title": "Изменить " + ", ".join(rel(c.get("path")) for c in changes),
+                          "detail": ""})  # fmt: skip
+        elif kind in ("mcpToolCall", "dynamicToolCall"):
+            args = item.get("arguments") if isinstance(item.get("arguments"), dict) else {}
+            title = (platform_title(str(item.get("tool")), args) if item.get("server") == "platform"
+                     else str(item.get("tool")))  # fmt: skip
+            session.emit({"t": "tool", "id": item.get("id"), "name": str(item.get("tool")),
+                          "title": title,
+                          "detail": clip(json.dumps(item.get("arguments"), ensure_ascii=False), 2000)})  # fmt: skip
+        elif kind == "webSearch":
+            session.emit({"t": "tool", "id": item.get("id"), "name": "webSearch",
+                          "title": f"Поиск в интернете: {item.get('query', '')}", "detail": ""})  # fmt: skip
+
+    def item_completed(self, session: Session, item: dict[str, Any]) -> None:
+        kind = item.get("type")
+        if kind == "agentMessage":
+            session.emit({"t": "message", "msg": item.get("id"), "text": item.get("text", "")})
+        elif kind == "reasoning":
+            text = "\n".join(str(s) for s in (item.get("summary") or []))
+            if text.strip():
+                session.emit({"t": "thinking", "msg": item.get("id"), "text": clip(text, 6000)})
+        elif kind == "commandExecution":
+            session.emit({"t": "tool_result", "id": item.get("id"),
+                          "ok": item.get("exitCode") in (0, None) and item.get("status") != "failed",
+                          "text": clip(item.get("aggregatedOutput"))})  # fmt: skip
+        elif kind == "fileChange":
+            changes = item.get("changes") or []
+            diff = "\n".join(f"--- {rel(c.get('path'))}\n{c.get('diff', '')}" for c in changes)
+            session.emit({"t": "tool_result", "id": item.get("id"),
+                          "ok": item.get("status") != "failed", "text": "",
+                          "diff": clip(diff, 12000),
+                          "file": rel(changes[0].get("path")) if len(changes) == 1 else None})  # fmt: skip
+        elif kind in ("mcpToolCall", "dynamicToolCall", "webSearch"):
+            session.emit({"t": "tool_result", "id": item.get("id"),
+                          "ok": item.get("status") != "failed",
+                          "text": clip(json.dumps(item.get("result") or item.get("results"),
+                                                  ensure_ascii=False))})  # fmt: skip
+        self.items.pop(str(item.get("id")), None)
+
+    def server_request(self, rid: Any, method: str, params: dict[str, Any]) -> None:
+        session = self.session_of(params)
+        if session is not None and method == "mcpServer/elicitation/request":
+            self.elicitation(session, rid, params)
+            return
+        if session is None or method not in ("item/commandExecution/requestApproval",
+                                             "item/fileChange/requestApproval"):
+            # Not supported by this host (user input, MCP elicitation…): refuse, never hang.
+            self.write({"id": rid, "error": {"code": -32601, "message": f"{method} unsupported"}})
+            return
+        if session.read_only:  # AUDIT: only commands that read
+            reads = (method.startswith("item/commandExecution")
+                     and read_only_command(str(params.get("command") or "")))  # fmt: skip
+            self.write({"id": rid, "result": {"decision": "accept" if reads else "decline"}})
+            if not reads:
+                what = f"«$ {clip(params.get('command'), 200)}»" if params.get("command") else "правка"
+                session.emit({"t": "notice",
+                              "text": f"Режим «Аудит» только читает: {what} не выполнено."})  # fmt: skip
+            return
+        approval_id = f"codex-{rid}"
+        if method.startswith("item/commandExecution"):
+            title = f"$ {params.get('command') or ''}"
+        else:
+            item = self.items.get(str(params.get("itemId"))) or {}
+            title = "Изменить " + ", ".join(rel(c.get("path")) for c in item.get("changes") or [])
+        detail = str(params.get("reason") or "")
+
+        def answer(decision: str) -> None:
+            value = {"allow": "accept", "allow_session": "acceptForSession"}.get(decision, "decline")
+            self.write({"id": rid, "result": {"decision": value}})
+
+        session.pending[approval_id] = answer
+        session.emit({"t": "approval", "id": approval_id, "name": method.split("/")[1],
+                      "title": title, "detail": detail, "tool": params.get("itemId"),
+                      "session_option": True})  # fmt: skip
+
+    def elicitation(self, session: Session, rid: Any, params: dict[str, Any]) -> None:
+        """An MCP server asks the user (Codex asks this way before an MCP tool call)."""
+        server = str(params.get("serverName") or "")
+
+        def answer(decision: str) -> None:
+            accepted = decision in ("allow", "allow_session")
+            self.write({"id": rid, "result": {"action": "accept" if accepted else "decline",
+                                              "content": {} if accepted else None}})  # fmt: skip
+
+        if session.read_only:  # AUDIT: the platform's server is read-only there itself
+            answer("allow" if server == "platform" else "deny")
+            if server != "platform":
+                session.emit({"t": "notice", "text": f"Режим «Аудит» только читает: запрос MCP «{server}» отклонён."})
+            return
+        approval_id = f"codex-{rid}"
+        session.pending[approval_id] = answer
+        session.emit({"t": "approval", "id": approval_id, "name": "mcp",
+                      "title": f"MCP «{server}»: {clip(params.get('message') or 'запрос', 300)}",
+                      "detail": "", "session_option": False})  # fmt: skip
+
+    async def send(self, session: Session, text: str, mode: str) -> None:
+        await self.start()
+        thread = session.meta.get("native")
+        policy = "untrusted" if session.read_only or session.planning else CODEX_POLICIES[mode]
+        if thread and thread not in self.threads:
+            try:
+                await self.request("thread/resume", {"threadId": thread})
+            except CodexError:
+                thread = None
+        if not thread:
+            result = await self.request("thread/start", {
+                "cwd": WORKDIR, "approvalPolicy": policy, "sandbox": "danger-full-access",
+                "developerInstructions": system_prompt(session.meta),
+                "config": {"mcp_servers": {"platform": mcp_server(session.read_only)}}})  # fmt: skip
+            thread = str(result["thread"]["id"])
+            session.meta["native"] = thread
+            session.save()
+        self.threads[thread] = session
+        result = await self.request("turn/start", {
+            "threadId": thread, "input": [{"type": "text", "text": text}],
+            "approvalPolicy": policy, "sandboxPolicy": EXTERNAL_SANDBOX})  # fmt: skip
+        session.turn = ((result or {}).get("turn") or {}).get("id")
+
+    async def interrupt(self, session: Session) -> None:
+        if session.turn and session.meta.get("native"):
+            await self.request("turn/interrupt", {"threadId": session.meta["native"],
+                                                  "turnId": session.turn})  # fmt: skip
+
+    async def login(self) -> dict[str, Any]:
+        await self.start()
+        result = await self.request("account/login/start", {"type": "chatgptDeviceCode"})
+        return {"url": result.get("verificationUrl"), "code": result.get("userCode")}
+
+
+# --------------------------------------------------------------------- hub --
+class Client:
+    def __init__(self, writer: asyncio.StreamWriter) -> None:
+        self.writer = writer
+        self.queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        self.task = asyncio.create_task(self.pump())
+
+    def send(self, event: dict[str, Any]) -> None:
+        if self.queue.qsize() > 10_000:  # a stuck client must not hold the daemon's memory
+            self.close()
+            return
+        self.queue.put_nowait(event)
+
+    def close(self) -> None:
+        self.queue.put_nowait(None)
+
+    async def pump(self) -> None:
+        with contextlib.suppress(ConnectionError, OSError):
+            while (event := await self.queue.get()) is not None:
+                self.writer.write((json.dumps(event, ensure_ascii=False) + "\n").encode())
+                await self.writer.drain()
+        with contextlib.suppress(Exception):
+            self.writer.close()
+
+
+class Hub:
+    def __init__(self) -> None:
+        self.sessions: dict[str, Session] = {}
+        self.clients: set[Client] = set()
+        self.codex = Codex(self)
+
+    # ------------------------------------------------------------ sessions --
+    def metas(self) -> list[dict[str, Any]]:
+        out = []
+        if CHATS.exists():
+            for path in CHATS.glob("*.json"):
+                with contextlib.suppress(ValueError, OSError):
+                    out.append(json.loads(path.read_text(encoding="utf-8")))
+        return sorted(out, key=lambda m: m.get("updated", 0), reverse=True)
+
+    def session(self, sid: Any) -> Session:
+        sid = str(sid)
+        if sid in self.sessions:
+            return self.sessions[sid]
+        path = CHATS / f"{sid}.json"
+        if "/" in sid or not path.exists():
+            raise KeyError("no such chat")
+        session = Session(self, json.loads(path.read_text(encoding="utf-8")))
+        history = session.history()
+        turns = [e for e in history if e.get("t") in ("user", "turn")]
+        if turns and turns[-1].get("t") == "user":  # the daemon stopped mid-turn
+            session.emit({"t": "turn", "state": "interrupted",
+                          "message": "Сеанс агента был перезапущен"})  # fmt: skip
+        self.sessions[sid] = session
+        return session
+
+    def broadcast(self, event: dict[str, Any]) -> None:
+        for client in list(self.clients):
+            client.send(event)
+
+    async def auth(self) -> dict[str, Any]:
+        async def run(*argv: str) -> tuple[int, str]:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+                out, _ = await asyncio.wait_for(proc.communicate(), 30)
+                return proc.returncode or 0, out.decode(errors="replace")
+            except (OSError, TimeoutError):
+                return 127, ""
+
+        result: dict[str, Any] = {}
+        code, out = await run("claude", "auth", "status", "--json")
+        try:
+            data = json.loads(out)
+            result["claude"] = {"logged_in": bool(data.get("loggedIn")),
+                                "method": data.get("authMethod")}  # fmt: skip
+        except ValueError:
+            result["claude"] = {"logged_in": False, "method": None, "available": code != 127}
+        code, out = await run("codex", "login", "status")
+        method = "chatgpt" if "chatgpt" in out.lower() else ("apiKey" if "api key" in out.lower() else None)
+        result["codex"] = {"logged_in": code == 0, "method": method if code == 0 else None}
+        return result
+
+    async def send_auth(self) -> None:
+        self.broadcast({"t": "auth", "agents": await self.auth()})
+
+    # -------------------------------------------------------------- clients --
+    async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        client = Client(writer)
+        self.clients.add(client)
+        try:
+            while True:
+                try:
+                    line = await reader.readline()
+                except ValueError:
+                    continue
+                if not line:
+                    break
+                try:
+                    request = json.loads(line)
+                    if not isinstance(request, dict):
+                        raise ValueError
+                    await self.op(client, request)
+                except (ValueError, KeyError) as exc:
+                    client.send({"t": "error", "message": str(exc) or "bad request"})
+                except Exception as exc:  # noqa: BLE001 - report, keep serving
+                    client.send({"t": "error", "message": f"{type(exc).__name__}: {exc}"})
+        finally:
+            self.clients.discard(client)
+            for session in self.sessions.values():
+                session.clients.discard(client)
+            client.close()
+
+    def subscribe(self, client: Client, session: Session) -> None:
+        for other in self.sessions.values():
+            other.clients.discard(client)
+        session.clients.add(client)
+
+    async def op(self, client: Client, req: dict[str, Any]) -> None:
+        op = req.get("op")
+        if op == "hello":
+            client.send({"t": "hello", "sessions": self.metas()})
+            asyncio.create_task(self.auth_to(client))
+        elif op == "status":
+            client.send({"t": "status", "busy": any(s.busy for s in self.sessions.values()),
+                         "clients": len(self.clients) - 1})  # fmt: skip
+        elif op == "new":
+            agent, mode = req.get("agent"), req.get("mode", "ask")
+            work = req.get("workflow")  # none: a free chat (and chats made before modes)
+            if agent not in AGENTS or mode not in MODES or work not in (None, *WORKFLOWS):
+                raise ValueError("unknown agent, mode or workflow")
+            meta = {"id": uuid.uuid4().hex[:16], "agent": agent, "mode": mode, "workflow": work,
+                    "title": "Новый чат", "created": time.time()}  # fmt: skip
+            session = Session(self, meta)
+            session.save()
+            self.sessions[session.id] = session
+            self.subscribe(client, session)
+            client.send({"t": "opened", "meta": meta, "history": []})
+        elif op == "open":
+            session = self.session(req.get("session"))
+            self.subscribe(client, session)
+            client.send({"t": "opened", "meta": session.meta, "history": session.history(),
+                         "busy": session.busy})  # fmt: skip
+        elif op == "send":
+            await self.send(self.session(req.get("session")), req)
+        elif op == "approve":
+            session = self.session(req.get("session"))
+            answer = session.pending.pop(str(req.get("id")), None)
+            if answer is None:
+                raise ValueError("this request is no longer pending")
+            decision = str(req.get("decision"))
+            answer(decision)
+            session.emit({"t": "approval_done", "id": req.get("id"), "decision": decision})
+        elif op == "interrupt":
+            session = self.session(req.get("session"))
+            if session.meta["agent"] == "claude" and session.claude is not None:
+                await session.claude.interrupt()
+            elif session.meta["agent"] == "codex":
+                await self.codex.interrupt(session)
+        elif op == "login":
+            if req.get("agent") != "codex":
+                raise ValueError("Claude Code: sign in in the terminal (claude auth login)")
+            client.send({"t": "login", "agent": "codex", **await self.codex.login()})
+        else:
+            raise ValueError(f"unknown op {op!r}")
+
+    async def auth_to(self, client: Client) -> None:
+        client.send({"t": "auth", "agents": await self.auth()})
+
+    async def send(self, session: Session, req: dict[str, Any]) -> None:
+        text = str(req.get("text") or "").strip()
+        mode = req.get("mode") or session.meta.get("mode", "ask")
+        if not text:
+            raise ValueError("empty message")
+        if mode not in MODES:
+            raise ValueError("unknown mode")
+        if session.busy:
+            raise ValueError("the agent is still working: wait or stop it")
+        session.busy = True
+        if req.get("approve_plan") and workflow(session.meta):
+            session.approve_plan()
+        if session.meta.get("title") in (None, "Новый чат"):
+            session.meta["title"] = text.splitlines()[0][:80]
+        session.meta["mode"] = mode
+        session.save()
+        if session.read_only:
+            session.snapshot = await workspace_state()
+        session.emit({"t": "user", "text": text, "mode": mode})
+        session.emit({"t": "turn", "state": "running"}, durable=False)
+        try:
+            if session.meta["agent"] == "claude":
+                if session.claude is None:
+                    session.claude = Claude(session)
+                await session.claude.send(text, mode)
+            else:
+                await self.codex.send(session, text, mode)
+        except Exception as exc:
+            message = str(exc) or type(exc).__name__
+            if needs_login(message):
+                session.emit({"t": "auth_required", "agent": session.meta["agent"]})
+            session.end_turn("error", message=message)
+
+
+# --------------------------------------------------------------- platform --
+class PlatformError(Exception):
+    pass
+
+
+RUN_ID = {"type": "string", "description": "The run's id (from audit or start_task)."}
+PLATFORM_TOOLS: list[dict[str, Any]] = [
+    {"name": "info", "description": (
+        "The project in the AI Coding Platform: the run kinds your user may start and "
+        "whether the orchestrator has an AI provider (start_task needs one). Changes nothing."),
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "audit", "description": (
+        "Start the platform's audit: real analysers (Semgrep, Gitleaks, Trivy/OSV, linters, "
+        "tests...) in an isolated sandbox, findings with evidence and Quality Gates. source "
+        "'workspace' (default) checks the last commit of the current branch of /workspace - "
+        "commit first, uncommitted changes are not checked; 'project' checks the project's "
+        "own tree. Returns a run id: follow it with run_status, then read run_report. "
+        "Changes no file."),
+     "inputSchema": {"type": "object", "properties": {
+         "source": {"type": "string", "enum": ["workspace", "project"]},
+         "tools": {"type": "array", "items": {"type": "string"},
+                   "description": "Only these analysers (default: all for the project's stacks)."},
+         "strict": {"type": "boolean", "description": "Fail on any finding."}}}},
+    {"name": "run_status", "description": (
+        "State of a platform run (CREATED, RUNNING, VERIFYING, AWAITING_APPROVAL, COMPLETED, "
+        "FAILED, CANCELLED...), its steps and the approvals it waits for. wait_seconds (0-45) "
+        "waits until it finishes or needs an approval. Approvals are given by people in the "
+        "web UI, never by you."),
+     "inputSchema": {"type": "object", "properties": {
+         "run_id": RUN_ID, "wait_seconds": {"type": "integer", "minimum": 0, "maximum": 45}},
+         "required": ["run_id"]}},
+    {"name": "run_report", "description": (
+        "Results of a run: summary and Quality Gates, findings by severity with file:line and "
+        "the tool that found them, the Markdown report."),
+     "inputSchema": {"type": "object", "properties": {"run_id": RUN_ID}, "required": ["run_id"]}},
+    {"name": "start_task", "description": (
+        "Hand a task to the platform's orchestrator: its own agents implement it with tests "
+        "and Quality Gates, the result is a branch or pull request in the project, approvals "
+        "by people in the web UI. kind 'develop': params {title, body, base?}; kind "
+        "'maintain': params {issues: [{title, body}], dependencies?, base?}. Needs the "
+        "project's AI provider (see info). Only when the user asks for it."),
+     "inputSchema": {"type": "object", "properties": {
+         "kind": {"type": "string", "enum": ["develop", "maintain"]},
+         "params": {"type": "object"}}, "required": ["kind", "params"]}},
+    {"name": "cancel_run", "description": "Cancel a run your user started.",
+     "inputSchema": {"type": "object", "properties": {"run_id": RUN_ID}, "required": ["run_id"]}},
+]  # fmt: skip
+FINISHED = {"COMPLETED", "FAILED", "CANCELLED", "AWAITING_APPROVAL", "PAUSED"}
+
+
+def platform_call(op: str, payload: dict[str, Any], *, branch: str | None = None,
+                  timeout: float = 45.0) -> dict[str, Any]:  # fmt: skip
+    """One request through the mailbox; the API answers within a second or two."""
+    box = Path(MAILBOX)
+    if not box.is_dir():
+        raise PlatformError(
+            "The platform is not reachable from this workspace (no mailbox at "
+            f"{MAILBOX}): it was started before this feature. Ask the user to restart the "
+            "environment (the «Перезапустить среду» button)."
+        )
+    rid = uuid.uuid4().hex
+    request, answer = box / f"{rid}.req", box / f"{rid}.res"
+    try:
+        if branch is not None:
+            done = subprocess.run(["git", "bundle", "create", str(box / f"{rid}.bundle"), branch],
+                                  cwd=WORKDIR, capture_output=True, text=True, timeout=600)  # fmt: skip
+            if done.returncode != 0:
+                raise PlatformError(f"git bundle failed: {done.stderr.strip()[-500:]}")
+        tmp = box / f".{rid}.tmp"
+        tmp.write_text(json.dumps({"op": op, **payload}), encoding="utf-8")
+        tmp.replace(request)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if answer.exists():
+                data = json.loads(answer.read_text(encoding="utf-8"))
+                return data if isinstance(data, dict) else {"ok": False, "error": "bad answer"}
+            time.sleep(0.25)
+        raise PlatformError("The platform did not answer in time; try again.")
+    finally:
+        for path in (request, answer, box / f"{rid}.bundle"):
+            with contextlib.suppress(OSError):
+                path.unlink()
+
+
+def git_output(*args: str) -> str:
+    done = subprocess.run(["git", *args], cwd=WORKDIR, capture_output=True, text=True, timeout=60)
+    return done.stdout if done.returncode == 0 else ""
+
+
+def platform_tool(name: str, args: dict[str, Any], read_only: bool) -> dict[str, Any]:
+    if name == "info":
+        return platform_call("info", {})
+    if name == "audit":
+        source = args.get("source") or "workspace"
+        payload = {"source": source, "tools": args.get("tools") or [],
+                   "strict": bool(args.get("strict"))}  # fmt: skip
+        if source != "workspace":
+            return platform_call("audit", payload)
+        branch = git_output("symbolic-ref", "--short", "-q", "HEAD").strip()
+        if not branch:
+            raise PlatformError("/workspace is not on a branch: switch to or create one first.")
+        result = platform_call("audit", {**payload, "branch": branch}, branch=branch)
+        dirty = git_output("status", "--porcelain").splitlines()
+        if dirty and result.get("ok"):
+            result["note"] = (f"{len(dirty)} uncommitted change(s) are not part of this audit: "
+                              "commit them and audit again to include them.")  # fmt: skip
+        return result
+    if name == "run_status":
+        wait = max(0, min(45, int(args.get("wait_seconds") or 0)))
+        deadline = time.monotonic() + wait
+        while True:
+            result = platform_call("status", {"run_id": args.get("run_id")})
+            left = deadline - time.monotonic()
+            if (not result.get("ok") or result.get("state") in FINISHED
+                    or result.get("pending_approvals") or left <= 0):  # fmt: skip
+                return result
+            time.sleep(min(3.0, left))
+    if name == "run_report":
+        return platform_call("report", {"run_id": args.get("run_id")})
+    if name in ("start_task", "cancel_run") and read_only:
+        raise PlatformError("This chat is in AUDIT mode (read-only): no tasks, no cancellations.")
+    if name == "start_task":
+        return platform_call("start_task", {"kind": args.get("kind"), "params": args.get("params")})
+    if name == "cancel_run":
+        return platform_call("cancel", {"run_id": args.get("run_id")})
+    raise PlatformError(f"unknown tool {name!r}")
+
+
+def mcp(argv: list[str]) -> int:
+    """The `platform` MCP server (stdio, newline-delimited JSON-RPC 2.0)."""
+    read_only = "--read-only" in argv
+    tools = [t for t in PLATFORM_TOOLS if not read_only or t["name"] in PLATFORM_READ_TOOLS]
+    for tool in tools:
+        read = tool["name"] in PLATFORM_READ_TOOLS
+        tool["annotations"] = {"readOnlyHint": read, "destructiveHint": False,
+                               "openWorldHint": False}  # fmt: skip
+    for raw in sys.stdin.buffer:
+        try:
+            msg = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(msg, dict) or msg.get("id") is None:
+            continue  # notifications (initialized, cancelled...)
+        method, params = msg.get("method"), msg.get("params") or {}
+        reply: dict[str, Any] = {"jsonrpc": "2.0", "id": msg["id"]}
+        if method == "initialize":
+            reply["result"] = {
+                "protocolVersion": params.get("protocolVersion") or "2025-06-18",
+                "capabilities": {"tools": {"listChanged": False}},
+                "serverInfo": {"name": "ai-coding-platform", "version": "1.0"},
+                "instructions": PLATFORM_RULES}  # fmt: skip
+        elif method == "ping":
+            reply["result"] = {}
+        elif method == "tools/list":
+            reply["result"] = {"tools": tools}
+        elif method == "tools/call":
+            name = str(params.get("name"))
+            args = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
+            try:
+                if name not in {t["name"] for t in tools}:
+                    raise PlatformError(f"unknown tool {name!r}")
+                result = platform_tool(name, args, read_only)
+                ok = bool(result.pop("ok", False))
+                text = (json.dumps(result, ensure_ascii=False, indent=1) if ok
+                        else f"Platform error: {result.get('error')}")  # fmt: skip
+            except PlatformError as exc:
+                ok, text = False, str(exc)
+            except Exception as exc:  # noqa: BLE001 - the agent gets the error as a result
+                ok, text = False, f"{type(exc).__name__}: {exc}"
+            reply["result"] = {"content": [{"type": "text", "text": text}], "isError": not ok}
+        else:
+            reply["error"] = {"code": -32601, "message": f"method not found: {method}"}
+        sys.stdout.write(json.dumps(reply, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
+    return 0
+
+
+# --------------------------------------------------------------- commands --
+def alive() -> bool:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+        try:
+            probe.connect(SOCKET)
+        except OSError:
+            return False
+        return True
+
+
+async def serve() -> None:
+    import fcntl  # noqa: PLC0415 - POSIX only, like the container
+
+    lock = open(SOCKET + ".lock", "w")  # noqa: SIM115 - held for the daemon's lifetime
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return  # another daemon is starting or running
+    if alive():
+        return
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(SOCKET)
+    hub = Hub()
+    server = await asyncio.start_unix_server(hub.handle, path=SOCKET, limit=LINE_LIMIT)
+    os.chmod(SOCKET, 0o600)
+    async with server:
+        await server.serve_forever()
+
+
+def connect() -> int:
+    """Relay stdin/stdout to the daemon (the broker's ``docker exec -i`` uses this)."""
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    for _ in range(50):
+        try:
+            sock.connect(SOCKET)
+            break
+        except OSError:
+            time.sleep(0.1)
+    else:
+        print(json.dumps({"t": "error", "message": "the agent daemon is not running"}), flush=True)
+        return 1
+
+    def upstream() -> None:
+        with contextlib.suppress(OSError):
+            for chunk in iter(lambda: sys.stdin.buffer.read1(65536), b""):
+                sock.sendall(chunk)
+        with contextlib.suppress(OSError):
+            sock.shutdown(socket.SHUT_WR)
+
+    threading.Thread(target=upstream, daemon=True).start()
+    with contextlib.suppress(OSError):
+        while chunk := sock.recv(65536):
+            sys.stdout.buffer.write(chunk)
+            sys.stdout.buffer.flush()
+    return 0
+
+
+def status() -> int:
+    if not alive():
+        print(json.dumps({"t": "status", "busy": False, "clients": 0, "running": False}))
+        return 0
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.connect(SOCKET)
+        sock.sendall(b'{"op": "status"}\n')
+        data = b""
+        while b"\n" not in data and (chunk := sock.recv(4096)):
+            data += chunk
+    print(data.decode().strip())
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    command = argv[1] if len(argv) > 1 else ""
+    if command == "serve":
+        asyncio.run(serve())
+        return 0
+    if command == "connect":
+        return connect()
+    if command == "status":
+        return status()
+    if command == "mcp":
+        return mcp(argv[2:])
+    print("usage: ai-coding-agent serve|connect|status|mcp", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
