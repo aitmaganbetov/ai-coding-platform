@@ -921,6 +921,7 @@ def create_app(
     run_worker: bool = False,
     multi_process: bool = False,
     broker: Broker | Literal["auto"] | None = "auto",
+    security_center_enabled: bool = False,
 ) -> FastAPI:
     """The API application bound to ``server`` (and the Web UI, when built).
 
@@ -976,6 +977,22 @@ def create_app(
     app.middleware("http")(_guard)
     for router in (ops, auth, projects, runs, insights, workspace):
         app.include_router(router)
+    if security_center_enabled:
+        center = APIRouter(prefix=API, tags=["security-center"])
+
+        @center.get("/projects/{project_id}/security-center/runs/{run_id}")
+        def security_center(
+            project_id: uuid.UUID,
+            run_id: uuid.UUID,
+            caller: Caller,
+            server: Srv,
+            *,
+            limit: Annotated[int, Query(ge=1, le=500)] = 100,
+            offset: Annotated[int, Query(ge=0, le=100_000)] = 0,
+        ) -> dict[str, Any]:
+            return server.security_center(caller, project_id, run_id, limit=limit, offset=offset)
+
+        app.include_router(center)
     if ui_dir is not None and (ui_dir / "index.html").is_file():
         app.mount("/", StaticFiles(directory=ui_dir, html=True), name="ui")
     return app

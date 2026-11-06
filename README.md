@@ -44,6 +44,7 @@ uv run ai-coding audit -C /path/to/project --backend docker -o reports/
 
 ## Документация
 
+- [AI Security Center](docs/security-center.md) — выключенная по умолчанию основа модуля и поэтапный план внедрения
 - [Архитектура](docs/architecture/overview.md) и [модули/зависимости](docs/architecture/modules.md)
 - [ADR](docs/adr/README.md) — архитектурные решения
 - [Аудит](docs/audit.md) — `ai-coding audit`, инструменты стеков, гейты, baseline, triage
