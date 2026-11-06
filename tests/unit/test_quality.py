@@ -233,3 +233,27 @@ def test_coverage_gate_uses_test_tool_coverage() -> None:
     assert gates(ok)[GateName.COVERAGE] is GateResult.PASS
     none = evaluate(run("go-test", ToolCategory.TESTS))
     assert gates(none)[GateName.COVERAGE] is GateResult.SKIPPED
+
+
+# ----------------------------------------------- this repository's baseline --
+REPO = Path(__file__).resolve().parents[2]
+PILOT_DOCKERFILE = "tests/fixtures/pilot-laravel-react/Dockerfile"
+DS002_MESSAGE = "Specify at least 1 USER command in Dockerfile with non-root user as argument"
+
+
+def test_planted_pilot_root_dockerfile_is_baselined_not_fixed() -> None:
+    """The pilot's root container is planted for AC-02 (Trivy must find it there), so the
+    self-audit accepts it through the baseline instead of reporting a high finding."""
+    assert not any(
+        line.strip().upper().startswith("USER ")
+        for line in (REPO / PILOT_DOCKERFILE).read_text(encoding="utf-8").splitlines()
+    )  # still planted: test_pilot_audit.py expects Trivy to report it
+    ds002 = Finding("trivy", "DS002", Severity.HIGH, "DS002: Image user should not be 'root'",
+                    DS002_MESSAGE, PILOT_DOCKERFILE, None,
+                    fingerprint("trivy", "DS002", PILOT_DOCKERFILE, DS002_MESSAGE))  # fmt: skip
+    baseline = load_baseline(REPO)
+    entry_ = next(e for e in baseline.entries if e.fingerprint == ds002.fingerprint)
+    assert (entry_.tool, entry_.rule_id, entry_.path) == ("trivy", "DS002", PILOT_DOCKERFILE)
+    assert entry_.expires_at >= date.today()
+    _, suppressed, _ = baseline.partition([ds002])
+    assert suppressed == [ds002]

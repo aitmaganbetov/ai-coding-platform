@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "fingerprint": "e8dc463191270512db659b131d2b4b5231e12a1f26c06d15bad9d4e88eb498ba",
+      "tool": "trivy",
+      "rule_id": "DS002",
+      "path": "tests/fixtures/pilot-laravel-react/Dockerfile",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture (root container); tests/integration/test_pilot_audit.py asserts Trivy reports it. Test data, never deployed.",
+      "expires_at": "2027-11-06"
+    }
+  ]
+}
