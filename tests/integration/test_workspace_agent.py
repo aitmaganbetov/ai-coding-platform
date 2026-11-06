@@ -14,6 +14,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -77,7 +78,8 @@ class Daemon:
                     "FAKE_CLI_LOG": str(self.cli_log),
                     "AI_CODING_AGENT_SOCKET": str(self.socket),
                     "AI_CODING_CHATS": str(tmp / "chats"),
-                    "AI_CODING_WORKDIR": str(self.workdir), "HOME": str(tmp)}  # fmt: skip
+                    "AI_CODING_WORKDIR": str(self.workdir), "HOME": str(tmp),
+                    "AI_CODING_USAGE_INTERVAL": "0"}  # fmt: skip
         self.proc: subprocess.Popen[bytes] | None = None
         self.conns: list[Conn] = []
 
@@ -143,7 +145,7 @@ def test_claude_chat_with_permission_and_history(daemon: Daemon) -> None:
     c.send(op="hello")
     assert c.next(kind("hello"))["sessions"] == []
     auth = c.next(kind("auth"))["agents"]
-    assert auth["claude"] == {"logged_in": True, "method": "api_key"}
+    assert auth["claude"] == {"logged_in": True, "method": "api_key", "plan": None}
     assert auth["codex"]["logged_in"] is False
     sid = new_chat(c, "claude")
     c.send(op="send", session=sid, text="write a greeting")
@@ -194,6 +196,7 @@ def test_the_agent_keeps_working_without_a_browser(daemon: Daemon) -> None:
     c.send(op="open", session=sid)
     opened = c.next(kind("opened"))
     assert opened["busy"] is True
+    assert abs(opened["now"] - time.time()) < 60  # the panel times running actions by this clock
     assert approval["id"] in [e.get("id") for e in opened["history"] if e["t"] == "approval"]
     c.send(op="approve", session=sid, id=approval["id"], decision="allow_session")
     c.next(kind("turn", state="done"))
@@ -477,9 +480,10 @@ class Mcp:
         return not result["isError"], result["content"][0]["text"]
 
     def close(self) -> None:
-        assert self.proc.stdin is not None
+        assert self.proc.stdin is not None and self.proc.stdout is not None
         self.proc.stdin.close()
         self.proc.wait(10)
+        self.proc.stdout.close()
 
 
 def test_platform_mcp_server(tmp_path: Path, git_env: None) -> None:
@@ -566,7 +570,8 @@ def test_bad_requests_are_answered(daemon: Daemon) -> None:
     c.next(kind("error"))
     bad = ({"op": "dance"}, {"op": "open", "session": "../etc"}, {"op": "new", "agent": "gpt"},
            {"op": "new", "agent": "claude", "workflow": "hack"},
-           {"op": "approve", "session": "x", "id": 1})  # fmt: skip
+           {"op": "approve", "session": "x", "id": 1}, {"op": "delete", "session": "nope"},
+           {"op": "usage", "agent": "gpt"})  # fmt: skip
     for request in bad:
         c.send(**request)
         c.next(kind("error"))
@@ -575,6 +580,124 @@ def test_bad_requests_are_answered(daemon: Daemon) -> None:
     assert "empty" in c.next(kind("error"))["message"]
     c.send(op="approve", session=sid, id="nope", decision="allow")
     assert "no longer pending" in c.next(kind("error"))["message"]
+
+
+def test_tabs_close_and_delete(daemon: Daemon) -> None:
+    """The panel's tabs: a client follows every chat it opened until it closes one (the
+    agent goes on); a chat is deleted for every client with its files, never mid-turn."""
+    c = daemon.connect()
+    c.send(op="hello")
+    assert c.next(kind("hello"))["features"] == ["tabs", "delete", "usage"]
+    c.send(op="new", agent="claude", ref="new:1")  # the tab that asked for the chat
+    first = c.next(kind("opened"))
+    assert first["ref"] == "new:1"
+    s1, s2 = str(first["meta"]["id"]), new_chat(c, "claude")
+    c.send(op="send", session=s1, text="hello")  # the earlier chat is still followed
+    assert c.next(kind("message", session=s1))["text"] == "Привет! (new)"
+    c.next(kind("turn", session=s1, state="done"))
+
+    c.send(op="close", session=s1)
+    other = daemon.connect()
+    other.send(op="open", session=s1)
+    other.next(kind("opened"))
+    mark = len(c.seen)
+    other.send(op="send", session=s1, text="hello again")
+    other.next(kind("message", session=s1))
+    other.next(kind("turn", session=s1, state="done"))
+    c.send(op="status")
+    c.next(kind("status"))
+    assert not [e for e in c.seen[mark:] if e.get("session") == s1]
+
+    c.send(op="send", session=s2, text="slow task")
+    c.next(kind("delta", session=s2))
+    c.send(op="delete", session=s2)
+    assert "ещё работает" in c.next(kind("error"))["message"]
+    c.send(op="interrupt", session=s2)
+    c.next(kind("turn", session=s2, state="interrupted"))
+    c.send(op="delete", session=s2)
+    assert c.next(kind("deleted"))["session"] == s2
+    assert other.next(kind("deleted"))["session"] == s2  # every panel drops it
+    assert not list(Path(daemon.env["AI_CODING_CHATS"]).glob(f"{s2}*"))
+    c.send(op="hello")
+    assert [m["id"] for m in c.next(kind("hello"))["sessions"]] == [s1]
+    c.send(op="open", session=s2)
+    assert "no such chat" in c.next(kind("error"))["message"]
+
+
+def at(*parts: int) -> float:
+    return datetime(*parts, tzinfo=UTC).timestamp()  # type: ignore[arg-type, misc]
+
+
+def test_plan_limits(daemon: Daemon) -> None:
+    """The plan's limits (5-hour window, week) from the official CLIs: Claude Code's own
+    /usage (a local command: no model call, no session kept) and Codex's
+    account/rateLimits/read; served from memory, read again on request and after a turn."""
+    c = daemon.connect()
+    c.send(op="usage", agent="claude")
+    usage = c.next(kind("usage", agent="claude"))
+    assert usage["limits"] == [
+        {"window": "session", "minutes": 300, "scope": None, "percent": 4,
+         "resets_at": at(2099, 11, 6, 23, 19, 59, 833351), "severity": "normal"},
+        {"window": "week", "minutes": 10080, "scope": None, "percent": 58,
+         "resets_at": at(2099, 11, 8, 22, 59, 59), "severity": "warning"},
+        {"window": "week", "minutes": 10080, "scope": "Fable", "percent": 3,
+         "resets_at": at(2099, 11, 8, 22, 59, 59), "severity": "normal"},
+    ]  # fmt: skip
+    assert "Current session: 4% used" in usage["text"]
+    (call,) = [e for e in daemon.calls("claude") if "usage" in e]
+    assert (
+        call["usage"][:2] == ["-p", "--output-format"]
+        and "--no-session-persistence" in call["usage"]
+    )
+    assert call["cwd"] == daemon.env["HOME"]  # not the project: none of its settings or hooks
+
+    c.send(op="usage", agent="claude")  # fresh: from memory
+    assert c.next(kind("usage", agent="claude"))["at"] == usage["at"]
+    assert len([e for e in daemon.calls("claude") if "usage" in e]) == 1
+    c.send(op="usage", agent="claude", refresh=True)
+    assert c.next(kind("usage", agent="claude"))["at"] > usage["at"]
+    sid = new_chat(c, "claude")
+    c.send(op="send", session=sid, text="hello")
+    c.next(kind("turn", state="done"))
+    c.next(kind("usage", agent="claude"))  # the turn used the plan: read again
+    assert len([e for e in daemon.calls("claude") if "usage" in e]) >= 3
+
+    c.send(op="usage", agent="codex")
+    codex = c.next(kind("usage", agent="codex"))
+    assert codex["plan"] == "plus" and codex["reached"] is None
+    assert codex["limits"] == [
+        {"window": "session", "minutes": 300, "scope": None, "percent": 2,
+         "resets_at": 4100000000.0, "severity": None},
+        {"window": "week", "minutes": 10080, "scope": None, "percent": 40,
+         "resets_at": 4100500000.0, "severity": None},
+    ]  # fmt: skip
+    sid = new_chat(c, "codex")
+    c.send(op="send", session=sid, text="list the files")
+    c.send(op="approve", session=sid, id=c.next(kind("approval"))["id"], decision="allow")
+    c.next(kind("turn", state="done"))
+    assert c.next(kind("usage", agent="codex"))["limits"][0]["percent"] == 7
+
+
+@pytest.mark.parametrize(
+    ("account", "expected"), [("api", "Total cost"), ("fail", "Not logged in")]
+)
+def test_plan_limits_without_a_subscription(tmp_path: Path, account: str, expected: str) -> None:
+    """An API-key account has no plan limits: the CLI's own text says what applies; an
+    error comes to the panel instead of the limits."""
+    d = Daemon(tmp_path)
+    d.env["FAKE_CLAUDE_USAGE"] = account
+    d.start()
+    try:
+        c = d.connect()
+        c.send(op="usage", agent="claude")
+        usage = c.next(kind("usage", agent="claude"))
+        assert usage["limits"] == []
+        assert expected in (usage.get("error") if account == "fail" else usage["text"])
+        c.close()
+    finally:
+        assert d.proc is not None
+        d.proc.terminate()
+        d.proc.wait(10)
 
 
 class ContainerChat:

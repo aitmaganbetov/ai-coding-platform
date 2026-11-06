@@ -110,10 +110,10 @@ def server(postgres_url: str, tmp_path: Path) -> Iterator[Server]:
 def test_migrations_match_models_on_postgres(server: Server) -> None:
     with server.db.engine.connect() as conn:
         assert compare_metadata(MigrationContext.configure(conn), Base.metadata) == []
-    assert current_revision(server.db) == "0003_rate_limits"
+    assert current_revision(server.db) == "0005_local_runs"
     command.downgrade(alembic_config(server.db.url), "0001_initial")
     upgrade_to_head(server.db)
-    assert current_revision(server.db) == "0003_rate_limits"
+    assert current_revision(server.db) == "0005_local_runs"
 
 
 def test_audit_trail_is_append_only_on_postgres(server: Server) -> None:

@@ -2,17 +2,24 @@ import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
   Bot,
+  Columns2,
   Download,
   FileCode2,
   FlaskConical,
   GitCompare,
+  Maximize2,
   MessageSquare,
+  Minimize2,
   Package,
+  PanelLeft,
+  PanelRight,
   ScrollText,
   ShieldCheck,
   SquareTerminal,
+  X,
 } from "lucide-react";
 import {
+  Fragment,
   lazy,
   Suspense,
   useCallback,
@@ -21,6 +28,7 @@ import {
   useState,
   type CSSProperties,
   type FormEvent,
+  type ReactNode,
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
@@ -39,7 +47,10 @@ import {
 import { ChatPanel, type Workflow, WORKFLOWS } from "./ChatPanel";
 import { queryClient, useAgentExecutions, useRun, useRuns } from "./data/queries";
 import { ChangesReview, diffKey, usePendingCount } from "./review/ChangesReview";
+import { askPrompt, type AskKind, type InlineHunk, inlineHunks, useChatBridge } from "./review/inline";
+import { activate, closeTab, EMPTY_LAYOUT, type EditorLayout, merge, moveTab, openTab, restoreLayout, saveLayout, split } from "./editorTabs";
 import { href } from "./shell/routes";
+import { useUi } from "./shell/store";
 import {
   Badge,
   Button,
@@ -54,8 +65,11 @@ import {
   StateBadge,
   Tabs,
   toast,
+  cx,
+  IconButton,
 } from "./ui";
 import "./pages/projects.css";
+import "./pages/split.css";
 
 // Heavy parts load on demand: the editor (CodeMirror) and the terminal (xterm.js).
 const CodeEditor = lazy(() => import("./CodeEditor"));
@@ -63,15 +77,19 @@ const TerminalPanel = lazy(() => import("./TerminalPanel"));
 
 interface OpenFile {
   path: string;
-  content: string | null; // as loaded (the editor's document)
+  doc: string; // the document an editor starts from (load, reload, move to the other group)
+  saved: string | null; // as on disk (null: binary or too large)
   text: string; // as edited
   version: string | null;
   binary: boolean;
   tooLarge: boolean;
   size: number;
-  loadedAt: number;
-  dirty: boolean; // edited and not saved yet
+  loadedAt: number; // every (re)load or move gets a new editor
+  line?: number; // reveal this line (opened from a failed test, a finding)
+  lineKey?: number;
 }
+
+const isDirty = (f: OpenFile) => f.saved !== null && f.text !== f.saved;
 
 type CenterTab = "chat" | "code" | "diff" | "tests" | "logs" | "artifacts";
 type Pane = "left" | "main" | "right";
@@ -150,7 +168,15 @@ export function Workspace({ id, layout = "code", query = {} }: { id: string; lay
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [treeKey, setTreeKey] = useState(0);
-  const [open, setOpen] = useState<OpenFile | null>(null);
+  // Editor tabs in one or two groups (Split View); a file is open in at most one group.
+  const [files, setFiles] = useState<Record<string, OpenFile>>({});
+  const [editors, setEditors] = useState<EditorLayout>(() => restoreLayout(id));
+  const filesRef = useRef(files);
+  filesRef.current = files;
+  const loading = useRef(new Set<string>());
+  const [ratio, setRatio] = useStoredWidth("nexus-ws-split", 50, 20, 80);
+  const fullscreen = useUi((s) => s.fullscreen);
+  const setFullscreen = useUi((s) => s.setFullscreen);
   // A command handed over by the Copilot (e.g. `claude auth login`) opens the terminal with it.
   const [terminal, setTerminal] = useState(Boolean(initialCommand));
   const [terminalCommand, setTerminalCommand] = useState<string | undefined>(initialCommand);
@@ -160,12 +186,17 @@ export function Workspace({ id, layout = "code", query = {} }: { id: string; lay
   );
   // Code Studio: the editor, or the review of the workspace's changes (AI Changes Review).
   const [codeView, setCodeView] = useState<"editor" | "review">(query.view === "review" ? "review" : "editor");
-  const pending = usePendingCount(id, Boolean(info?.exists && info.terminal === "on"));
+  const live = Boolean(info?.exists && info.terminal === "on");
+  const pending = usePendingCount(id, live);
+  // The open file's pending changes, marked in the editor (AI in the editor).
+  const diff = useQuery({ queryKey: diffKey(id), queryFn: () => api.workspaceDiff(id), enabled: live, retry: false });
   const [pane, setPane] = useState<Pane>("main");
   const [left, setLeft] = useStoredWidth(`nexus-ws-left-${layout}`, 260, 180, 520);
   const [right, setRight] = useStoredWidth(`nexus-ws-right-${layout}`, layout === "ai" ? 300 : 400, 260, 640);
-  const openRef = useRef<OpenFile | null>(null);
-  openRef.current = open;
+  const activePath = editors.groups[editors.focus]?.active ?? null;
+
+  useEffect(() => saveLayout(id, editors), [id, editors]);
+  useEffect(() => () => useUi.getState().setFullscreen(false), []);
 
   const load = useCallback(async () => {
     try {
@@ -181,6 +212,11 @@ export function Workspace({ id, layout = "code", query = {} }: { id: string; lay
     void load();
   }, [load]);
 
+  // An open workspace is a tab above the main area (App Shell).
+  useEffect(() => {
+    if (project) useUi.getState().openWorkspace({ id, layout, name: project.name });
+  }, [project, id, layout]);
+
   const scope: FileScope = info?.exists ? "workspace" : "project";
   const editable = scope === "workspace";
 
@@ -189,7 +225,8 @@ export function Workspace({ id, layout = "code", query = {} }: { id: string; lay
     setError(null);
     try {
       setInfo(await api.openWorkspace(id));
-      setOpen(null);
+      setFiles({});
+      setEditors(EMPTY_LAYOUT);
       setTreeKey((k) => k + 1);
     } catch (err) {
       setError(errorText(err));
@@ -198,40 +235,99 @@ export function Workspace({ id, layout = "code", query = {} }: { id: string; lay
     }
   }
 
-  const openFile = useCallback(
-    async (path: string) => {
-      setError(null);
+  /** (Re)load a file into its tab; a reload replaces unsaved text (the caller decides). */
+  const loadFile = useCallback(
+    async (path: string, options: { line?: number; quiet?: boolean } = {}): Promise<boolean> => {
+      loading.current.add(path);
       try {
         const file = await api.file(id, path, scope);
-        setOpen({
-          path: file.path,
-          content: file.content,
-          text: file.content ?? "",
-          version: file.version,
-          binary: file.binary,
-          tooLarge: file.too_large,
-          size: file.size,
-          loadedAt: Date.now(),
-          dirty: false,
-        });
-        setTab("code");
-        setCodeView("editor");
-        setPane("main");
+        setFiles((all) => ({
+          ...all,
+          [path]: {
+            path,
+            doc: file.content ?? "",
+            saved: file.content,
+            text: file.content ?? "",
+            version: file.version,
+            binary: file.binary,
+            tooLarge: file.too_large,
+            size: file.size,
+            loadedAt: Date.now(),
+            ...(options.line ? { line: options.line, lineKey: Date.now() } : {}),
+          },
+        }));
+        return true;
       } catch (err) {
-        setError(errorText(err));
+        if (!options.quiet) setError(errorText(err));
+        setEditors((layout) => closeTab(layout, path)); // a file that cannot be read leaves no tab
+        return false;
+      } finally {
+        loading.current.delete(path);
       }
     },
     [id, scope],
   );
 
-  // The agent changed files: refresh the tree, the review, and the open file unless it has
+  /** Open (or show) a file in the focused group, optionally at a line. */
+  const openFile = useCallback(
+    async (path: string, options: { line?: number; group?: number } = {}) => {
+      setError(null);
+      setEditors((layout) => openTab(layout, path, options.group));
+      setTab("code");
+      setCodeView("editor");
+      setPane("main");
+      const loaded = filesRef.current[path];
+      if (!loaded) await loadFile(path, { line: options.line });
+      else if (options.line)
+        setFiles((all) => (all[path] ? { ...all, [path]: { ...all[path], line: options.line, lineKey: Date.now() } } : all));
+    },
+    [loadFile],
+  );
+
+  // Tabs restored from an earlier visit load when they are shown.
+  useEffect(() => {
+    if (!info) return;
+    for (const group of editors.groups) {
+      const path = group.active;
+      if (path && !files[path] && !loading.current.has(path)) void loadFile(path, { quiet: true });
+    }
+  }, [editors, files, info, loadFile]);
+
+  // Opened at a file (and line): links from failed tests and findings (?file=…&line=…).
+  const openedFromLink = useRef<string | null>(null);
+  useEffect(() => {
+    if (!info || !query.file) return;
+    const key = `${query.file}:${query.line ?? ""}`;
+    if (openedFromLink.current === key) return;
+    openedFromLink.current = key;
+    const line = Number(query.line);
+    void openFile(query.file, { line: Number.isInteger(line) && line > 0 ? line : undefined });
+  }, [info, query.file, query.line, openFile]);
+
+  // The agent changed files: refresh the tree, the review, and every open file without
   // unsaved edits.
   const filesChanged = useCallback(() => {
     setTreeKey((k) => k + 1);
     void queryClient.invalidateQueries({ queryKey: diffKey(id) });
-    const current = openRef.current;
-    if (current && !current.dirty && !current.binary && !current.tooLarge) void openFile(current.path);
-  }, [openFile, id]);
+    for (const file of Object.values(filesRef.current))
+      if (!isDirty(file) && !file.binary && !file.tooLarge) void loadFile(file.path, { quiet: true });
+  }, [loadFile, id]);
+
+  function closeFile(path: string, force = false) {
+    const file = filesRef.current[path];
+    if (!force && file && isDirty(file) && !window.confirm(`В «${path}» есть несохранённые изменения. Закрыть без сохранения?`)) return;
+    setEditors((layout) => closeTab(layout, path));
+    setFiles(({ [path]: _closed, ...rest }) => rest);
+  }
+
+  /** «Открыть справа / слева»: the tab moves with its unsaved text (a new editor). */
+  function moveFile(path: string) {
+    setEditors((layout) => moveTab(layout, path));
+    setFiles((all) => {
+      const file = all[path];
+      return file ? { ...all, [path]: { ...file, doc: file.text, loadedAt: Date.now(), line: undefined } } : all;
+    });
+  }
 
   function openTerminal(command?: string) {
     setTerminalCommand(command);
@@ -255,7 +351,7 @@ export function Workspace({ id, layout = "code", query = {} }: { id: string; lay
         <span>Файлы</span>
       </div>
       <ul className="tree" aria-label="Файлы">
-        <DirEntries key={`${scope}-${treeKey}`} projectId={id} scope={scope} path="" onOpen={(p) => void openFile(p)} selected={open?.path ?? null} />
+        <DirEntries key={`${scope}-${treeKey}`} projectId={id} scope={scope} path="" onOpen={(p) => void openFile(p)} selected={activePath} />
       </ul>
       {editable && (
         <NewFile
@@ -269,26 +365,90 @@ export function Workspace({ id, layout = "code", query = {} }: { id: string; lay
     </div>
   );
 
-  const editor = open ? (
-    <EditorPane
-      key={`${open.path}-${open.loadedAt}`}
-      projectId={id}
-      file={open}
-      editable={editable}
-      onEdit={(text) => setOpen((f) => (f ? { ...f, text, dirty: true } : f))}
-      onSaved={(version, text) => setOpen((f) => (f ? { ...f, version, text, dirty: false } : f))}
-      onReload={() => void openFile(open.path)}
-      onDeleted={() => {
-        setOpen(null);
-        setTreeKey((k) => k + 1);
+  // AI in the editor (marked changes, selection actions) for each open file.
+  function inlineFor(file: OpenFile) {
+    const pendingFile = diff.data?.pending.find((f) => f.path === file.path);
+    return {
+      marks: pendingFile && !isDirty(file) ? inlineHunks(pendingFile, (file.saved ?? "").split("\n").length) : [],
+      onHunk: (index: number, action: "accept" | "reject") => {
+        const hunk = pendingFile?.hunks[index];
+        if (!hunk) return;
+        api.review(id, { action, patch: hunk.patch }).then(
+          () => {
+            void queryClient.invalidateQueries({ queryKey: diffKey(id) });
+            if (action === "reject") void loadFile(file.path);
+          },
+          (err: unknown) => {
+            toast({ tone: "danger", title: "Изменение не применено", text: errorText(err) });
+            void queryClient.invalidateQueries({ queryKey: diffKey(id) });
+          },
+        );
+      },
+      onAsk: (kind: AskKind, selection: { from: number; to: number; text: string }) => {
+        useChatBridge.getState().ask(id, askPrompt(kind, file.path, selection.from, selection.to, selection.text), kind !== "ask");
+        setFullscreen(false);
+        if (layout === "ai") {
+          setTab("chat");
+          setPane("main");
+        } else {
+          setChat(true);
+          setPane("right");
+        }
+      },
+    };
+  }
+
+  const editorPane = (path: string) => {
+    const file = files[path];
+    if (!file) return <p className="muted ws-empty">Загрузка {path}…</p>;
+    return (
+      <EditorPane
+        ai={agents && editable ? inlineFor(file) : undefined}
+        key={`${path}-${file.loadedAt}`}
+        projectId={id}
+        file={file}
+        editable={editable}
+        onEdit={(text) => setFiles((all) => (all[path] ? { ...all, [path]: { ...all[path], text } } : all))}
+        onSaved={(version, text) => setFiles((all) => (all[path] ? { ...all, [path]: { ...all[path], version, saved: text } } : all))}
+        onReload={() => void loadFile(path)}
+        onLeave={() =>
+          // Unmounted (another tab of the workspace, «Изменения»): it comes back with its text.
+          setFiles((all) => {
+            const f = all[path];
+            return f && f.text !== f.doc ? { ...all, [path]: { ...f, doc: f.text } } : all;
+          })
+        }
+        onDeleted={() => {
+          closeFile(path, true);
+          setTreeKey((k) => k + 1);
+        }}
+      />
+    );
+  };
+
+  const editor = (
+    <EditorArea
+      layout={editors}
+      files={files}
+      ratio={ratio}
+      onRatio={setRatio}
+      onFocus={(group) => setEditors((l) => (l.focus === group ? l : { ...l, focus: group }))}
+      onActivate={(group, path) => setEditors((l) => activate(l, group, path))}
+      onClose={(path) => closeFile(path)}
+      onMove={moveFile}
+      onSplit={() => {
+        const first = editors.groups[0];
+        if (first?.active && first.tabs.length > 1) moveFile(first.active);
+        else setEditors(split);
       }}
+      onMerge={() =>
+        setEditors((l) => {
+          const merged = merge(l);
+          return merged;
+        })
+      }
+      renderPane={editorPane}
     />
-  ) : (
-    <div className="editor-empty">
-      <EmptyState icon={<FileCode2 size={20} />} title="Файл не открыт">
-        Выберите файл слева.
-      </EmptyState>
-    </div>
   );
 
   const review =
@@ -347,7 +507,7 @@ export function Workspace({ id, layout = "code", query = {} }: { id: string; lay
   const gridStyle = { "--ws-left": `${left}px`, "--ws-right": `${right}px` } as CSSProperties;
 
   return (
-    <section className="workspace" data-layout={layout}>
+    <section className={cx("workspace", fullscreen && "ws-full")} data-layout={layout}>
       <header className="ws-header">
         <a className="ws-back" href={href("project", id)}>
           <ArrowLeft size={14} aria-hidden /> {project.name}
@@ -384,6 +544,12 @@ export function Workspace({ id, layout = "code", query = {} }: { id: string; lay
             {chat ? "Скрыть чат" : "Чат с ИИ"}
           </Button>
         )}
+        <IconButton
+          label={fullscreen ? "Выйти из полноэкранного режима" : "Во весь экран"}
+          icon={fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+          onClick={() => setFullscreen(!fullscreen)}
+          aria-pressed={fullscreen}
+        />
         {agents && (
           <Button
             icon={<SquareTerminal size={14} />}
@@ -855,6 +1021,166 @@ function TreeDir(props: {
   );
 }
 
+// ------------------------------------------------------- editor tabs and groups --
+/** One or two editor groups (Split View), each with its tabs; a draggable divider. The
+ * inactive tabs stay mounted (hidden): their undo history and scroll survive switching. */
+function EditorArea({
+  layout,
+  files,
+  ratio,
+  onRatio,
+  onFocus,
+  onActivate,
+  onClose,
+  onMove,
+  onSplit,
+  onMerge,
+  renderPane,
+}: {
+  layout: EditorLayout;
+  files: Record<string, OpenFile>;
+  ratio: number;
+  onRatio: (percent: number) => void;
+  onFocus: (group: number) => void;
+  onActivate: (group: number, path: string) => void;
+  onClose: (path: string) => void;
+  onMove: (path: string) => void;
+  onSplit: () => void;
+  onMerge: () => void;
+  renderPane: (path: string) => ReactNode;
+}) {
+  const box = useRef<HTMLDivElement>(null);
+  const two = layout.groups.length > 1;
+
+  function drag(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const rect = box.current?.getBoundingClientRect();
+    if (!rect) return;
+    const move = (e: PointerEvent) => onRatio(((e.clientX - rect.left) / rect.width) * 100);
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      document.body.classList.remove("resizing");
+    };
+    document.body.classList.add("resizing");
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+  }
+
+  function dividerKey(event: KeyboardEvent<HTMLDivElement>) {
+    const step = event.key === "ArrowRight" ? 5 : event.key === "ArrowLeft" ? -5 : 0;
+    if (!step) return;
+    event.preventDefault();
+    onRatio(ratio + step);
+  }
+
+  if (layout.groups.every((g) => g.tabs.length === 0) && !two)
+    return (
+      <div className="editor-empty">
+        <EmptyState icon={<FileCode2 size={20} />} title="Файл не открыт">
+          Выберите файл слева. Файлы открываются вкладками; «Разделить редактор» покажет два файла рядом.
+        </EmptyState>
+      </div>
+    );
+
+  return (
+    <div ref={box} className={cx("ed-area", two && "two")} style={{ "--ed-left": `${ratio}%` } as CSSProperties}>
+      {two && (
+        <div className="ed-switch">
+          <Segmented
+            label="Группа редактора"
+            value={String(layout.focus) as "0" | "1"}
+            onChange={(v) => onFocus(Number(v))}
+            options={[
+              { value: "0", label: "Левая группа" },
+              { value: "1", label: "Правая группа" },
+            ]}
+          />
+        </div>
+      )}
+      {layout.groups.map((group, gi) => {
+        const last = gi === layout.groups.length - 1;
+        const name = two ? (gi === 0 ? "Левая группа редактора" : "Правая группа редактора") : "Редактор";
+        return (
+          <Fragment key={gi}>
+            {gi === 1 && (
+              <div
+                className="ed-divider"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Граница групп редактора"
+                aria-valuenow={Math.round(ratio)}
+                tabIndex={0}
+                onPointerDown={drag}
+                onKeyDown={dividerKey}
+              />
+            )}
+            <section className={cx("ed-group", two && gi === layout.focus && "focused")} aria-label={name} onPointerDownCapture={() => onFocus(gi)} onFocusCapture={() => onFocus(gi)}>
+              <div className="ed-bar">
+                <div className="ed-tabs" role="tablist" aria-label={`Вкладки: ${name}`}>
+                  {group.tabs.map((path) => {
+                    const file = files[path];
+                    const active = path === group.active;
+                    return (
+                      <div
+                        key={path}
+                        className={cx("ed-tab", active && "active")}
+                        onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+                        onAuxClick={(e) => {
+                          if (e.button === 1) {
+                            e.preventDefault();
+                            onClose(path);
+                          }
+                        }}
+                      >
+                        <button type="button" role="tab" aria-selected={active} title={path} onClick={() => onActivate(gi, path)}>
+                          <span className="ed-tab-name">{path.split("/").pop()}</span>
+                          {file && isDirty(file) && (
+                            <span className="ed-dirty" role="img" aria-label="есть несохранённые изменения">
+                              ●
+                            </span>
+                          )}
+                        </button>
+                        <button type="button" className="ed-close" aria-label={`Закрыть ${path}`} onClick={() => onClose(path)}>
+                          <X size={12} aria-hidden />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="ed-actions">
+                  {group.active && (
+                    <IconButton
+                      label={gi === 0 ? "Открыть справа" : "Открыть слева"}
+                      icon={gi === 0 ? <PanelRight size={14} /> : <PanelLeft size={14} />}
+                      onClick={() => group.active && onMove(group.active)}
+                    />
+                  )}
+                  {last && (two ? <IconButton label="Объединить группы" icon={<Columns2 size={14} />} onClick={onMerge} /> : <IconButton label="Разделить редактор" icon={<Columns2 size={14} />} onClick={onSplit} />)}
+                </div>
+              </div>
+              <div className="ed-body">
+                {group.tabs.length === 0 && (
+                  <div className="editor-empty">
+                    <EmptyState icon={<FileCode2 size={20} />} title="Пустая группа">
+                      Откройте файл в дереве слева — он откроется здесь.
+                    </EmptyState>
+                  </div>
+                )}
+                {group.tabs.map((path) => (
+                  <div key={path} className="ed-pane" hidden={path !== group.active}>
+                    {renderPane(path)}
+                  </div>
+                ))}
+              </div>
+            </section>
+          </Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
 function EditorPane({
   projectId,
   file,
@@ -862,7 +1188,9 @@ function EditorPane({
   onEdit,
   onSaved,
   onReload,
+  onLeave,
   onDeleted,
+  ai,
 }: {
   projectId: string;
   file: OpenFile;
@@ -870,21 +1198,30 @@ function EditorPane({
   onEdit: (text: string) => void;
   onSaved: (version: string, text: string) => void;
   onReload: () => void;
+  /** Unmounted with unsaved text: the next editor starts from it (CodeMirror is rebuilt). */
+  onLeave: () => void;
   onDeleted: () => void;
+  /** AI in the editor (own workspace with agents): marked changes and selection actions. */
+  ai?: {
+    marks: InlineHunk[];
+    onHunk: (index: number, action: "accept" | "reject") => void;
+    onAsk: (kind: AskKind, selection: { from: number; to: number; text: string }) => void;
+  };
 }) {
   const [state, setState] = useState<"idle" | "saving" | "saved" | "conflict">("idle");
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [savedText, setSavedText] = useState(file.content);
-  const changed = file.content !== null && file.text !== savedText;
+  const changed = isDirty(file);
+  const leave = useRef(onLeave);
+  leave.current = onLeave;
+  useEffect(() => () => leave.current(), []);
 
   async function save(force = false) {
-    if (!editable || file.content === null) return;
+    if (!editable || file.saved === null) return;
     setState("saving");
     setError(null);
     try {
       const { version } = await api.saveFile(projectId, file.path, file.text, force ? null : file.version);
-      setSavedText(file.text);
       onSaved(version, file.text);
       setState("saved");
     } catch (err) {
@@ -912,7 +1249,7 @@ function EditorPane({
         {changed && <span title="Есть несохранённые изменения"> ●</span>}
         {state === "saved" && !changed && <span className="notice"> сохранено</span>}
         <span className="spacer" />
-        {editable && file.content !== null && (
+        {editable && file.saved !== null && (
           <button type="button" className="primary" disabled={!changed || state === "saving"} onClick={() => void save()}>
             Сохранить
           </button>
@@ -955,7 +1292,18 @@ function EditorPane({
         </p>
       ) : (
         <Suspense fallback={<p className="muted">Загрузка редактора…</p>}>
-          <CodeEditor path={file.path} content={file.content ?? ""} readOnly={!editable} onChange={onEdit} onSave={() => void save()} />
+          <CodeEditor
+            path={file.path}
+            content={file.doc}
+            readOnly={!editable}
+            onChange={onEdit}
+            onSave={() => void save()}
+            marks={changed ? [] : ai?.marks}
+            onHunk={ai?.onHunk}
+            onAsk={ai?.onAsk}
+            line={file.line}
+            lineKey={file.lineKey}
+          />
         </Suspense>
       )}
     </div>

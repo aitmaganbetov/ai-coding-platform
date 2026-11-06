@@ -7,7 +7,10 @@
 * "plan …"  -> plan mode's ExitPlanMode (2.1.x: the plan is in ~/.claude/plans/, input {});
 * "sneak …" -> writes sneaky.txt without asking (as a rule in the user's settings would allow);
 * "read …"  -> a Bash command that only reads, then Read outside the workspace (both asked);
-* anything else -> a text answer.
+* anything else -> a text answer (after a rate_limit_event, as with a subscription).
+`claude -p … /usage` (a local command, no session) -> the plan's limits as 2.1.309 reports
+them: its text and the structured ``usage_report``; FAKE_CLAUDE_USAGE=api for an API-key
+account (text only), =fail for an error.
 With FAKE_CLI_LOG set, the arguments, mode switches and permission answers are appended
 there as JSON lines, for the tests to check.
 """
@@ -19,6 +22,33 @@ import uuid
 args = sys.argv[1:]
 if args[:2] == ["auth", "status"]:
     print(json.dumps({"loggedIn": True, "authMethod": "api_key"}))
+    sys.exit(0)
+if args[-1:] == ["/usage"]:
+    if os.environ.get("FAKE_CLI_LOG"):
+        with open(os.environ["FAKE_CLI_LOG"], "a") as fh:
+            fh.write(json.dumps({"cli": "claude", "usage": args, "cwd": os.getcwd()}) + "\n")
+    kind = os.environ.get("FAKE_CLAUDE_USAGE", "")
+    text = ("Current session: 4% used · resets Nov 6, 11:19pm (UTC)\n"
+            "Current week (all models): 58% used · resets Nov 8, 10:59pm (UTC)")
+    report = {"session": {"total_cost_usd": 0}, "rate_limits": {"limits": [
+        {"kind": "session", "group": "session", "percent": 4,
+         "resets_at": "2099-11-06T23:19:59.833351+00:00", "scope": None, "severity": "normal",
+         "is_active": False},
+        {"kind": "weekly_all", "group": "weekly", "percent": 58,
+         "resets_at": "2099-11-08T22:59:59+00:00", "scope": None, "severity": "warning",
+         "is_active": True},
+        {"kind": "weekly_scoped", "group": "weekly", "percent": 3,
+         "resets_at": "2099-11-08T22:59:59Z", "scope": {"model": {"display_name": "Fable"},
+                                                        "surface": None},
+         "severity": "normal", "is_active": False}]}}
+    if kind == "api":
+        text, report = "Total cost: $0.42", None
+    print(json.dumps({"type": "system", "subtype": "init", "session_id": "u"}))
+    print(json.dumps({"type": "assistant", "message": {"id": "u", "content": [
+        {"type": "text", "text": text}]}, **({"usage_report": report} if report else {})}))
+    print(json.dumps({"type": "result", "subtype": "success", "is_error": kind == "fail",
+                      "result": "Not logged in · Please run /login" if kind == "fail" else text,
+                      "local_command": "usage"}))
     sys.exit(0)
 session = args[args.index("--session-id") + 1] if "--session-id" in args else args[args.index("--resume") + 1]
 assert "language of the user's most recent message" in args[args.index("--append-system-prompt") + 1]
@@ -128,6 +158,7 @@ while True:
                 out({"type": "result", "is_error": True, "result": "interrupted", "session_id": session})
                 break
     else:
+        out({"type": "rate_limit_event", "rate_limit_info": {"status": "allowed"}, "session_id": session})
         out({"type": "stream_event", "api_message_id": mid, "event": {
             "type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "При"}}})
         out({"type": "assistant", "message": {"id": mid, "content": [

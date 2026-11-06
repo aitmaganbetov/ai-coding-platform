@@ -12,6 +12,11 @@ Two phases:
   dependencies go to ``/deps`` (on ``PYTHONPATH``), Node modules into the copy.
 * ``command`` — always without network.
 
+Per-test results (ADR-0044): the default commands also write a JUnit report to
+``/deps/junit.xml`` (pytest ``--junitxml``, ``node --test`` with its junit reporter,
+Vitest ``--reporter=junit``); a custom ``quality_gates.tests.command`` may write one
+there too. The report is read back (never through a link) and kept with the run.
+
 Defaults per stack (overridable in ``quality_gates.tests``):
 
 =========  ===========================================  ================================
@@ -60,6 +65,17 @@ _SKIP_DIRS = {".git", ".ai-coding", "node_modules", ".venv", "venv", "__pycache_
               ".pytest_cache", ".ruff_cache", ".mypy_cache", "dist", "build"}  # fmt: skip
 _MAX_COPY_BYTES = 200 * 1024 * 1024
 _OUTPUT_TAIL = 6000
+JUNIT_PATH = "/deps/junit.xml"
+_JUNIT_LIMIT = 10 * 1024 * 1024
+_VITEST_SCRIPT = re.compile(r"^\s*vitest(\s+run)?(\s+[^&|;]*)?$")
+_NODE_TEST_SCRIPT = re.compile(r"^\s*node\s+--test\s*$")  # flags may follow, files may not
+# node's own runner: TAP on stdout (the counts), JUnit to the report file
+_NODE_REPORTERS = (
+    "--test-reporter=tap",
+    "--test-reporter-destination=stdout",
+    "--test-reporter=junit",
+    f"--test-reporter-destination={JUNIT_PATH}",
+)
 
 
 class TestStatus(StrEnum):
@@ -101,6 +117,7 @@ class TestRun:
     failed: int | None = None
     duration_seconds: float = 0.0
     output: str = ""
+    junit: bytes | None = None  # the JUnit report the tests wrote, if any (not in to_dict)
 
     @property
     def ok(self) -> bool:
@@ -138,7 +155,17 @@ def _python_plan(root: Path) -> TestPlan:
         image=PYTHON_IMAGE,
         install=tuple(install),
         install_hosts=PYPI_HOSTS,
-        command=("python", "-m", "pytest", "-q", "-p", "no:cacheprovider"),
+        command=(
+            "python",
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            f"--junitxml={JUNIT_PATH}",
+            "-o",
+            "junit_family=xunit1",
+        ),  # file and line
         env={"PYTHONPATH": "/deps:/work/src:/work", "PYTHONDONTWRITEBYTECODE": "1"},
     )
 
@@ -154,13 +181,20 @@ def _node_plan(root: Path) -> TestPlan:
         verb = "ci" if (root / "package-lock.json").is_file() else "install"
         install = ("npm", verb, "--ignore-scripts", "--no-audit", "--no-fund")
     script = (manifest.get("scripts") or {}).get("test")
-    command = (
-        ("npm", "test", "--silent")
-        if script and script != _NPM_DEFAULT_TEST
-        else ("node", "--test")
-    )
+    env: dict[str, str] = {}
+    if script and _VITEST_SCRIPT.match(script):  # Vitest takes extra reporters on the command
+        reporters = ("--reporter=default", "--reporter=junit", f"--outputFile.junit={JUNIT_PATH}")
+        command: tuple[str, ...] = ("npm", "test", "--silent", "--", *reporters)
+        env["CI"] = "true"  # one run, no watch mode
+    elif script and _NODE_TEST_SCRIPT.match(script):
+        command = ("npm", "test", "--silent", "--", *_NODE_REPORTERS)
+    elif script and script != _NPM_DEFAULT_TEST:
+        command = ("npm", "test", "--silent")  # Jest & co.: JUnit needs a reporter package
+    else:
+        command = ("node", "--test", *_NODE_REPORTERS)
     return TestPlan(stack="node", image=NODE_IMAGE, install=install,
-                    install_hosts=NPM_HOSTS if install else (), command=command)  # fmt: skip
+                    install_hosts=NPM_HOSTS if install else (), command=command,
+                    env=env)  # fmt: skip
 
 
 def plan_tests(root: Path, gate: TestsGate | None = None) -> TestPlan | None:
@@ -223,6 +257,25 @@ def parse_counts(output: str) -> tuple[int | None, int | None]:
 
 
 # --------------------------------------------------------------------- run --
+def read_report(path: Path, limit: int = _JUNIT_LIMIT) -> bytes | None:
+    """The JUnit report the sandbox wrote, read without following links (the sandbox
+    could leave one pointing anywhere on the host) and size-capped."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        info = os.fstat(fd)  # a directory, a pipe or a device is not a report
+        if not stat.S_ISREG(info.st_mode) or info.st_size > limit or info.st_size == 0:
+            return None
+        with os.fdopen(os.dup(fd), "rb") as handle:
+            return handle.read(limit)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
 def copy_tree(
     source: Path,
     target: Path,
@@ -331,17 +384,19 @@ class SandboxTestRunner:
                 network=False, env=dict(plan.env), timeout_seconds=plan.timeout_seconds,
                 ok_exit_codes=frozenset(range(256)),
             ))  # fmt: skip
+            report = read_report(deps / Path(JUNIT_PATH).name)
         output = redact((result.stdout + "\n" + result.stderr).strip()[-_OUTPUT_TAIL:])
         passed, failed = parse_counts(output)
         duration = time.monotonic() - started
         if result.timed_out:
-            return TestRun(TestStatus.FAILED, f"tests timed out after {plan.timeout_seconds:.0f}s",
-                           command, result.exit_code, passed, failed, duration, output)  # fmt: skip
+            reason = f"tests timed out after {plan.timeout_seconds:.0f}s"
+            return TestRun(TestStatus.FAILED, reason, command, result.exit_code, passed, failed,
+                           duration, output, report)  # fmt: skip
         if plan.command[:3] == ("python", "-m", "pytest") and result.exit_code == 5:
             return TestRun(TestStatus.SKIPPED, "pytest collected no tests", command, 5,
-                           0, 0, duration, output)  # fmt: skip
+                           0, 0, duration, output, report)  # fmt: skip
         if result.exit_code == 0:
             return TestRun(TestStatus.PASSED, "tests passed", command, 0, passed, failed,
-                           duration, output)  # fmt: skip
+                           duration, output, report)  # fmt: skip
         return TestRun(TestStatus.FAILED, f"tests failed (exit {result.exit_code})", command,
-                       result.exit_code, passed, failed, duration, output)  # fmt: skip
+                       result.exit_code, passed, failed, duration, output, report)  # fmt: skip

@@ -30,17 +30,28 @@ RUN npm install --global --no-audit --no-fund \
  && npm cache clean --force \
  && claude --version && codex --version && git --version
 
+# uv: Python projects (uv run pytest, uv sync) without installing it first. uv fetches the
+# Python a project needs (Debian's is 3.11) and keeps it, its cache and its downloads in the
+# user's home, which outlives the container: only the first run of a project downloads.
+# Declared here, not above: a build argument is part of the cache key of every later RUN.
+ARG UV_VERSION=0.13.5
+RUN python3 -m pip install --no-cache-dir --disable-pip-version-check --break-system-packages \
+      "uv==${UV_VERSION}" \
+ && uv --version
+
 COPY ai-coding-workspace-init /usr/local/bin/ai-coding-workspace-init
 COPY ai-coding-agent /usr/local/bin/ai-coding-agent
 COPY tmux.conf /etc/tmux.conf
 COPY profile.sh /etc/profile.d/ai-coding.sh
 
 # nss_wrapper gives the container's uid a user ("dev", home /home/dev) without a writable
-# /etc/passwd; Node (Claude Code, Codex) and ssh need one.
+# /etc/passwd; Node (Claude Code, Codex) and ssh need one. UV_LINK_MODE: uv's cache (home)
+# and the project (/workspace) are separate mounts, which cannot share hard links.
 ENV LANG=C.UTF-8 \
     SHELL=/bin/bash \
     TMUX_TMPDIR=/tmp \
     DISABLE_AUTOUPDATER=1 \
+    UV_LINK_MODE=copy \
     LD_PRELOAD=libnss_wrapper.so \
     NSS_WRAPPER_PASSWD=/tmp/passwd \
     NSS_WRAPPER_GROUP=/tmp/group

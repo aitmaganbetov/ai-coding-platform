@@ -1,0 +1,191 @@
+/* Deployments (ADR-0048) and GitHub Actions (ADR-0043): environment cards, editors,
+   the connection check and the workflow runs. Down to 320px wide. */
+
+.dep-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  gap: var(--space-3, 12px);
+}
+.dep-env {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+  padding: var(--space-3, 12px);
+  border: 1px solid var(--border-primary, #262d3b);
+  border-radius: var(--radius-md, 10px);
+  background: var(--bg-tertiary, #161b24);
+  min-width: 0;
+}
+.dep-env > .btn {
+  align-self: flex-start;
+}
+.dep-env-name {
+  overflow-wrap: anywhere;
+}
+.dep-tags {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.dep-last {
+  margin: 0;
+}
+.dep-last dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.dep-detail {
+  color: var(--danger, #fb7185);
+  font-size: var(--text-xs, 12px);
+}
+.dep-links {
+  display: inline-flex;
+  gap: 8px;
+}
+.dep-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 12px);
+}
+.dep-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.dep-wide {
+  grid-column: 1 / -1;
+}
+.dep-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.dep-checks {
+  gap: 6px;
+}
+.dep-note {
+  margin: 0;
+  font-size: var(--text-xs, 12px);
+}
+.dep-warn {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm, 6px);
+  background: color-mix(in srgb, var(--warning, #fbbf24) 10%, transparent);
+  color: var(--text-primary, #f3f5f9);
+  font-size: var(--text-sm, 13px);
+}
+.dep-warn svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--warning, #fbbf24);
+}
+
+/* GitHub */
+.gh-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 12px);
+  max-width: 640px;
+}
+.gh-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.gh-switch {
+  font-weight: 600;
+}
+.gh-detail {
+  margin: 0;
+  font-size: var(--text-xs, 12px);
+}
+.gh-token {
+  margin-top: var(--space-4, 16px);
+  max-width: 640px;
+}
+.gh-error {
+  color: var(--danger, #fb7185);
+  font-size: var(--text-xs, 12px);
+  overflow-wrap: anywhere;
+}
+.gh-check {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm, 6px);
+  overflow-wrap: anywhere;
+}
+.gh-check > svg {
+  flex: none;
+  margin-top: 2px;
+}
+.gh-check-ok {
+  background: color-mix(in srgb, var(--success, #34d399) 10%, transparent);
+}
+.gh-check-ok > svg {
+  color: var(--success, #34d399);
+}
+.gh-check-bad {
+  background: color-mix(in srgb, var(--danger, #fb7185) 10%, transparent);
+}
+.gh-check-bad > svg {
+  color: var(--danger, #fb7185);
+}
+.gh-projects,
+.gh-runs,
+.gh-jobs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.gh-projects li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.gh-run {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-primary, #262d3b);
+}
+.gh-run:last-child {
+  border-bottom: 0;
+}
+.gh-run-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.gh-run-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.gh-run-meta {
+  font-size: var(--text-xs, 12px);
+  overflow-wrap: anywhere;
+}
+.gh-jobs {
+  padding-left: var(--space-4, 16px);
+}
+
+@media (max-width: 640px) {
+  .dep-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .gh-run-meta {
+    flex-basis: 100%;
+  }
+}

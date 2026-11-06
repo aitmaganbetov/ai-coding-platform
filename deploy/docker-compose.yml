@@ -21,6 +21,9 @@ x-server: &server
     AI_CODING_SERVER_WORKERS: ${AI_CODING_SERVER_WORKERS:-10}
     # Signs the API's requests to the workspace service (browser terminals, ADR-0036).
     AI_CODING_SERVER_WORKSPACE_SECRET: ${AI_CODING_SERVER_WORKSPACE_SECRET:?set AI_CODING_SERVER_WORKSPACE_SECRET in deploy/.env (openssl rand -hex 32)}
+    # Encrypts the projects' secrets at rest: GitHub tokens, AI provider keys, webhook
+    # signing keys (ADR-0043, ADR-0046, ADR-0048). Unset: those cannot be stored. openssl rand -hex 32
+    AI_CODING_SERVER_SECRET_KEY: ${AI_CODING_SERVER_SECRET_KEY:-}
   security_opt: [no-new-privileges:true]
   cap_drop: [ALL]
   read_only: true

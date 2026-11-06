@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fake Codex CLI for the chat daemon tests: `codex login status` (not logged in) and
-`codex app-server` (JSON-RPC over stdio): a turn runs a command that needs approval."""
+`codex app-server` (JSON-RPC over stdio): a turn runs a command that needs approval, then
+the rate limits move (account/rateLimits/updated); account/rateLimits/read as 0.163.0."""
 import json
 import os
 import sys
@@ -30,6 +31,15 @@ def read():
 
 initialized = False
 threads = 0
+used = 2
+
+
+def limits():
+    return {"limitId": "codex", "primary": {"usedPercent": used, "windowDurationMins": 300,
+                                            "resetsAt": 4100000000},
+            "secondary": {"usedPercent": 40, "windowDurationMins": 10080, "resetsAt": 4100500000},
+            "credits": {"hasCredits": False}, "planType": "plus", "rateLimitReachedType": None}
+
 while (msg := read()) is not None:
     method, rid, params = msg.get("method"), msg.get("id"), msg.get("params") or {}
     if method == "initialize":
@@ -46,6 +56,8 @@ while (msg := read()) is not None:
         threads += 1
         out({"id": rid, "result": {"thread": {"id": f"th-{threads}"}}})
         out({"method": "thread/started", "params": {"thread": {"id": f"th-{threads}"}}})
+    elif method == "account/rateLimits/read":
+        out({"id": rid, "result": {"rateLimits": limits(), "rateLimitsByLimitId": {"codex": limits()}}})
     elif method == "account/login/start":
         assert params == {"type": "chatgptDeviceCode"}, params
         out({"id": rid, "result": {"type": "chatgptDeviceCode", "loginId": "l1",
@@ -86,5 +98,7 @@ while (msg := read()) is not None:
             "type": "agentMessage", "id": "it-2", "text": "Готово" if accepted else "Отменено"}}})
         out({"method": "turn/completed", "params": {"threadId": tid, "turn": {
             "id": "tu-1", "status": "completed", "durationMs": 7}}})
+        used += 5
+        out({"method": "account/rateLimits/updated", "params": {"rateLimits": limits()}})
     else:
         out({"id": rid, "error": {"code": -32601, "message": f"unknown {method}"}})

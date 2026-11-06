@@ -707,3 +707,98 @@
     width: 100vw;
   }
 }
+
+/* --------------------------------------------- open workspaces, full screen -- */
+.ws-tabs {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  margin-bottom: var(--space-3);
+  padding-bottom: 2px;
+}
+.shell-main.wide > .ws-tabs {
+  margin-bottom: var(--space-2);
+}
+.ws-tab {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  max-width: 260px;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+.ws-tab a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 4px 4px 10px;
+  color: inherit;
+  font-size: var(--text-xs);
+}
+.ws-tab a small {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.ws-tab.current {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--text-primary);
+}
+.ws-tab button {
+  display: inline-flex;
+  padding: 4px 6px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.ws-tab button:hover {
+  color: var(--text-primary);
+}
+.shell.fullscreen,
+.shell.fullscreen.sidebar-collapsed,
+.shell.fullscreen.with-copilot {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "main";
+}
+.shell.fullscreen .sidebar,
+.shell.fullscreen .commandbar,
+.shell.fullscreen .copilot,
+.shell.fullscreen .sidebar-scrim {
+  display: none;
+}
+@media (max-width: 640px) {
+  .ws-tab a small {
+    display: none;
+  }
+  .ws-tab {
+    max-width: 170px;
+  }
+}
+
+/* Above 1024px the workspace fills the main area exactly: with the strip above it, it takes
+   what the strip leaves (the main area itself must not scroll, or the strip slides away). */
+@media (min-width: 1025px) {
+  .shell-main.wide:has(> .ws-tabs) {
+    display: flex;
+    flex-direction: column;
+  }
+  .shell-main.wide:has(> .ws-tabs) > * {
+    margin-left: 0;
+    margin-right: 0; /* auto margins would centre and shrink the flex items */
+  }
+  .shell-main.wide > .ws-tabs {
+    flex: none;
+  }
+  .shell-main.wide:has(> .ws-tabs) > .workspace {
+    flex: 1 0 0;
+    height: auto;
+  }
+}

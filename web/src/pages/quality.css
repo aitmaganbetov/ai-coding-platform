@@ -246,3 +246,18 @@
     grid-column: 1 / -1;
   }
 }
+
+/* Local (CLI) machines reporting to the server (ADR-0047). */
+.local-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--text-sm);
+  min-width: 0;
+}
+.local-list li {
+  overflow-wrap: anywhere;
+}

@@ -22,6 +22,7 @@ outcome (ТЗ §3).
 from __future__ import annotations
 
 from ai_coding.api.accounts import AccountService
+from ai_coding.api.ai_settings import AIProviderService
 from ai_coding.api.core import (
     ApiError,
     ConflictError,
@@ -34,13 +35,28 @@ from ai_coding.api.core import (
     UnauthorizedError,
     UnsupportedMediaTypeError,
 )
+from ai_coding.api.deploys import DeployService
+from ai_coding.api.github_service import GitHubService
 from ai_coding.api.idempotency import IdempotencyService
 from ai_coding.api.insights import InsightService
+from ai_coding.api.project_settings import ProjectSettingsService
 from ai_coding.api.runs import RunService
+from ai_coding.api.test_results import TestResultService
 from ai_coding.api.workspaces import WorkspaceService
 
 
-class Server(IdempotencyService, InsightService, AccountService, RunService, WorkspaceService):
+class Server(
+    IdempotencyService,
+    InsightService,
+    DeployService,
+    GitHubService,
+    TestResultService,
+    AIProviderService,
+    ProjectSettingsService,
+    AccountService,
+    RunService,
+    WorkspaceService,
+):
     """Facade used by the HTTP layer, the CLI and the workers."""
 
 

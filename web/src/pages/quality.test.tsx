@@ -1,5 +1,5 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { cloneElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FindingRow } from "../api";
@@ -7,9 +7,6 @@ import { queryClient } from "../data/queries";
 import { useUi } from "../shell/store";
 import { TooltipProvider } from "../ui";
 import AuditCenter, { categoryOf, compareAudits, fixDraft } from "./AuditCenter";
-import Infrastructure, { PULL_COMMAND } from "./Infrastructure";
-import Models from "./Models";
-import Testing from "./Testing";
 
 // Recharts measures its container; jsdom has no layout: give charts a fixed size.
 vi.mock("recharts", async (importOriginal) => {
@@ -146,123 +143,5 @@ describe("audit center", () => {
     serve((path) => (path === "/projects" ? PROJECTS : path.startsWith("/findings") ? [LINT] : path.startsWith("/runs") ? [] : undefined));
     show(<AuditCenter query={{ category: "database" }} />);
     expect(await screen.findByText(/агент Database/)).toBeTruthy();
-  });
-});
-
-describe("testing", () => {
-  it("shows the gate history of the project's audits", async () => {
-    useUi.setState({ projectId: "p1" });
-    const runs = [
-      { id: "r2", project_id: "p1", project_name: "alpha", state: "COMPLETED", mode: "audit", kind: "audit", goal: "audit", requested_by: "a", created_at: "2026-11-05T10:00:00Z", finished_at: "2026-11-05T10:05:00Z" },
-      { id: "r1", project_id: "p1", project_name: "alpha", state: "COMPLETED", mode: "audit", kind: "audit", goal: "audit", requested_by: "a", created_at: "2026-11-04T10:00:00Z", finished_at: "2026-11-04T10:05:00Z" },
-    ];
-    const detail = (id: string, security: string) => ({
-      id,
-      state: "COMPLETED",
-      mode: "audit",
-      goal: "audit",
-      error: null,
-      kind: "audit",
-      project_id: "p1",
-      tasks: [],
-      approvals: [],
-      jobs: [],
-      gates: [
-        { gate: "build", result: "PASS", blocking: true, reason: null },
-        { gate: "security", result: security, blocking: true, reason: security === "FAIL" ? "2 high findings" : null, evidence: ["semgrep: app/run.py:4"] },
-      ],
-    });
-    serve((path) => {
-      if (path === "/projects") return PROJECTS;
-      if (path.startsWith("/runs?")) return runs;
-      if (path === "/runs/r2") return detail("r2", "FAIL");
-      if (path === "/runs/r1") return detail("r1", "PASS");
-      return undefined;
-    });
-    show(<Testing />);
-    expect(await screen.findByText("2 high findings")).toBeTruthy();
-    const history = screen.getByRole("region", { name: "История Quality Gates" });
-    await waitFor(() => expect(within(history).getAllByText("FAIL")).toHaveLength(1));
-    expect(within(history).getAllByText("PASS").length).toBeGreaterThanOrEqual(3);
-    expect(screen.getByText("semgrep: app/run.py:4")).toBeTruthy();
-    expect(screen.getByText(/API пока не отдаёт/)).toBeTruthy();
-  });
-});
-
-describe("models", () => {
-  it("shows the provider and private mode, and never asks for a key", async () => {
-    useUi.setState({ projectId: "p1" });
-    serve((path) => {
-      if (path === "/projects/p1")
-        return {
-          ...PROJECTS[0],
-          members: [],
-          kinds: [],
-          config: {
-            stacks: ["python"],
-            mode: "develop",
-            execution: { backend: "docker", network: "none" },
-            ai: { enabled: true, provider: "ollama", model: "qwen2.5-coder" },
-            security: { network: "local-only", egress_allowlist: [] },
-            budgets: { max_tokens_per_run: 500000, max_cost_usd_per_run: 5, max_duration_minutes: 120 },
-            quality_gates: {},
-          },
-        };
-      if (path.startsWith("/projects/p1/usage"))
-        return {
-          totals: { calls: 3, input_tokens: 1200, output_tokens: 300, cost_usd: 0 },
-          by_model: [{ provider: "ollama", model: "qwen2.5-coder", calls: 3, input_tokens: 1200, output_tokens: 300, cost_usd: 0 }],
-          daily: [{ date: "2026-11-05", input_tokens: 1200, output_tokens: 300, cost_usd: 0 }],
-        };
-      if (path.startsWith("/projects/p1/agent-executions"))
-        return [
-          { id: "e1", run_id: "r1", task_key: "develop.implement", agent_name: "developer", attempt: 1, status: "SUCCEEDED", confidence: 0.8, error: null, started_at: "2026-11-05T10:00:00Z", finished_at: "2026-11-05T10:01:00Z", duration_seconds: 60, input_tokens: 1200, output_tokens: 300, cost_usd: 0, models: ["ollama/qwen2.5-coder"] },
-        ];
-      return undefined;
-    });
-    show(<Models />);
-    expect(await screen.findByText("настроен в .ai-coding.yml")).toBeTruthy();
-    expect(screen.getAllByText("запрещён политикой local-only")).toHaveLength(2); // the cloud providers
-    expect(screen.getByText(/Private Mode: политика проекта/)).toBeTruthy();
-    expect(await screen.findByText("developer")).toBeTruthy();
-    expect(screen.getAllByText("ollama/qwen2.5-coder").length).toBeGreaterThan(0);
-    expect(document.querySelectorAll('input[type="password"], textarea').length).toBe(0);
-    expect(screen.queryByLabelText(/ключ/i)).toBeNull();
-  });
-
-  it("asks for a project first", () => {
-    serve(() => undefined);
-    show(<Models />);
-    expect(screen.getByText("Выберите проект")).toBeTruthy();
-  });
-});
-
-describe("infrastructure", () => {
-  const SYSTEM = {
-    version: "2.1.0",
-    database: "postgresql",
-    workspaces: "on",
-    queue: { queued: 1 },
-    runs: { COMPLETED: 3 },
-    workers: [],
-    analysers: { trivy: false, "osv-scanner": true },
-    time: "2026-11-06T10:00:00Z",
-  };
-
-  it("tells an administrator how to prepare the analysers", async () => {
-    serve((path) => (path === "/system" ? SYSTEM : path === "/readyz" ? { status: "ok" } : undefined));
-    show(<Infrastructure me={{ username: "root", is_admin: true }} />);
-    expect(await screen.findByText(PULL_COMMAND)).toBeTruthy();
-    expect(screen.getByText("Нет активных worker'ов")).toBeTruthy();
-    expect(screen.getByText("trivy: нет офлайн-базы")).toBeTruthy();
-    expect(await screen.findByText("API и база данных доступны")).toBeTruthy();
-  });
-
-  it("shows a member the server's health only", async () => {
-    const calls = serve((path) => (path === "/readyz" ? { status: "ok" } : undefined));
-    show(<Infrastructure me={{ username: "alice", is_admin: false }} />);
-    expect(await screen.findByText(/видят администраторы сервера/)).toBeTruthy();
-    expect(calls).not.toContain("/system");
-    expect(screen.queryByText(PULL_COMMAND)).toBeNull();
   });
 });

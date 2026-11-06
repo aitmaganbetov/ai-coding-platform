@@ -167,6 +167,22 @@ describe("AI Changes Review", () => {
     expect(screen.getByText(/patch does not apply/)).toBeTruthy();
   });
 
+  it("accepts a binary file as a whole and sends it back", async () => {
+    const binary: DiffFile = { ...APP, path: "logo.png", binary: true, hunks: [], additions: 0, deletions: 0 };
+    const calls = serve([
+      { accepted: [], pending: [binary], new_files: [], truncated: false },
+      { accepted: [binary], pending: [], new_files: [], truncated: false },
+    ]);
+    show();
+    const card = await screen.findByRole("article", { name: "logo.png: изменён" });
+    expect(within(card).getByText(/принимается или откатывается целиком/)).toBeTruthy();
+    fireEvent.click(within(card).getByRole("button", { name: "Принять файл" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "POST")?.body).toEqual({ action: "accept_path", path: "logo.png" }));
+    const accepted = await screen.findByRole("button", { name: "Вернуть на проверку" });
+    fireEvent.click(accepted);
+    await waitFor(() => expect(calls.filter((c) => c.method === "POST").at(-1)?.body).toEqual({ action: "unstage_path", path: "logo.png" }));
+  });
+
   it("says when there is nothing to review", async () => {
     serve([{ accepted: [], pending: [], new_files: [], truncated: false }]);
     show();

@@ -2,14 +2,17 @@
 
 Chain = the agent's route (``ai.routing[agent]``) or the default model, followed by
 ``ai.fallback`` (duplicates removed). API keys are read from the environment by the
-*name* given in the configuration (``api_key_env``); a route whose key is missing is
-skipped and reported, never called without credentials.
+*name* given in the configuration (``api_key_env``), then from :data:`CREDENTIALS` — keys
+the server keeps for providers configured in the Web UI (ADR-0046), resolved on demand
+and never put into ``os.environ`` (no subprocess or sandbox inherits them). A route whose
+key is missing is skipped and reported, never called without credentials.
 """
 
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+import threading
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -22,6 +25,46 @@ from ai_coding.llm.guard import Budget, PolicyGate, UsageRecorder
 from ai_coding.llm.providers import OLLAMA_BASE_URL, make_provider
 from ai_coding.llm.router import Route, RoutedLLM
 from ai_coding.security.endpoints import LocalOnlyTransport, Resolver, resolves_locally
+
+
+class Credentials:
+    """Keys resolved by the server itself, by the name a route gives in ``api_key_env``.
+
+    A source is a callable (e.g. decrypting a project's secret) called when a key is
+    needed; a failing source counts as a missing key.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._sources: dict[str, Callable[[], str | None]] = {}
+
+    def register(self, name: str, source: Callable[[], str | None]) -> None:
+        with self._lock:
+            self._sources[name] = source
+
+    def unregister(self, name: str) -> None:
+        with self._lock:
+            self._sources.pop(name, None)
+
+    def lookup(self, name: str) -> str | None:
+        with self._lock:
+            source = self._sources.get(name)
+        if source is None:
+            return None
+        try:
+            return source() or None
+        except Exception:  # an unreadable key is a missing key, reported as such
+            return None
+
+
+CREDENTIALS = Credentials()
+
+
+def api_key(env: Mapping[str, str], name: str | None) -> str | None:
+    """The key a route names: the environment first, then the server's credentials."""
+    if not name:
+        return None
+    return env.get(name) or CREDENTIALS.lookup(name)
 
 
 class LLMUnavailableError(RuntimeError):
@@ -53,7 +96,7 @@ def plan_chain(
         if key in seen:
             continue
         seen.add(key)
-        if route.api_key_env and not env.get(route.api_key_env):
+        if route.api_key_env and not api_key(env, route.api_key_env):
             skipped.append(f"{route.provider.value}/{route.model}: ${route.api_key_env} is not set")
             continue
         routes.append(route)
@@ -103,7 +146,7 @@ def build_llm(
             make_provider(
                 r.provider,
                 base_url=r.base_url,
-                api_key=env.get(r.api_key_env) if r.api_key_env else None,
+                api_key=api_key(env, r.api_key_env),
                 timeout=float(ai.timeout_seconds),
                 pricing=pricing,
                 transport=transport,

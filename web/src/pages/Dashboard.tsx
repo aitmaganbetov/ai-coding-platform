@@ -183,7 +183,12 @@ function SystemTile({ me }: { me: Me }) {
           {(s) => (
             <div className="stats">
               <Stat label="В очереди" value={s.queue.queued ?? 0} />
-              <Stat label="Worker'ы" value={s.workers.length} tone={s.workers.length ? undefined : "warning"} />
+              {/* online: idle workers count too (their heartbeat), stopped ones do not */}
+              <Stat
+                label="Worker'ы в сети"
+                value={s.workers.filter((w) => w.online).length}
+                tone={s.workers.some((w) => w.online) ? undefined : "warning"}
+              />
               <Stat
                 label="Базы уязвимостей"
                 value={`${Object.values(s.analysers).filter(Boolean).length}/${Object.keys(s.analysers).length}`}

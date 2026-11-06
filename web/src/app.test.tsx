@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { App, parseRoute } from "./App";
 import { projectNameFrom } from "./NewProject";
 import { RunTable } from "./ProjectPage";
@@ -149,7 +149,7 @@ beforeEach(() => {
   sessionStorage.clear();
   localStorage.clear();
   queryClient.clear(); // server state must not leak between tests
-  useUi.setState({ projectId: null, copilotOpen: false, paletteOpen: false, mobileNavOpen: false });
+  useUi.setState({ projectId: null, copilotOpen: false, paletteOpen: false, mobileNavOpen: false, workspaces: [], fullscreen: false });
   window.location.hash = "";
   vi.stubGlobal("WebSocket", FakeSocket);
 });
@@ -484,7 +484,7 @@ describe("project explorer and onboarding", () => {
     expect(box.value).toBe("Проверь auth"); // pre-filled, not sent
     expect(screen.getByRole("radio", { name: /^Аудит/ }).getAttribute("aria-checked")).toBe("true");
     fireEvent.keyDown(box, { key: "Enter" });
-    expect(socket.sent.at(-1)).toEqual({ op: "new", agent: "claude", mode: "ask", workflow: "audit" });
+    expect(socket.sent.at(-1)).toEqual({ op: "new", agent: "claude", mode: "ask", workflow: "audit", ref: "new:1" });
     // The other centre tabs show the orchestrator's real data (none yet).
     fireEvent.click(screen.getByRole("tab", { name: /Tests/ }));
     expect(await screen.findByText("Аудитов ещё не было")).toBeTruthy();
@@ -759,7 +759,7 @@ describe("chat", () => {
     expect(screen.getByText(/Claude Code · подписка Claude/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Сообщение"), { target: { value: "Добавь функцию tax" } });
     fireEvent.keyDown(screen.getByLabelText("Сообщение"), { key: "Enter" });
-    expect(socket.sent.at(-1)).toEqual({ op: "new", agent: "claude", mode: "ask", workflow: "develop" });
+    expect(socket.sent.at(-1)).toEqual({ op: "new", agent: "claude", mode: "ask", workflow: "develop", ref: "new:1" });
     socket.emit({ t: "opened", meta: { id: "s1", agent: "claude", mode: "ask", workflow: "develop", title: "Новый чат" }, history: [] });
     expect(socket.sent.at(-1)).toEqual({ op: "send", session: "s1", text: "Добавь функцию tax", mode: "ask" });
     const s = { session: "s1" };
@@ -825,6 +825,41 @@ describe("chat", () => {
     expect(socket.sent.at(-1)).toEqual({ op: "interrupt", session: "s9" });
   });
 
+  it("times a long command, by the daemon's clock, so that it does not look stuck", async () => {
+    const browser = 1_800_000_000; // the user's clock is two minutes behind the container's
+    const daemon = browser + 120;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(browser * 1000);
+    onTestFinished(() => clock.mockRestore());
+    const { socket } = await connected();
+    const s = { session: "s1" };
+    socket.emit({ t: "hello", sessions: [{ id: "s1", agent: "claude", mode: "ask", workflow: "maintain", title: "Тест" }] });
+    socket.emit({
+      t: "opened",
+      busy: true,
+      now: daemon,
+      meta: { id: "s1", agent: "claude", mode: "ask", workflow: "maintain", planned: true, title: "Тест" },
+      history: [
+        { ...s, t: "user", text: "Почини тест", ts: daemon - 500 },
+        { ...s, t: "tool", id: "t1", name: "Bash", title: "$ uv run pytest -q", detail: "", ts: daemon - 470 },
+        { ...s, t: "approval", id: "a1", name: "Bash", title: "$ uv run pytest -q", tool: "t1", ts: daemon - 470 },
+        { ...s, t: "approval_done", id: "a1", decision: "allow_session", ts: daemon - 405 }, // runs from here
+      ],
+    });
+    const status = () => document.querySelector(".chat-working")?.textContent ?? "";
+    expect(status()).toBe("Claude Code выполняет $ uv run pytest -q · 6 мин 45 с");
+    expect(screen.getByText(/это не зависание/)).toBeTruthy();
+
+    // Done; the next command needs a permission: the agent waits for the user, not stuck.
+    socket.emit({ ...s, t: "tool_result", id: "t1", ok: false, text: "1 failed", ts: daemon });
+    expect(status()).toBe("Claude Code работает…");
+    expect(screen.queryByText(/это не зависание/)).toBeNull();
+    socket.emit({ ...s, t: "tool", id: "t2", name: "Bash", title: "$ ls", detail: "", ts: daemon });
+    socket.emit({ ...s, t: "approval", id: "a2", name: "Bash", title: "$ ls", tool: "t2", ts: daemon });
+    expect(status()).toBe("Claude Code ждёт вашего решения — ответьте на запрос выше.");
+    socket.emit({ ...s, t: "approval_done", id: "a2", decision: "allow", ts: daemon });
+    expect(status()).toBe("Claude Code выполняет $ ls · 0 с");
+  });
+
   it("works in the mode chosen for the chat: AUDIT only reads", async () => {
     const { socket } = await connected();
     socket.emit({ t: "hello", sessions: [] });
@@ -834,7 +869,7 @@ describe("chat", () => {
     expect(screen.getByText("Только чтение")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Сообщение"), { target: { value: "Проверь безопасность" } });
     fireEvent.keyDown(screen.getByLabelText("Сообщение"), { key: "Enter" });
-    expect(socket.sent.at(-1)).toEqual({ op: "new", agent: "claude", mode: "ask", workflow: "audit" });
+    expect(socket.sent.at(-1)).toEqual({ op: "new", agent: "claude", mode: "ask", workflow: "audit", ref: "new:1" });
     socket.emit({ t: "opened", meta: { id: "s1", agent: "claude", mode: "ask", workflow: "audit", title: "Новый чат" }, history: [] });
     expect(screen.getByText(/только чтение$/, { selector: "p" })).toBeTruthy();
     expect(screen.queryByRole("radio")).toBeNull(); // an open chat keeps its mode
@@ -866,7 +901,7 @@ describe("chat", () => {
     fireEvent.click(screen.getByRole("radio", { name: /^Сопровождение/ }));
     fireEvent.change(screen.getByLabelText("Сообщение"), { target: { value: "Почини оплату" } });
     fireEvent.keyDown(screen.getByLabelText("Сообщение"), { key: "Enter" });
-    expect(socket.sent.at(-1)).toEqual({ op: "new", agent: "claude", mode: "ask", workflow: "maintain" });
+    expect(socket.sent.at(-1)).toEqual({ op: "new", agent: "claude", mode: "ask", workflow: "maintain", ref: "new:1" });
     const meta = { id: "s1", agent: "claude", mode: "edits", workflow: "maintain", title: "Почини оплату" };
     const s = { session: "s1" };
     socket.emit({ t: "opened", meta, history: [{ ...s, t: "user", text: "Почини оплату" }] });
@@ -892,7 +927,7 @@ describe("chat", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Codex" }));
     fireEvent.change(screen.getByLabelText("Сообщение"), { target: { value: "Обнови зависимости" } });
     fireEvent.keyDown(screen.getByLabelText("Сообщение"), { key: "Enter" });
-    expect(socket.sent.at(-1)).toEqual({ op: "new", agent: "codex", mode: "edits", workflow: "maintain" });
+    expect(socket.sent.at(-1)).toEqual({ op: "new", agent: "codex", mode: "edits", workflow: "maintain", ref: "new:2" });
     const c = { session: "s2" };
     socket.emit({ t: "opened", meta: { ...meta, id: "s2", agent: "codex" }, history: [
       { ...c, t: "user", text: "Обнови зависимости" },
@@ -924,7 +959,9 @@ describe("chat", () => {
     act(() => socket.onclose?.());
     await waitFor(() => expect(FakeSocket.last).not.toBe(socket), { timeout: 3000 });
     const again = FakeSocket.last as FakeSocket;
-    await waitFor(() => expect(again.sent).toContainEqual({ op: "open", session: "s1" }));
+    await waitFor(() => expect(again.sent).toContainEqual({ op: "hello" }));
+    again.emit({ t: "hello", sessions: [{ id: "s1", agent: "claude", mode: "ask", title: "Чат" }] });
+    expect(again.sent).toContainEqual({ op: "open", session: "s1" });
   });
 
   it("signs in: Codex by a ChatGPT device code, Claude Code in the terminal", async () => {
@@ -941,6 +978,160 @@ describe("chat", () => {
     socket.emit({ t: "login_done", agent: "codex", success: true });
     expect(screen.getByText("Вход выполнен.")).toBeTruthy();
     expect(screen.queryByRole("option", { name: "Только план" })).toBeNull(); // Claude Code only
+  });
+});
+
+describe("chat tabs and limits", () => {
+  const FEATURES = ["tabs", "delete", "usage"];
+  const first = { id: "s1", agent: "claude", mode: "ask", workflow: "develop", title: "Первый" };
+  const second = { id: "s2", agent: "codex", mode: "edits", workflow: "maintain", title: "Второй" };
+
+  async function connected() {
+    sessionStorage.setItem("ai-coding-token", "aic_session");
+    render(<ChatPanel projectId="p1" onOpenTerminal={vi.fn()} onFilesChanged={vi.fn()} />);
+    await waitFor(() => expect(FakeSocket.last?.sent.length).toBe(2));
+    return FakeSocket.last as FakeSocket;
+  }
+  const opens = (socket: FakeSocket, id: string) =>
+    socket.sent.filter((m) => m.op === "open" && m.session === id).length;
+  const tab = (name: RegExp) => within(screen.getByRole("tablist", { name: "Открытые чаты" })).getByRole("tab", { name });
+
+  it("keeps several chats open in tabs: background work, a new chat, close, delete", async () => {
+    const socket = await connected();
+    socket.emit({ t: "hello", sessions: [first, second], features: FEATURES });
+    expect(socket.sent.at(-1)).toEqual({ op: "open", session: "s1" }); // the latest chat
+    socket.emit({ t: "opened", meta: first, history: [{ session: "s1", t: "user", text: "Первый вопрос" }] });
+    expect(screen.getByText("Первый вопрос")).toBeTruthy();
+
+    // A chat of the history opens in a tab of its own.
+    fireEvent.click(screen.getByRole("button", { name: /Все чаты \(2\)/ }));
+    const all = screen.getByRole("dialog", { name: "Все чаты" });
+    fireEvent.click(within(all).getByText("Второй"));
+    expect(socket.sent.at(-1)).toEqual({ op: "open", session: "s2" });
+    expect(screen.queryByRole("dialog", { name: "Все чаты" })).toBeNull();
+    socket.emit({ t: "opened", meta: second, busy: true, history: [{ session: "s2", t: "user", text: "Обнови зависимости" }] });
+    expect(screen.getByText("Обнови зависимости")).toBeTruthy();
+    expect(screen.queryByText("Первый вопрос")).toBeNull();
+    expect(screen.getByRole("tab", { name: "Codex" }).getAttribute("aria-selected")).toBe("true");
+    expect(tab(/Второй — работает/).getAttribute("aria-selected")).toBe("true");
+
+    // The other chat goes on in its tab, followed without opening it again.
+    socket.emit({ session: "s1", t: "message", msg: "m1", text: "Ответ в фоне" });
+    socket.emit({ session: "s2", t: "approval", id: "a1", name: "Bash", title: "$ pip install", detail: "" });
+    fireEvent.click(tab(/^Первый$/));
+    expect(screen.getByText("Ответ в фоне")).toBeTruthy();
+    expect(opens(socket, "s1")).toBe(1);
+    expect(screen.getByRole("tab", { name: "Claude Code" }).getAttribute("aria-selected")).toBe("true");
+    expect(tab(/Второй — ждёт вашего ответа/)).toBeTruthy();
+
+    // A new chat: a tab of its own; the chat service names it by the tab ("ref").
+    fireEvent.change(screen.getByLabelText("Сообщение"), { target: { value: "черновик" } });
+    fireEvent.click(screen.getByRole("button", { name: "Новый чат" }));
+    expect(screen.getByRole("radio", { name: /^Разработка/ })).toBeTruthy();
+    expect((screen.getByLabelText("Сообщение") as HTMLTextAreaElement).value).toBe("");
+    fireEvent.change(screen.getByLabelText("Сообщение"), { target: { value: "Добавь экспорт CSV" } });
+    fireEvent.keyDown(screen.getByLabelText("Сообщение"), { key: "Enter" });
+    expect(socket.sent.at(-1)).toEqual({ op: "new", agent: "claude", mode: "ask", workflow: "develop", ref: "new:1" });
+    socket.emit({ t: "opened", ref: "new:1", meta: { ...first, id: "s3", title: "Новый чат" }, history: [] });
+    expect(socket.sent.at(-1)).toEqual({ op: "send", session: "s3", text: "Добавь экспорт CSV", mode: "ask" });
+    socket.emit({ session: "s3", t: "user", text: "Добавь экспорт CSV" });
+    expect(tab(/^Добавь экспорт CSV$/).getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(tab(/^Первый$/));
+    expect((screen.getByLabelText("Сообщение") as HTMLTextAreaElement).value).toBe("черновик"); // kept per tab
+    expect(JSON.parse(localStorage.getItem("ai-coding-chat-tabs:p1") ?? "{}")).toEqual({ tabs: ["s1", "s2", "s3"], active: "s1" });
+
+    // Closed: the agent goes on, the chat stays in the history.
+    fireEvent.click(screen.getByRole("button", { name: "Закрыть вкладку «Первый»" }));
+    expect(socket.sent.at(-1)).toEqual({ op: "close", session: "s1" });
+    expect(screen.queryByRole("tab", { name: /^Первый$/ })).toBeNull();
+    expect(tab(/Второй/).getAttribute("aria-selected")).toBe("true"); // its neighbour is shown
+    fireEvent.click(screen.getByRole("button", { name: /Все чаты/ }));
+    expect(within(screen.getByRole("dialog", { name: "Все чаты" })).getByText("Первый")).toBeTruthy();
+
+    // Deleted: not while its agent works; asked once more; gone from every list.
+    const remove = screen.getByRole("button", { name: "Удалить чат «Второй»" }) as HTMLButtonElement;
+    expect(remove.disabled).toBe(true);
+    socket.emit({ session: "s2", t: "approval_done", id: "a1", decision: "deny" });
+    socket.emit({ session: "s2", t: "turn", state: "done" });
+    fireEvent.click(screen.getByRole("button", { name: "Удалить чат «Второй»" }));
+    expect(screen.getByText(/Удалить «Второй»\?/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Удалить" }));
+    expect(socket.sent.at(-1)).toEqual({ op: "delete", session: "s2" });
+    socket.emit({ t: "deleted", session: "s2" });
+    expect(screen.queryByRole("tab", { name: /Второй/ })).toBeNull();
+    expect(within(screen.getByRole("dialog", { name: "Все чаты" })).queryByText("Второй")).toBeNull();
+    expect(tab(/^Добавь экспорт CSV$/).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("comes back to the tabs this browser had open", async () => {
+    localStorage.setItem("ai-coding-chat-tabs:p1", JSON.stringify({ tabs: ["s2", "gone", "s1"], active: "s1" }));
+    const socket = await connected();
+    socket.emit({ t: "hello", sessions: [first, second], features: FEATURES });
+    // The shown one first; deleted chats are left out.
+    expect(socket.sent.slice(2)).toEqual([{ op: "open", session: "s1" }, { op: "open", session: "s2" }]);
+    expect(screen.getByText("Загрузка чата…")).toBeTruthy();
+    socket.emit({ t: "opened", meta: first, history: [] });
+    expect(tab(/^Первый$/).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getAllByRole("tab", { name: /Первый|Второй/ })).toHaveLength(2);
+  });
+
+  it("works with an older chat service: one chat followed at a time, no deletion", async () => {
+    const socket = await connected();
+    socket.emit({ t: "hello", sessions: [first, second] });
+    socket.emit({ t: "opened", meta: first, history: [] });
+    fireEvent.click(screen.getByRole("button", { name: /Все чаты/ }));
+    expect(screen.queryByRole("button", { name: /Удалить чат/ })).toBeNull();
+    expect(screen.getByText(/после «Перезапустить среду»/)).toBeTruthy();
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Все чаты" })).getByText("Второй"));
+    socket.emit({ t: "opened", meta: second, history: [] });
+    fireEvent.click(tab(/^Первый$/));
+    expect(opens(socket, "s1")).toBe(2); // opened again: its events were not followed meanwhile
+    fireEvent.click(screen.getByRole("button", { name: "Закрыть вкладку «Второй»" }));
+    expect(socket.sent.some((m) => m.op === "close")).toBe(false); // unknown to it
+    expect(screen.queryByRole("button", { name: /Лимиты подписки/ })).toBeNull();
+  });
+
+  it("shows the plan's limits: used, left and the time to the reset", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
+    onTestFinished(() => clock.mockRestore());
+    const now = 1_800_000_000;
+    const socket = await connected();
+    socket.emit({ t: "hello", sessions: [], features: FEATURES });
+    socket.emit({ t: "auth", agents: { claude: { logged_in: true, method: "claude.ai", plan: "max" },
+                                       codex: { logged_in: true, method: "chatgpt" } } });
+    expect(screen.getByText(/Claude Code · подписка Claude Max/)).toBeTruthy();
+    expect(socket.sent.slice(-2)).toEqual([{ op: "usage", agent: "claude" }, { op: "usage", agent: "codex" }]);
+    socket.emit({ t: "usage", agent: "claude", at: now - 120, limits: [
+      { window: "session", minutes: 300, scope: null, percent: 4, resets_at: now + 3 * 3600 + 55 * 60 + 20 },
+      { window: "week", minutes: 10080, scope: null, percent: 81, resets_at: now + 2 * 86400 + 3 * 3600 + 10 },
+      { window: "week", minutes: 10080, scope: "Fable", percent: 3, resets_at: now + 2 * 86400 + 3 * 3600 + 10 },
+    ] });
+    socket.emit({ t: "usage", agent: "codex", at: now, plan: "plus", limits: [], error: "codex app-server exited" });
+    const chip = screen.getByRole("button", { name: "Лимиты подписки: Сессия · 5 ч — использовано 4%, Неделя — использовано 81%" });
+    expect(chip.textContent).toBe("5 ч 4% · нед. 81%");
+    expect(chip.className).toContain("tone-warning");
+
+    fireEvent.click(chip);
+    expect(socket.sent.slice(-2)).toEqual([{ op: "usage", agent: "claude" }, { op: "usage", agent: "codex" }]);
+    const claude = screen.getByRole("region", { name: "Лимиты Claude Code" });
+    expect(within(claude).getByText("Claude Code · Max")).toBeTruthy();
+    expect(within(claude).getByText(/осталось 96% · сброс через 3 ч 55 мин/)).toBeTruthy();
+    expect(within(claude).getByText(/осталось 19% · сброс через 2 дн 3 ч/)).toBeTruthy();
+    expect(within(claude).getByText("Неделя · Fable")).toBeTruthy();
+    expect(within(claude).getByRole("progressbar", { name: "Сессия · 5 ч: использовано 4%" })).toBeTruthy();
+    expect(within(claude).getByText("Обновлено 2 мин назад")).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: "Лимиты Codex" })).getByText(/Не удалось узнать лимиты: codex app-server exited/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Обновить/ }));
+    expect(socket.sent.slice(-2)).toEqual([{ op: "usage", agent: "claude", refresh: true }, { op: "usage", agent: "codex", refresh: true }]);
+
+    // An API account has no plan limits: the CLI's own words.
+    socket.emit({ t: "auth", agents: { claude: { logged_in: true, method: "console" }, codex: { logged_in: false, method: null } } });
+    socket.emit({ t: "usage", agent: "claude", at: now, limits: [], text: "Total cost: $0.42" });
+    expect(screen.getByText(/Вход по API: лимитов подписки нет/)).toBeTruthy();
+    expect(screen.getByText("Total cost: $0.42")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Лимиты Codex" })).toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Лимиты подписки" })).toBeNull();
   });
 });
 

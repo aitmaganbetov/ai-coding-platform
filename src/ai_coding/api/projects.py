@@ -349,12 +349,24 @@ class ProjectService(ServerCore):
         (root / STATE_CONFIG).write_text(text, encoding="utf-8")
 
     def project_config(self, project: Project) -> tuple[Path, AICodingConfig]:
-        """Root and configuration of a project; the name is the server's project name."""
+        """Root and effective configuration of a project: its file, then what was set in
+        the Web UI (:meth:`config_overrides`); the name is the server's project name."""
+        root, config = self.file_config(project)
+        return root, self.config_overrides(project, config)
+
+    def file_config(self, project: Project) -> tuple[Path, AICodingConfig]:
+        """Root and configuration from the project's own file (``.ai-coding.yml``)."""
         root = Path(project.root_path or "")
         path = find_project_config(root) or (root / STATE_CONFIG)
         config = self._validated_config(path)
         renamed = config.project.model_copy(update={"name": project.name})
         return root, config.model_copy(update={"project": renamed})
+
+    def config_overrides(self, project: Project, config: AICodingConfig) -> AICodingConfig:
+        """Settings made in the Web UI on top of the file (e.g. the AI provider, ADR-0046);
+        services that own such settings extend this (calling ``super()``)."""
+        del project
+        return config
 
     def _validated_config(self, path: Path) -> AICodingConfig:
         """Parse and validate ``path`` once per version of the file.

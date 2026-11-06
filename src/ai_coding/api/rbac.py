@@ -37,6 +37,8 @@ class Permission(StrEnum):
     AUDIT_VIEW = "audit.view"
     FILES_VIEW = "files.view"  # read the project's files in the Web UI
     WORKSPACE_USE = "workspace.use"  # own workspace: terminal, editing, commits
+    PROJECT_SETTINGS = "project.settings"  # integrations, AI provider, secrets (write-only)
+    DEPLOY = "deploy.run"  # start deployments (production ones still need an approval)
     MEMBERS_MANAGE = "members.manage"
     PROJECT_EXPORT = "project.export"
     PROJECT_DELETE = "project.delete"
@@ -62,6 +64,8 @@ MATRIX: dict[Role, frozenset[Permission]] = {
             Permission.AUDIT_VIEW,
             Permission.FILES_VIEW,
             Permission.WORKSPACE_USE,
+            Permission.PROJECT_SETTINGS,
+            Permission.DEPLOY,
         }
     ),
     Role.DEVELOPER: frozenset(

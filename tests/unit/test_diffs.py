@@ -11,6 +11,7 @@ import pytest
 from ai_coding.api.diffs import (
     DIFF_ARGS,
     PATCH_OPS,
+    PATH_OPS,
     UNTRACKED_SCRIPT,
     parse_diff,
     patch_path,
@@ -142,3 +143,17 @@ def test_the_review_commands_on_a_real_repository(tmp_path: Path, git_env: None)
     assert "LINE 2\n" in text and "line 18\n" in text  # accepted kept, rejected reverted
     git(*PATCH_OPS["unstage"], data=after["accepted"][0]["hunks"][0]["patch"])
     assert git(*DIFF_ARGS, "--cached") == "" and "LINE 2" in git(*DIFF_ARGS)
+
+    # A binary file has no hunks: it is accepted, sent back and rejected as a whole.
+    (tmp_path / "logo.bin").write_bytes(b"\x00\x01v1")
+    git("add", "logo.bin")
+    git("commit", "-q", "-m", "binary")
+    (tmp_path / "logo.bin").write_bytes(b"\x00\x02v2")
+    (binary,) = [f for f in parse_diff(git(*DIFF_ARGS)) if f["path"] == "logo.bin"]
+    assert binary["binary"] is True and binary["hunks"] == []
+    git(*PATH_OPS["accept_path"], "logo.bin")
+    assert "logo.bin" in git(*DIFF_ARGS, "--cached")
+    git(*PATH_OPS["unstage_path"], "logo.bin")
+    assert "logo.bin" not in git(*DIFF_ARGS, "--cached") and "logo.bin" in git(*DIFF_ARGS)
+    git(*PATH_OPS["reject_path"], "logo.bin")
+    assert (tmp_path / "logo.bin").read_bytes() == b"\x00\x01v1"

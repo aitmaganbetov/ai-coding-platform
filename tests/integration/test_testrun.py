@@ -12,6 +12,7 @@ from ai_coding.config.models import TestsGate as GateConfig
 from ai_coding.domain.enums import ExecutionBackend
 from ai_coding.executors import DockerSandboxExecutor
 from ai_coding.executors.base import CommandSpec, ExecutionResult
+from ai_coding.quality.junit import parse_junit, summarize
 from ai_coding.tools.testrun import (
     NODE_IMAGE,
     PYTHON_IMAGE,
@@ -50,9 +51,14 @@ PY_UNITTEST = {
 def test_plans_per_stack(tmp_path: Path) -> None:
     node = plan_tests(write(tmp_path / "n", NODE_OK))
     assert node is not None and node.stack == "node" and node.image == NODE_IMAGE
-    assert node.command == ("npm", "test", "--silent") and node.install is None
+    assert node.command[:4] == ("npm", "test", "--silent", "--") and node.install is None
+    assert "--test-reporter=junit" in node.command  # `node --test` scripts write JUnit too
     bare = plan_tests(write(tmp_path / "b", {"package.json": "{}"}))
-    assert bare is not None and bare.command == ("node", "--test")
+    assert bare is not None and bare.command[:2] == ("node", "--test")
+    assert bare.command[-2:] == (
+        "--test-reporter=junit",
+        "--test-reporter-destination=/deps/junit.xml",
+    )
     deps = plan_tests(
         write(
             tmp_path / "d",
@@ -158,6 +164,7 @@ async def test_node_tests_in_sandbox(tmp_path: Path) -> None:
     root = write(tmp_path / "n", NODE_OK)
     ok = await runner.run(root, plan_tests(root))  # type: ignore[arg-type]
     assert ok.status is Status.PASSED and (ok.passed, ok.failed) == (1, 0), ok.output
+    assert ok.junit and summarize(parse_junit(ok.junit))["passed"] == 1  # ADR-0044
     (root / "test/b.test.js").write_text(
         'import {test} from "node:test";\nimport assert from "node:assert";\n'
         'test("two", () => assert.equal(1, 2));\n',
@@ -165,6 +172,8 @@ async def test_node_tests_in_sandbox(tmp_path: Path) -> None:
     )
     bad = await runner.run(root, plan_tests(root))  # type: ignore[arg-type]
     assert bad.status is Status.FAILED and (bad.passed, bad.failed) == (1, 1)
+    failed = [c for s in parse_junit(bad.junit or b"") for c in s.cases if c.status == "failed"]
+    assert [(c.name, c.file, c.line) for c in failed] == [("two", "test/b.test.js", 3)]
     assert not (root / "node_modules").exists()  # the source tree is never written
 
 
@@ -188,3 +197,4 @@ async def test_python_unittest_in_sandbox_without_network(tmp_path: Path) -> Non
     run = await runner.run(root, plan)  # type: ignore[arg-type]
     assert run.status is Status.PASSED, run.output
     assert (run.passed, run.failed) == (2, 0)
+    assert run.junit is None  # a custom command that writes no report

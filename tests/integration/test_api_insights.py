@@ -16,6 +16,7 @@ import yaml
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from ai_coding.api import presence
 from ai_coding.api.app import create_app
 from ai_coding.api.services import Server
 from ai_coding.api.settings import ServerSettings
@@ -330,6 +331,12 @@ def test_system_status_for_admins_only(
                                ("host:3:gone", now - timedelta(minutes=30))):  # fmt: skip
             s.add(RunJob(run_id=run_id, kind="resume", state="leased", lease_owner=owner,
                          lease_expires_at=expires, available_at=now))  # fmt: skip
+    # Heartbeats: the busy worker's, an idle worker's (no lease), one gone two minutes ago.
+    data = world["server"].settings.data_dir
+    started = now - timedelta(hours=1)
+    for owner, seen in (("host:1:live", now), ("host:4:idle", now - timedelta(seconds=10)),
+                        ("host:5:gone", now - timedelta(minutes=2))):  # fmt: skip
+        presence.beat(data, owner, started=started, concurrency=3, active=0, now=seen)
     try:
         status = _get(world, "admin", "/system")
         assert set(status) == {"version", "database", "workspaces", "queue", "runs", "workers",
@@ -337,10 +344,14 @@ def test_system_status_for_admins_only(
         assert status["database"] == "sqlite" and status["workspaces"] == "on"
         assert status["queue"]["leased"] == 4 and status["queue"]["done"] >= 3
         assert sum(status["runs"].values()) == 3
-        assert [w["id"] for w in status["workers"]] == ["host:1:live", "host:2:stalled"]
-        live, stalled = status["workers"]
+        assert [w["id"] for w in status["workers"]] == ["host:1:live", "host:2:stalled",
+                                                        "host:4:idle"]  # fmt: skip
+        live, stalled, idle = status["workers"]
         assert live["active_jobs"] == 2 and stalled["active_jobs"] == 0
         assert live["last_seen"] <= status["time"] and stalled["last_seen"] < status["time"]
+        assert (live["online"], stalled["online"], idle["online"]) == (True, False, True)
+        assert idle["active_jobs"] == 0 and idle["concurrency"] == 3 and idle["host"]
+        assert idle["started"] == started.isoformat() and stalled["host"] is None
         assert status["analysers"] == {"trivy": True, "osv-scanner": False}
         for who in ("dev", "aud", "outsider"):
             r = world["client"].get("/api/v1/system", headers=world[who])
@@ -350,6 +361,8 @@ def test_system_status_for_admins_only(
         with world["server"].session() as s:
             for job in s.scalars(select(RunJob).where(RunJob.state == "leased")):
                 s.delete(job)
+        for owner in ("host:1:live", "host:4:idle", "host:5:gone"):
+            presence.leave(data, owner)
     with TestClient(create_app(world["server"], broker=None)) as client:
         off = client.get("/api/v1/system", headers=world["admin"]).json()
         assert off["workspaces"] == "off"

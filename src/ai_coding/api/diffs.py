@@ -9,8 +9,10 @@ commands below there and the API parses their output. The review works on two la
 
 Accepting a hunk stages it (``git apply --cached``); rejecting one reverts it in the
 working tree (``git apply -R``); "back to review" unstages it. New files are accepted
-(``git add``) or rejected (``git clean`` — untracked files only) as a whole. "Commit
-accepted" commits the index alone.
+(``git add``) or rejected (``git clean`` — untracked files only) as a whole; so are files
+without hunks to apply (binary, mode only): ``git add``, ``git restore`` (working tree from
+the index) and ``git restore --staged`` (index from HEAD). "Commit accepted" commits the
+index alone.
 """
 
 from __future__ import annotations
@@ -47,6 +49,10 @@ PATCH_OPS: dict[str, tuple[str, ...]] = {
 PATH_OPS: dict[str, tuple[str, ...]] = {
     "accept_file": ("add", "--"),
     "reject_file": ("clean", "--force", "--quiet", "--"),  # removes untracked files only
+    # A whole tracked file (binary files, mode-only changes — no hunks to apply):
+    "accept_path": ("add", "--"),
+    "reject_path": ("restore", "--worktree", "--"),  # the working tree back to the index
+    "unstage_path": ("restore", "--staged", "--"),  # the index back to HEAD
 }
 REVIEW_OPS = (*PATCH_OPS, *PATH_OPS)
 

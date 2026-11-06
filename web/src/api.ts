@@ -66,7 +66,52 @@ export interface WorkspaceDiff {
   truncated: boolean;
 }
 
-export type ReviewAction = "accept" | "reject" | "unstage" | "accept_file" | "reject_file";
+export type ReviewAction =
+  | "accept"
+  | "reject"
+  | "unstage"
+  | "accept_file"
+  | "reject_file"
+  | "accept_path"
+  | "reject_path"
+  | "unstage_path";
+
+/** A developer's machine reporting its local `ai-coding` runs (ADR-0047): summaries only. */
+export interface LocalMachine {
+  machine: string;
+  user: string;
+  reports: number;
+  project_id: string;
+  project: string | null;
+  mode: string;
+  state: string;
+  verdict: "PASS" | "FAIL" | null;
+  cli_version: string;
+  reported_at: string | null;
+}
+
+export interface LocalRunsOverview {
+  machines: LocalMachine[];
+  reports_24h: number;
+  projects: number;
+  last_report: string | null;
+}
+
+/** A secret of a project: write-only — only its hint (last characters) comes back. */
+export interface SecretInfo {
+  name: string;
+  hint: string;
+  updated_by: string;
+  updated_at: string;
+}
+
+/** A section of a project's settings made in the Web UI (ai, github…), with its version. */
+export interface SettingsSection<T> {
+  data: T;
+  version: number;
+  updated_by: string | null;
+  updated_at: string | null;
+}
 
 /** A run of any project the caller may view (GET /runs). */
 export interface GlobalRun extends RunSummary {
@@ -123,7 +168,16 @@ export interface SystemInfo {
   workspaces: string;
   queue: Record<string, number>;
   runs: Record<string, number>;
-  workers: { id: string; active_jobs: number; last_seen: string | null }[];
+  /** Workers by heartbeat (idle ones too) and job leases; online: a fresh heartbeat or a live lease. */
+  workers: {
+    id: string;
+    online: boolean;
+    active_jobs: number;
+    last_seen: string | null;
+    host: string | null;
+    started: string | null;
+    concurrency: number | null;
+  }[];
   analysers: Record<string, boolean>;
   time: string;
 }
@@ -340,6 +394,11 @@ export function setToken(token: string | null): void {
   else sessionStorage.removeItem(TOKEN_KEY);
 }
 
+/** The typed request of this client, for the clients of other sections (src/data/*). */
+export function apiRequest<T>(method: string, path: string, body?: unknown): Promise<T> {
+  return request<T>(method, path, body);
+}
+
 function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   if (body === undefined) return send<T>(method, path);
   return send<T>(method, path, JSON.stringify(body), "application/json");
@@ -487,6 +546,13 @@ export const api = {
     request<AgentExecution[]>("GET", `/projects/${projectId}/agent-executions${query({ limit })}`),
   usage: (projectId: string, days = 30) => request<Usage>("GET", `/projects/${projectId}/usage${query({ days })}`),
   system: () => request<SystemInfo>("GET", "/system"),
+  localRunsOverview: () => request<LocalRunsOverview>("GET", "/local-runs/overview"),
+  secrets: (projectId: string) =>
+    request<{ available: boolean; secrets: SecretInfo[] }>("GET", `/projects/${projectId}/secrets`),
+  setSecret: (projectId: string, name: string, value: string) =>
+    request<SecretInfo>("PUT", `/projects/${projectId}/secrets/${encodeURIComponent(name)}`, { value }),
+  deleteSecret: (projectId: string, name: string) =>
+    request<void>("DELETE", `/projects/${projectId}/secrets/${encodeURIComponent(name)}`),
 };
 
 /** Readiness of the server and its database (outside /api/v1, no token). */

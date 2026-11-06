@@ -157,7 +157,10 @@ class CommitIn(_In):
 class ReviewIn(_In):
     """A decision on a change of the workspace (ADR-0040): a hunk's patch, or a new file."""
 
-    action: Literal["accept", "reject", "unstage", "accept_file", "reject_file"]
+    action: Literal[
+        "accept", "reject", "unstage", "accept_file", "reject_file", "accept_path",
+        "reject_path", "unstage_path",
+    ]  # fmt: skip
     patch: str | None = Field(default=None, max_length=1024 * 1024)
     path: str | None = Field(default=None, max_length=4096)
 
@@ -974,7 +977,22 @@ def create_app(
     app.state.metrics = metrics
     _install_handlers(app)
     app.middleware("http")(_guard)
-    for router in (ops, auth, projects, runs, insights, workspace):
+    # Integrations configured from the Web UI (ADR-0043, ADR-0046, ADR-0048): their modules use this
+    # module's dependencies, hence imported here.
+    from ai_coding.api import (  # noqa: PLC0415
+        ai_routes,
+        deploy_routes,
+        github_routes,
+        settings_routes,
+        test_routes,
+    )
+
+    integrations = (settings_routes.router, deploy_routes.router, github_routes.router,
+                    test_routes.router, ai_routes.router)  # fmt: skip
+    from ai_coding.api import local_runs  # noqa: PLC0415 - CLI reports (ADR-0047), same reason
+
+    for router in (ops, auth, projects, runs, insights, workspace, *integrations,
+                   local_runs.router):  # fmt: skip
         app.include_router(router)
     if ui_dir is not None and (ui_dir / "index.html").is_file():
         app.mount("/", StaticFiles(directory=ui_dir, html=True), name="ui")

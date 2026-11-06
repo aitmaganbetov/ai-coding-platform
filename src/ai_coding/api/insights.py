@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import case, func, select
@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from ai_coding import __version__
 from ai_coding.agents.catalog import CATALOG
+from ai_coding.api import presence
 from ai_coding.api.accounts import AccountService
 from ai_coding.api.core import Principal, iso_or_none
 from ai_coding.api.rbac import Permission, allowed, capped
@@ -55,6 +56,29 @@ def _uuid_or_none(value: str | None) -> uuid.UUID | None:
         return uuid.UUID(value) if value else None
     except ValueError:
         return None
+
+
+def _workers(beats: list[dict[str, Any]], leases: Any, now: datetime) -> list[dict[str, Any]]:
+    """The workers of :meth:`InsightService.system_status`: heartbeats and job leases
+    (``lease_owner, live leases, latest lease end``) merged by worker id."""
+    merged: dict[str, dict[str, Any]] = {
+        b["id"]: {"id": b["id"], "online": True, "active_jobs": 0, "last_seen": b["seen"],
+                  "host": b["host"], "started": b["started"], "concurrency": b["concurrency"]}
+        for b in beats
+    }  # fmt: skip
+    for owner, active, last in leases:
+        worker = merged.setdefault(owner, {"id": owner, "online": False, "active_jobs": 0,
+                                           "last_seen": None, "host": None, "started": None,
+                                           "concurrency": None})  # fmt: skip
+        worker["active_jobs"] = int(active or 0)
+        worker["online"] = worker["online"] or worker["active_jobs"] > 0
+        if last is not None:
+            ended = min(last, now)
+            worker["last_seen"] = max(worker["last_seen"] or ended, ended)
+    return [
+        {**w, "last_seen": iso_or_none(w["last_seen"]), "started": iso_or_none(w["started"])}
+        for w in sorted(merged.values(), key=lambda w: str(w["id"]))
+    ]
 
 
 class InsightService(AccountService, RunService):
@@ -280,9 +304,11 @@ class InsightService(AccountService, RunService):
         """Version, database, queue and runs by state, workers and the analysers' offline
         data (administrators). ``workspaces``: whether this API process serves terminals.
 
-        Workers come from the job leases: ``active_jobs`` counts live leases, ``last_seen``
-        is the end of the worker's latest lease (now while one is live). A worker without
-        a job holds no lease and is not listed.
+        Workers come from their heartbeats (:mod:`ai_coding.api.presence`), idle ones
+        included, and from the job leases: ``active_jobs`` counts live leases,
+        ``last_seen`` is the latest heartbeat or lease end. ``online``: a fresh heartbeat or
+        a live lease; a worker seen only through an older lease (it stopped, or cannot
+        write the data directory) is listed offline for :data:`WORKER_SEEN`.
         """
         self.require_admin(principal, "view the system status")
         now = utcnow()
@@ -304,11 +330,7 @@ class InsightService(AccountService, RunService):
             "workspaces": "on" if workspaces else "off",
             "queue": {state: int(n) for state, n in sorted(queue)},
             "runs": {state: int(n) for state, n in sorted(runs)},
-            "workers": [
-                {"id": owner, "active_jobs": int(active or 0),
-                 "last_seen": iso_or_none(min(last, now) if last is not None else None)}
-                for owner, active, last in leases
-            ],
+            "workers": _workers(presence.alive(self.settings.data_dir, now), leases, now),
             "analysers": {name: name in tools and is_prepared(tools[name]) for name in ANALYSERS},
             "time": now.isoformat(),
         }  # fmt: skip

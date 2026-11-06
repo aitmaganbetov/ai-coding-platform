@@ -114,7 +114,8 @@ async def bridge(
             await websocket.close()
 
 
-CHAT_OPS = frozenset({"hello", "new", "open", "send", "approve", "interrupt", "login"})
+CHAT_OPS = frozenset({"hello", "new", "open", "close", "delete", "send", "approve", "interrupt",
+                      "login", "usage"})  # fmt: skip
 MAX_CHAT_MESSAGE = 512 * 1024
 
 

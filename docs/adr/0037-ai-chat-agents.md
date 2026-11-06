@@ -43,7 +43,7 @@
 3. **Транспорт.** `WS /api/v1/projects/{id}/workspace/chat`.
    - Аутентификация первым сообщением, права `workspace.use`.
    - Брокер подключается к службе через `docker exec -i … ai-coding-agent connect`. В docker-compose это делается через сервис рабочих областей по подписанному тикету.
-   - Из браузера к службе проходят только операции чата: `hello`, `new`, `open`, `send`, `approve`, `interrupt`, `login`.
+   - Из браузера к службе проходят только операции чата: `hello`, `new`, `open`, `send`, `approve`, `interrupt`, `login`. Вкладки, удаление и лимиты добавили `close`, `delete`, `usage` ([ADR-0042](0042-chat-tabs-and-plan-limits.md)).
 4. **Разрешения**, как в VS Code: кнопки «Разрешить», «Разрешить в этой сессии» (сессионные `permission_suggestions` Claude, `acceptForSession` у Codex) и «Отклонить» прямо в карточке действия.
    - Режимы: «Спрашивать», «Править файлы без вопросов», «Только план» (Claude), «Полный доступ».
    - Соответствие у Claude: `default`, `acceptEdits`, `plan`, `bypassPermissions`.
