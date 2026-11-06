@@ -19,7 +19,7 @@ from ai_coding.security import redact
 SECRET_SOURCES = frozenset({"gitleaks"})
 SECRET_TITLE = "Secret detected"  # noqa: S105 - a label, not a password
 # What the details view leaves out on purpose (the UI says so instead of guessing).
-WITHHELD = ("scanner_message", "raw_evidence", "code_snippet", "raw_output")
+WITHHELD = ("scanner_message", "raw_evidence", "code_snippet", "raw_output", "agent_evidence")
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,119}$")
 _HTTPS = re.compile(r"^https://[A-Za-z0-9.-]+(?::\d{1,5})?(?:/[^\s<>\"'\\`]*)?$")
@@ -60,6 +60,22 @@ def text(value: object, limit: int = 300) -> str | None:
     if isinstance(value, bool) or not isinstance(value, str | int | float):
         return None
     raw = "".join(" " if unicodedata.category(c).startswith("C") else c for c in str(value)).strip()
+    if not raw:
+        return None
+    out = redact(raw)
+    return out if len(out) <= limit else out[: limit - 1] + "…"
+
+
+def multiline(value: object, limit: int = 2000) -> str | None:
+    """Like :func:`text` for paragraphs (a model's explanation): line breaks are kept,
+    every other control character becomes a space, at most one blank line in a row."""
+    if not isinstance(value, str):
+        return None
+    lines = [
+        "".join(" " if unicodedata.category(c).startswith("C") else c for c in line).rstrip()
+        for line in value.replace("\r\n", "\n").split("\n")
+    ]
+    raw = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
     if not raw:
         return None
     out = redact(raw)

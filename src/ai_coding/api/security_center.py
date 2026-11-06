@@ -17,10 +17,11 @@ from sqlalchemy.orm import Session
 from ai_coding.api.core import NotFoundError, Principal, ServerCore
 from ai_coding.api.rbac import Permission
 from ai_coding.api.runs import GATES_TASK
-from ai_coding.domain.enums import Severity
-from ai_coding.persistence.models import Finding, Run, Task
+from ai_coding.domain.enums import ApprovalOperation, ApprovalStatus, Severity
+from ai_coding.persistence.models import Approval, Finding, Run, Task
+from ai_coding.security_center import agent
 from ai_coding.security_center import findings as safe
-from ai_coding.security_center.coverage import ScanTask, coverage
+from ai_coding.security_center.coverage import SECURITY_TOOLS, ScanTask, coverage
 
 SCHEMA_VERSION = "2"
 MAX_LIMIT = 500
@@ -68,6 +69,8 @@ class SecurityCenterService(ServerCore):
                 .offset(offset)
             ).all()
             matching = s.scalar(select(func.count()).select_from(Finding).where(*filters))
+            triage_status, triage_output = _triage(s, run_id)
+            verdicts = agent.assessments(triage_output)
             return {
                 "schema_version": SCHEMA_VERSION,
                 "project_id": str(project_id),
@@ -94,13 +97,17 @@ class SecurityCenterService(ServerCore):
                     "by_source": _counts(s, Finding.source, scope),
                     "by_status": _counts(s, Finding.status, scope),
                 },
-                "findings": [safe.row(f) for f in rows],
+                "findings": [_with_verdict(safe.row(f), verdicts) for f in rows],
                 "page": {
                     "limit": limit,
                     "offset": offset,
                     "total": int(matching or 0),
                     "filters": {"severity": severity, "source": source, "status": status},
                 },
+                "security_agent": agent.state(
+                    triage_status, triage_output, awaiting_approval=_awaits_llm(s, run_id)
+                ),
+                "launch": {"kind": "audit", "tools": list(SECURITY_TOOLS)},
                 "capabilities": {
                     "dast": "not_implemented",
                     "container": "not_implemented",
@@ -122,7 +129,12 @@ class SecurityCenterService(ServerCore):
             finding = s.get(Finding, finding_id)
             if finding is None or finding.project_id != project_id or finding.run_id != run_id:
                 raise NotFoundError("finding not found")
-            return safe.details(finding)
+            item = safe.details(finding)
+            assessment = agent.assessments(_triage(s, run_id)[1]).get(
+                agent.triage_key(finding.fingerprint)
+            )
+            item["agent"] = agent.view(assessment)
+            return item
 
     def _security_run(
         self, s: Session, principal: Principal, project_id: uuid.UUID, run_id: uuid.UUID
@@ -152,3 +164,36 @@ def _security_gate(s: Session, run_id: uuid.UUID) -> dict[str, Any] | None:
                 "blocking": gate.get("blocking") is True,
             }
     return None
+
+
+def _triage(s: Session, run_id: uuid.UUID) -> tuple[str | None, dict[str, Any] | None]:
+    """Status and output of the run's Security Agent step (``None``: not requested)."""
+    found = s.execute(
+        select(Task.status, Task.output).where(
+            Task.run_id == run_id, Task.capability == agent.CAPABILITY
+        )
+    ).first()
+    if found is None:
+        return None, None
+    status, output = found
+    return status, output if isinstance(output, dict) else None
+
+
+def _awaits_llm(s: Session, run_id: uuid.UUID) -> bool:
+    """A person must still allow the run to send code to an external model."""
+    pending = s.scalar(
+        select(func.count())
+        .select_from(Approval)
+        .where(
+            Approval.run_id == run_id,
+            Approval.operation == ApprovalOperation.EXTERNAL_LLM.value,
+            Approval.status == ApprovalStatus.PENDING.value,
+        )
+    )
+    return bool(pending)
+
+
+def _with_verdict(item: dict[str, Any], verdicts: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    found = verdicts.get(agent.triage_key(item["fingerprint"]))
+    item["agent_verdict"] = found["verdict"] if found else None
+    return item

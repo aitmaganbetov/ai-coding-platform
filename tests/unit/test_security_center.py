@@ -8,8 +8,15 @@ from typing import Any
 import pytest
 
 from ai_coding.api.settings import ServerSettings
-from ai_coding.security_center import findings
-from ai_coding.security_center.coverage import ScanTask, coverage, reason_code, tool_state
+from ai_coding.security_center import agent, findings
+from ai_coding.security_center.coverage import (
+    SECURITY_TOOLS,
+    ScanTask,
+    coverage,
+    reason_code,
+    tool_state,
+)
+from ai_coding.tools.registry import builtin_tools
 
 SECRET = "ghp_" + "c" * 36
 
@@ -167,3 +174,75 @@ def test_switch(value: str | None, enabled: bool) -> None:
 def test_switch_typo_stops_the_server() -> None:
     with pytest.raises(ValueError, match="SECURITY_CENTER must be on or off"):
         ServerSettings.from_env({"AI_CODING_SERVER_SECURITY_CENTER": "enabled"})
+
+
+# ------------------------------------------------------------ security agent --
+@pytest.mark.parametrize(
+    ("status", "output", "waiting", "expected"),
+    [
+        (None, None, False, ("not_requested", None)),
+        ("PENDING", None, True, ("awaiting_approval", None)),
+        ("RUNNING", None, False, ("running", None)),
+        ("FAILED", None, False, ("error", "task_failed")),
+        ("SKIPPED", None, False, ("skipped", "task_skipped")),
+        ("CANCELLED", None, False, ("not_run", "cancelled")),
+        ("SUCCEEDED", {"status": "skipped", "reason": "no new findings"}, False,
+         ("skipped", "no_new_findings")),
+        ("SUCCEEDED", {"status": "failed", "reason": "Security Agent: no usable model route: "
+                       "AI is disabled (ai.enabled: false)"}, False, ("error", "ai_disabled")),
+        ("SUCCEEDED", {"status": "failed", "reason": "x: $ANTHROPIC_API_KEY is not set"}, False,
+         ("error", "ai_key_missing")),
+        ("SUCCEEDED", {"status": "failed", "reason": "no usable model route: local only"}, False,
+         ("error", "ai_unavailable")),
+        ("SUCCEEDED", {"status": "failed", "reason": f"HTTP 500 {SECRET}"}, False,
+         ("error", "agent_failed")),
+        ("SUCCEEDED", {"status": "done", "result": "not a mapping"}, False,
+         ("error", "agent_failed")),
+    ],
+)  # fmt: skip
+def test_agent_states(
+    status: str | None, output: dict[str, Any] | None, waiting: bool,
+    expected: tuple[str, str | None],
+) -> None:  # fmt: skip
+    found = agent.state(status, output, awaiting_approval=waiting)
+    assert (found["state"], found["reason"]) == expected
+    assert SECRET not in str(found)  # the agent's own error text stays on the server
+
+
+def test_agent_answer_is_counted_bounded_and_redacted() -> None:
+    risks = [{"file": "a.py", "line": True, "severity": "urgent", "message": "m " + SECRET,
+              "recommendation": "r\x07\n\n\n\nnext"}] * 30  # fmt: skip
+    found = agent.state("SUCCEEDED", {"status": "done", "result": {
+        "summary": "s" * 5000,
+        "assessments": [
+            {"finding_id": "a", "verdict": "confirmed"},
+            {"finding_id": "a", "verdict": "false_positive"},  # duplicate: first wins
+            {"finding_id": "b", "verdict": "needs_review"},
+            {"finding_id": "c", "verdict": "dismissed"},  # not a verdict
+            "garbage",
+        ],
+        "additional_risks": risks,
+    }}, awaiting_approval=False)  # fmt: skip
+    assert found["verdicts"] == {"confirmed": 1, "false_positive": 0, "needs_review": 1}
+    assert len(found["summary"]) == 2000
+    assert len(found["additional_risks"]) == 20
+    risk = found["additional_risks"][0]
+    assert risk == {"file": "a.py", "line": None, "severity": "info",
+                    "description": "m ***REDACTED***", "recommendation": "r\n\nnext"}  # fmt: skip
+
+
+def test_agent_view_withholds_evidence() -> None:
+    view = agent.view({"verdict": "confirmed", "severity": "high", "evidence": SECRET,
+                       "exploit_scenario": f"uses {SECRET}", "recommendation": "rotate",
+                       "cwe": "not-a-cwe"})  # fmt: skip
+    assert view == {"verdict": "confirmed", "severity": "high", "cwe": None,
+                    "exploit_scenario": "uses ***REDACTED***",
+                    "recommendation": "rotate"}  # fmt: skip
+    assert agent.view(None) is None
+    assert agent.triage_key("abcdef0123456789") == "abcdef012345"
+
+
+def test_security_profile_uses_registered_scanners() -> None:
+    registered = {a.spec.name for a in builtin_tools()}
+    assert set(SECURITY_TOOLS) == {"semgrep", "gitleaks", "osv-scanner", "trivy"}
+    assert set(SECURITY_TOOLS) <= registered

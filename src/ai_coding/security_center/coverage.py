@@ -21,6 +21,11 @@ CAPABILITIES: Mapping[str, tuple[str, ...]] = {
     "dast": (),
 }
 
+# The scanners of a security audit started from the Security Center (``audit`` kind).
+SECURITY_TOOLS: tuple[str, ...] = tuple(
+    dict.fromkeys(tool for tools in CAPABILITIES.values() for tool in tools)
+)
+
 # Fixed reason codes. A tool's own error text can hold paths, stderr or advisory text:
 # it stays on the server, the UI explains the code instead.
 _REASONS = (

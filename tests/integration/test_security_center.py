@@ -1,6 +1,7 @@
 """AI Security Center API against a real database: opt-in switch, RBAC and token limits,
 project isolation, filters and pagination, and no secret material in any response."""
 
+import json
 import uuid
 from collections.abc import Iterator
 from dataclasses import replace
@@ -14,7 +15,8 @@ from ai_coding.api.app import create_app
 from ai_coding.api.services import NotFoundError, Server
 from ai_coding.api.settings import ServerSettings
 from ai_coding.domain.enums import Role, Severity
-from ai_coding.persistence.models import Finding, Run, Task
+from ai_coding.persistence.models import Approval, Finding, Run, Task
+from ai_coding.security_center.coverage import SECURITY_TOOLS
 
 pytestmark = pytest.mark.integration
 PASSWORD = "correct horse battery staple"
@@ -23,6 +25,51 @@ CODE = "password = '" + "hunter2" * 3 + "'"
 TOOL_ERROR = "exit code 2: token ghp_" + "b" * 36 + " in /home/alice/private/.env"
 SKIP_REASON = "offline database missing in /home/alice/cache (run `ai-coding tools pull`)"
 GATE_REASON = "gitleaks: " + SECRET
+AGENT_ERROR = "provider said: " + SECRET
+
+
+def _fp(n: int) -> str:
+    return f"{n:012d}"
+
+
+TRIAGE = {
+    "status": "done",
+    "triaged": 2,
+    "total": 6,
+    "models": ["anthropic/claude"],
+    "result": {
+        "summary": "Two findings checked.\n\n\n\nKey " + SECRET,
+        "assessments": [
+            {
+                "finding_id": _fp(2),
+                "verdict": "confirmed",
+                "severity": "high",
+                "exploit_scenario": "User input reaches eval().",
+                "evidence": CODE,
+                "recommendation": "Use ast.literal_eval.\nAdd a test.",
+                "cwe": "CWE-95",
+            },
+            {
+                "finding_id": _fp(3),
+                "verdict": "false_positive",
+                "severity": "low",
+                "evidence": CODE,
+                "recommendation": "lodash is a dev dependency only.",
+            },
+            {"finding_id": _fp(4), "verdict": "maybe", "evidence": "x", "recommendation": "x"},
+        ],
+        "additional_risks": [
+            {
+                "file": "app/auth.py",
+                "line": 7,
+                "severity": "high",
+                "message": "Token compared with == " + SECRET,
+                "recommendation": "Use hmac.compare_digest.",
+            },
+            "not a risk",
+        ],
+    },
+}
 USERS = ("owner", "maintainer", "developer", "auditor", "outsider", "admin")
 ROLES = {"maintainer": Role.MAINTAINER, "developer": Role.DEVELOPER, "auditor": Role.AUDITOR}
 
@@ -38,7 +85,7 @@ def _finding(project: uuid.UUID, run: uuid.UUID | None, n: int, **over: Any) -> 
         "message": SECRET,
         "file_path": f"src/file{n}.py",
         "line": n,
-        "fingerprint": f"{n:064d}",
+        "fingerprint": f"{n:012d}".ljust(64, "f"),  # the agent cites the first 12
         "evidence": {},
     }
     return Finding(**{**data, **over})
@@ -91,8 +138,12 @@ def world(tmp_path: Path) -> Iterator[dict[str, Any]]:
             _task(run.id, "quality.gates", "SUCCEEDED",
                   {"gates": [{"gate": "security", "result": "FAIL", "blocking": True,
                               "reason": GATE_REASON}]}),
+            _task(run.id, "audit.triage", "SUCCEEDED", TRIAGE),
             _task(running.id, "tool.semgrep", "RUNNING", None),
+            _task(running.id, "audit.triage", "PENDING", None),
         ])  # fmt: skip
+        s.add(Approval(run_id=running.id, operation="external_llm", status="pending",
+                       reason="send code to anthropic", requested_by="owner"))  # fmt: skip
         s.add_all([
             _finding(project, run.id, 1, source="gitleaks", severity="high", title=SECRET,
                      file_path=".env", evidence={"secret": SECRET, "match": SECRET}),
@@ -364,3 +415,61 @@ def test_details_are_allowlisted(world: dict[str, Any], client: TestClient) -> N
     sast = details("Use of eval")
     assert sast["details"] == {"cwe": ["CWE-95: Eval Injection"]}  # never the code
     assert details("Secret detected")["details"] == {}
+
+
+# ------------------------------------------------------------ security agent --
+def test_security_agent_verdicts(world: dict[str, Any], client: TestClient) -> None:
+    data = client.get(_url(world), params={"limit": 500}).json()
+    assert data["launch"] == {"kind": "audit", "tools": list(SECURITY_TOOLS)}
+    agent = data["security_agent"]
+    assert agent["state"] == "completed"
+    assert agent["verdicts"] == {"confirmed": 1, "false_positive": 1, "needs_review": 0}
+    assert agent["triaged"] == 2 and agent["total"] == 6
+    assert agent["summary"] == "Two findings checked.\n\nKey ***REDACTED***"
+    assert agent["additional_risks"] == [
+        {"file": "app/auth.py", "line": 7, "severity": "high",
+         "description": "Token compared with == ***REDACTED***",
+         "recommendation": "Use hmac.compare_digest."}
+    ]  # fmt: skip
+    verdicts = {r["title"]: r["agent_verdict"] for r in data["findings"]}
+    assert verdicts["Use of eval"] == "confirmed"
+    assert verdicts["lodash 4.17.15: CVE-2020-8203"] == "false_positive"
+    assert verdicts["DS026"] is None  # an invalid verdict is ignored
+    assert SECRET not in json.dumps(data) and CODE not in json.dumps(data)
+
+
+def test_agent_assessment_in_details(world: dict[str, Any], client: TestClient) -> None:
+    url = _url(world)
+    rows = {r["title"]: r["id"] for r in _all_rows(client, url)}
+    eval_ = client.get(f"{url}/findings/{rows['Use of eval']}").json()
+    assert eval_["agent"] == {
+        "verdict": "confirmed", "severity": "high", "cwe": "CWE-95",
+        "exploit_scenario": "User input reaches eval().",
+        "recommendation": "Use ast.literal_eval.\nAdd a test.",
+    }  # fmt: skip
+    assert "agent_evidence" in eval_["withheld"]
+    assert CODE not in json.dumps(eval_) and "hunter2" not in json.dumps(eval_)
+    assert client.get(f"{url}/findings/{rows['finding 6']}").json()["agent"] is None
+
+
+def test_agent_waiting_for_approval(world: dict[str, Any], client: TestClient) -> None:
+    """Sending code to an external model waits for a person on the run page."""
+    data = client.get(_url(world, "project", "running")).json()
+    assert data["security_agent"] == {"state": "awaiting_approval", "reason": None}
+
+
+def test_launch_the_security_profile(world: dict[str, Any], client: TestClient) -> None:
+    """The button uses the existing runs API: same rights, approvals and gates."""
+    body = {"kind": "audit", "params": {"tools": list(SECURITY_TOOLS), "triage": True}}
+    runs = f"/api/v1/projects/{world['project']}/runs"
+    client.headers["Authorization"] = f"Bearer {world['tokens']['auditor']}"
+    assert client.post(runs, json=body).status_code == 403  # read-only role
+    client.headers["Authorization"] = f"Bearer {world['tokens']['developer']}"
+    created = client.post(runs, json=body)
+    assert created.status_code == 201, created.text
+    run = created.json()["id"]
+    data = client.get(f"/api/v1/projects/{world['project']}/security-center/runs/{run}").json()
+    planned = {t["tool"] for c in data["coverage"].values() for t in c["tools"]}
+    assert planned == set(SECURITY_TOOLS)
+    assert {t["state"] for c in data["coverage"].values() for t in c["tools"]} == {"running"}
+    assert data["security_agent"]["state"] == "running"
