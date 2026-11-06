@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from ai_coding.security import (
@@ -57,6 +59,26 @@ def test_assignment_redacted_keeps_key() -> None:
     assert redact("password=hunter2hunter2") == f"password={REDACTED}"
     value = "abc" + "def" * 3
     assert redact(f'API_KEY: "{value}"') == f'API_KEY: "{REDACTED}"'
+
+
+@pytest.mark.parametrize(
+    ("text", "secret"),
+    [
+        # osv-scanner, GHSA-5xrq-8626-4rwp: the backslash of `\"` was redacted with the
+        # token, the quote ended the string ("Expecting ',' delimiter") and the security
+        # gate failed on an unparsable tool output.
+        ('curl "http://localhost:51204/a?path=x&amp;token=$TOKEN" (TOKEN is the API token)',
+         "$TOKEN"),
+        ('open "https://host/file?sig=abcdefgh"', "abcdefgh"),
+        ("secret=abcdef\\", "abcdef"),  # escaped backslash at the end: redacted with it
+    ],
+)  # fmt: skip
+def test_redaction_keeps_json_escapes_intact(text: str, secret: str) -> None:
+    out = redact(json.dumps({"details": text, "id": "GHSA-5xrq-8626-4rwp"}, indent=2))
+    data = json.loads(out)
+    assert data["id"] == "GHSA-5xrq-8626-4rwp"
+    assert REDACTED in data["details"]
+    assert secret not in data["details"]
 
 
 def test_plain_text_untouched() -> None:

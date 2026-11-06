@@ -233,3 +233,60 @@ def test_coverage_gate_uses_test_tool_coverage() -> None:
     assert gates(ok)[GateName.COVERAGE] is GateResult.PASS
     none = evaluate(run("go-test", ToolCategory.TESTS))
     assert gates(none)[GateName.COVERAGE] is GateResult.SKIPPED
+
+
+# ----------------------------------------------- this repository's baseline --
+REPO = Path(__file__).resolve().parents[2]
+PILOT_DOCKERFILE = "tests/fixtures/pilot-laravel-react/Dockerfile"
+DS002_MESSAGE = "Specify at least 1 USER command in Dockerfile with non-root user as argument"
+
+
+def test_planted_pilot_root_dockerfile_is_baselined_not_fixed() -> None:
+    """The pilot's root container is planted for AC-02 (Trivy must find it there), so the
+    self-audit accepts it through the baseline instead of reporting a high finding."""
+    assert not any(
+        line.strip().upper().startswith("USER ")
+        for line in (REPO / PILOT_DOCKERFILE).read_text(encoding="utf-8").splitlines()
+    )  # still planted: test_pilot_audit.py expects Trivy to report it
+    ds002 = Finding("trivy", "DS002", Severity.HIGH, "DS002: Image user should not be 'root'",
+                    DS002_MESSAGE, PILOT_DOCKERFILE, None,
+                    fingerprint("trivy", "DS002", PILOT_DOCKERFILE, DS002_MESSAGE))  # fmt: skip
+    baseline = load_baseline(REPO)
+    entry_ = next(e for e in baseline.entries if e.fingerprint == ds002.fingerprint)
+    assert (entry_.tool, entry_.rule_id, entry_.path) == ("trivy", "DS002", PILOT_DOCKERFILE)
+    assert entry_.expires_at >= date.today()
+    _, suppressed, _ = baseline.partition([ds002])
+    assert suppressed == [ds002]
+
+
+PILOT = "tests/fixtures/pilot-laravel-react/"
+
+
+@pytest.mark.parametrize(
+    ("tool", "rule", "lockfile", "package"),
+    [
+        ("trivy", "CVE-2022-24775", "composer.lock", "guzzlehttp/psr7@1.8.0"),
+        ("trivy", "CVE-2020-8203", "package-lock.json", "lodash@4.17.15"),
+        ("osv-scanner", "GHSA-q7rv-6hp3-vh96", "composer.lock", "guzzlehttp/psr7@1.8.0"),
+        ("osv-scanner", "GHSA-p6mc-m468-83gw", "package-lock.json", "lodash@4.17.15"),
+    ],
+)
+def test_planted_pilot_dependencies_are_baselined(
+    tool: str, rule: str, lockfile: str, package: str
+) -> None:
+    """The pilot's vulnerable dependencies are planted for AC-02 (Trivy and OSV-Scanner
+    must find them), so the self-audit accepts them through the baseline."""
+    path = PILOT + lockfile
+    planted = Finding(tool, rule, Severity.HIGH, rule, rule, path, None,
+                      fingerprint(tool, rule, path, package))  # fmt: skip
+    _, suppressed, _ = load_baseline(REPO).partition([planted])
+    assert suppressed == [planted]
+
+
+def test_repository_baseline_accepts_only_planted_test_data() -> None:
+    """Real vulnerabilities (web/, uv.lock, deploy/) are fixed, never baselined."""
+    entries = load_baseline(REPO).entries
+    assert entries
+    for e in entries:
+        assert e.path is not None and e.path.startswith(PILOT), e
+        assert e.expires_at >= date.today()
