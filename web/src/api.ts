@@ -207,11 +207,89 @@ export interface AuditRow {
   target: string | null;
 }
 
+/** Opt-in modules the server has switched on (GET /me). Access is still checked per request. */
+export interface Features {
+  security_center?: boolean;
+}
+
 export interface Me {
   username: string;
   is_admin: boolean;
   can_create_projects?: boolean;
   token_id?: string | null;
+  features?: Features;
+}
+
+// --------------------------------------------- AI Security Center (opt-in) --
+// Read-only view of one run (docs/security-center.md). Every string comes from scanners
+// and the scanned project: untrusted, rendered as text only.
+
+export type ToolState = "completed" | "skipped" | "error" | "running" | "not_run";
+export type CoverageState = "completed" | "incomplete" | "skipped" | "error" | "unsupported";
+export type SecurityCategory = "sast" | "sca" | "secrets" | "iac" | "container" | "dast";
+
+export interface CoverageTool {
+  tool: string;
+  state: ToolState;
+  /** A fixed code (timeout, offline_db_missing…); the tool's own error text stays on the server. */
+  reason: string | null;
+}
+
+export interface CoverageCategory {
+  available: boolean;
+  state: CoverageState;
+  tools: CoverageTool[];
+}
+
+export interface SecurityFinding {
+  id: string;
+  source: string;
+  category: "sast" | "sca" | "secrets" | "iac" | "other";
+  rule_id: string | null;
+  severity: string;
+  title: string;
+  file_path: string | null;
+  line: number | null;
+  fingerprint: string;
+  status: string;
+  created_at: string | null;
+}
+
+export interface SecurityFindingDetail extends SecurityFinding {
+  details: {
+    package?: string;
+    installed_version?: string;
+    fixed_version?: string;
+    ecosystem?: string;
+    aliases?: string[];
+    reference?: string;
+    resolution?: string;
+    cwe?: string[];
+  };
+  withheld: string[];
+}
+
+export interface SecurityOverview {
+  schema_version: string;
+  project_id: string;
+  run_id: string;
+  run: { state: string; finished: boolean; mode: string; kind: string | null; created_at: string; finished_at: string | null };
+  coverage: Record<SecurityCategory, CoverageCategory>;
+  security_gate: { result: string; blocking: boolean } | null;
+  summary: { total: number; by_severity: Record<string, number>; by_source: Record<string, number>; by_status: Record<string, number> };
+  findings: SecurityFinding[];
+  page: { limit: number; offset: number; total: number; filters: { severity: string | null; source: string | null; status: string | null } };
+  capabilities: { dast: string; container: string };
+  compliance: { state: string; attestation: boolean };
+  ai_fix: { state: string; requires_human_review: boolean };
+}
+
+export interface SecurityQuery {
+  limit?: number;
+  offset?: number;
+  severity?: string;
+  source?: string;
+  status?: string;
 }
 
 export interface UserRow {
@@ -487,7 +565,14 @@ export const api = {
     request<AgentExecution[]>("GET", `/projects/${projectId}/agent-executions${query({ limit })}`),
   usage: (projectId: string, days = 30) => request<Usage>("GET", `/projects/${projectId}/usage${query({ days })}`),
   system: () => request<SystemInfo>("GET", "/system"),
+  // AI Security Center: only mounted when the server enables it (404 otherwise).
+  securityCenter: (projectId: string, runId: string, filter: SecurityQuery = {}) =>
+    request<SecurityOverview>("GET", `/projects/${enc(projectId)}/security-center/runs/${enc(runId)}${query({ ...filter })}`),
+  securityFinding: (projectId: string, runId: string, findingId: string) =>
+    request<SecurityFindingDetail>("GET", `/projects/${enc(projectId)}/security-center/runs/${enc(runId)}/findings/${enc(findingId)}`),
 };
+
+const enc = encodeURIComponent;
 
 /** Readiness of the server and its database (outside /api/v1, no token). */
 export async function readiness(): Promise<boolean> {

@@ -1,0 +1,97 @@
+/* AI Security Center. Tokens: theme.css; filters and finding dialog: quality.css. */
+
+.security-center > * + * {
+  margin-top: var(--space-4);
+}
+.security-center .audit-filters .field-select select {
+  max-width: 360px; /* run labels: kind · state · time */
+}
+.sc-notes {
+  display: grid;
+  gap: var(--space-2);
+}
+.sc-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-primary);
+  border-left: 3px solid var(--info);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+.sc-note.warning {
+  border-left-color: var(--warning);
+}
+.sc-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.sc-about {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+}
+.sc-tools {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+}
+.sc-tools li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.sc-tool-state {
+  font-weight: 600;
+}
+.sc-tool-completed {
+  color: var(--info);
+}
+.sc-tool-error {
+  color: var(--danger);
+}
+.sc-tool-skipped,
+.sc-tool-running,
+.sc-tool-not_run {
+  color: var(--warning);
+}
+.sc-coverage.sc-unsupported {
+  opacity: 0.8;
+}
+.sc-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  font-size: var(--text-sm);
+}
+.sc-pager > span {
+  margin-right: auto;
+}
+.sc-withheld {
+  margin-top: var(--space-3);
+  font-size: var(--text-sm);
+}
+.sc-findings .table-wrap {
+  max-width: 100%;
+}
+@media (max-width: 1100px) {
+  .sc-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 720px) {
+  .sc-grid,
+  .sc-assurance {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sc-assurance .span-2 {
+    grid-column: auto;
+  }
+}

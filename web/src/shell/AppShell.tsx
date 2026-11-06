@@ -57,7 +57,7 @@ export function AppShell({ route, me, onLogout, children }: { route: Route; me: 
           </Suspense>
         )}
       </div>
-      <CommandPalette onLogout={onLogout} />
+      <CommandPalette me={me} onLogout={onLogout} />
       <Toaster />
     </TooltipProvider>
   );
