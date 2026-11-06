@@ -132,7 +132,7 @@ class AccountService(ServerCore):
             raise InvalidError("token lifetime must be between 1 hour and 365 days")
         token = new_token()
         with self.session() as s:
-            if project_id is not None and self._role(s, principal, project_id) is None:
+            if project_id is not None and self.role_in(s, principal, project_id) is None:
                 raise NotFoundError("project not found")
             row = ApiToken(
                 user_id=principal.user_id,

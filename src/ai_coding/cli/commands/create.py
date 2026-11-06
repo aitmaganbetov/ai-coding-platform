@@ -20,18 +20,21 @@ import typer
 import yaml
 from rich.markup import escape
 
-from ai_coding.cli.commands.run import finish_run, resolve_run
-from ai_coding.cli.common import close_all, guard, open_orchestrator
+from ai_coding.cli.commands.run import finish_run
+from ai_coding.cli.common import close_all, guard, open_orchestrator, resolve_run
 from ai_coding.cli.console import error, info
 from ai_coding.cli.exit_codes import ExitCode
-from ai_coding.cli.workflow import github_runtime
+from ai_coding.cli.workflow import GitHubRuntime, github_runtime, start_or_resume
 from ai_coding.config.loader import STATE_CONFIG, ConfigLoadError, find_config, parse_yaml
 from ai_coding.config.models import AICodingConfig
 from ai_coding.config.validator import validate_file
 from ai_coding.domain.enums import ApprovalOperation, ApprovalStatus, Mode, RunState
 from ai_coding.git import LocalGitRepository
-from ai_coding.orchestrator import Orchestrator, RunOptions, RunStatus, TaskPlanner
+from ai_coding.orchestrator import Orchestrator, RunOptions, RunStatus
 from ai_coding.workflows.create import DEFAULT_BRANCH, CreateRequest, build_create
+
+# The GitHub runtime and the PR title, in the order build_create takes them.
+CreatePullRequest = tuple[*GitHubRuntime, str]
 
 MAX_ROUNDS = 5
 
@@ -234,7 +237,9 @@ def create(
         error("describe the project: IDEA argument or --idea-file")
         raise typer.Exit(ExitCode.USAGE)
     interactive = sys.stdin.isatty() if interactive is None else interactive
-    pull = (*github_runtime(repo, dest), pr_title) if pr and not dry_run else None
+    pull: CreatePullRequest | None = (
+        (*github_runtime(repo, dest), pr_title) if pr and not dry_run else None
+    )
     request = CreateRequest(
         idea=(text or "").strip(),
         constraints=tuple(constraint or ()),
@@ -255,10 +260,9 @@ def create(
     registry, _ = build_create(request, pull_request=pull)
     orch = open_orchestrator(dest, config, registry)
     session = _Session(orch, dest, interactive)
-    previous: dict[str, Any] | None = None
-    if resume:
-        run_id = resolve_run(orch, resume)
-        status = guard(lambda: asyncio.run(orch.resume(run_id)))
+    options = RunOptions(require_approval=require_approval)
+    if resume:  # inputs are persisted in the run's tasks
+        run_id, status = start_or_resume(orch, [], resume=resume, goal="", options=options)
     else:
         if revise:
             prev_id = resolve_run(orch, revise)
@@ -266,14 +270,13 @@ def create(
             if previous is None:
                 error(f"run {revise} has no requirements version to revise")
                 raise typer.Exit(ExitCode.NOT_FOUND)
-            prev_goal = guard(lambda: orch.status(prev_id)).goal
             request = CreateRequest(
-                idea=text.strip() if text else prev_goal.removeprefix("create: "),
+                idea=text.strip() if text else _previous_idea(orch, prev_id),
                 constraints=request.constraints, previous=previous["spec"],
                 previous_version=previous["version"], answers=request.answers,
                 project_name=name, branch=branch, base=base,
             )  # fmt: skip
-        run_id, status = _start(orch, request, pull, require_approval)
+        run_id, status = _start(orch, request, pull, options)
     for _ in range(MAX_ROUNDS):
         run_id, status, revision = session.loop(run_id, status)
         if revision is None:
@@ -285,7 +288,7 @@ def create(
             branch=branch, base=base,
         )  # fmt: skip
         info(f"\nrevising requirements {escape(spec_out['version'])} …")
-        run_id, status = _start(orch, request, pull, require_approval)
+        run_id, status = _start(orch, request, pull, options)
     if status.state is RunState.COMPLETED:
         _report_completion(orch, run_id)
     finish_run(status, as_json=False)
@@ -301,13 +304,21 @@ def _report_completion(orch: Orchestrator, run_id: uuid.UUID) -> None:
         info(f"pull request: {pr_out.get('url')}")
 
 
+def _previous_idea(orch: Orchestrator, run_id: uuid.UUID) -> str:
+    """The whole idea of an earlier run: its goal holds only an abbreviation."""
+    planned = orch.task_input(run_id, "create.requirements") or {}
+    if planned.get("idea"):
+        return str(planned["idea"])
+    return guard(lambda: orch.status(run_id)).goal.removeprefix("create: ")
+
+
 def _start(
-    orch: Orchestrator, request: CreateRequest, pull: Any, require_approval: bool = False
+    orch: Orchestrator,
+    request: CreateRequest,
+    pull: CreatePullRequest | None,
+    options: RunOptions,
 ) -> tuple[uuid.UUID, RunStatus]:
     _, steps = build_create(request, pull_request=pull)
-    goal = "create: " + request.idea[:200]
-    options = RunOptions(require_approval=require_approval)
-    plan = TaskPlanner().build(steps)
-    run_id = guard(lambda: orch.create_run(plan, goal=goal, options=options))
-    status = guard(lambda: asyncio.run(orch.execute(run_id)))
-    return run_id, status
+    return start_or_resume(
+        orch, steps, resume=None, goal="create: " + request.idea, options=options
+    )

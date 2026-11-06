@@ -3,6 +3,7 @@ server-side configuration, membership and roles."""
 
 from __future__ import annotations
 
+import threading
 import uuid
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from ai_coding.api.core import (
 )
 from ai_coding.api.kinds import KINDS
 from ai_coding.api.rbac import Permission, capped
+from ai_coding.api.settings import ServerSettings
 from ai_coding.config.generator import render_initial_config, sanitize_project_name
 from ai_coding.config.loader import STATE_CONFIG, find_config, find_project_config
 from ai_coding.config.models import AICodingConfig
@@ -30,6 +32,7 @@ from ai_coding.detection import detect_stacks
 from ai_coding.domain.enums import Outcome, Role
 from ai_coding.git import LocalGitRepository
 from ai_coding.git.errors import GitError
+from ai_coding.persistence import Database
 from ai_coding.persistence.db import ensure_state_dir
 from ai_coding.persistence.models import (
     Project,
@@ -42,6 +45,13 @@ _CONFIG_CACHE_SIZE = 256
 
 class ProjectService(ServerCore):
     """Projects, their configuration and members."""
+
+    def __init__(self, settings: ServerSettings, db: Database | None = None) -> None:
+        super().__init__(settings, db)
+        # Validated configurations by (path, mtime, size): parsing per request dominated
+        # run requests under load (B-800).
+        self._config_cache: dict[tuple[str, int, int], AICodingConfig] = {}
+        self._config_lock = threading.Lock()
 
     def create_project(
         self,

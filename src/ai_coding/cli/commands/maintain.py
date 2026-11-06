@@ -13,8 +13,8 @@ import typer
 from rich.markup import escape
 
 from ai_coding.cli.approvals import settle
-from ai_coding.cli.commands.run import finish_run, resolve_run
-from ai_coding.cli.common import close_all, guard, load_project, open_orchestrator
+from ai_coding.cli.commands.run import finish_run
+from ai_coding.cli.common import close_all, guard, load_project, open_orchestrator, resolve_run
 from ai_coding.cli.console import error, info
 from ai_coding.cli.exit_codes import ExitCode
 from ai_coding.cli.workflow import github_runtime, report_change, show_preview, start_or_resume

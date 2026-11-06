@@ -7,14 +7,13 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from rich.markup import escape
 
-from ai_coding.cli.commands.run import finish_run, resolve_run
-from ai_coding.cli.common import close_all, guard, load_project, open_orchestrator
+from ai_coding.cli.commands.run import finish_run
+from ai_coding.cli.common import close_all, guard, load_project, open_orchestrator, resolve_run
 from ai_coding.cli.console import error, info
 from ai_coding.cli.exit_codes import ExitCode
-from ai_coding.cli.workflow import github_runtime
-from ai_coding.orchestrator import RunOptions, TaskPlanner
+from ai_coding.cli.workflow import github_runtime, show_preview, start_or_resume
+from ai_coding.orchestrator import RunOptions
 from ai_coding.workflows.pull_request import (
     PullRequestRequest,
     build_pull_request,
@@ -63,17 +62,16 @@ def open_pr(
         branch=branch, base=target, title=title, body=body, draft=draft, remote=remote
     )
     registry, steps = build_pull_request(request, host, token=token, api_host=api_host)
-    plan = TaskPlanner().build(steps)
     orch = open_orchestrator(root, config, registry)
     options = RunOptions(require_approval=require_approval)
     if dry_run:
-        for p in orch.preview(plan, options):
-            verdict = p.approval.verdict.value if p.approval else "allow"
-            info(escape(f"{p.key}: {p.handler or p.route_error} [{verdict}]"))
+        show_preview(orch, steps, options)
         info("dry run: nothing was pushed or opened")
         return
-    run_id = guard(lambda: orch.create_run(plan, goal=f"pr: {branch} → {target}", options=options))
-    finish_run(guard(lambda: asyncio.run(orch.execute(run_id))), as_json=False)
+    _, status = start_or_resume(
+        orch, steps, resume=None, goal=f"pr: {branch} → {target}", options=options
+    )
+    finish_run(status, as_json=False)
 
 
 @app.command("resume")

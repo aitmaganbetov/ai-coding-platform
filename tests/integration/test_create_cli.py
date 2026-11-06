@@ -160,3 +160,25 @@ def test_agents_list(tmp_path: Path, config_file: Path) -> None:
     assert by_name["developer"]["status"] == "implemented"
     assert {r["status"] for r in rows} == {"implemented"}
     assert by_name["planner"]["output_schema"].endswith("planner.output.schema.json")
+
+
+def test_revise_keeps_an_idea_longer_than_the_goal(
+    tmp_path: Path, config_file: Path, fake_llm: FakeLLM, git_env: None
+) -> None:
+    """The run's goal holds only the first 200 characters of the idea; a revision without
+    a new IDEA must still give the requirements agent the whole idea."""
+    dest = tmp_path / "svc"
+    base = ["--dest", str(dest), "--config", str(config_file), "--no-interactive"]
+    idea = samples.IDEA + " " + "Подробности. " * 30 + "МАРКЕР-КОНЦА-ИДЕИ"
+    assert len(idea) > 300
+    assert runner.invoke(app, ["create", idea, *base]).exit_code == ExitCode.PENDING
+    first = last_run(dest)
+    answers = tmp_path / "answers.yml"
+    answers.write_text("Q-01: Бессрочно\n", encoding="utf-8")
+    result = runner.invoke(app, ["create", "--revise", first, "--answers", str(answers), *base])
+    assert result.exit_code == ExitCode.PENDING, result.output
+    prompt = fake_llm.requests[1]["body"]["messages"][1]["content"]
+    assert "МАРКЕР-КОНЦА-ИДЕИ" in prompt
+    goals = [r["goal"] for r in json.loads(
+        runner.invoke(app, ["run", "list", "-C", str(dest), "--json"]).output)]  # fmt: skip
+    assert all(len(g) <= 200 for g in goals)  # the same goal limit as every command

@@ -11,7 +11,7 @@ from typing import Annotated, Any
 import typer
 from rich.table import Table
 
-from ai_coding.cli.common import close_all, guard, load_project, open_orchestrator
+from ai_coding.cli.common import close_all, guard, load_project, open_orchestrator, resolve_run
 from ai_coding.cli.console import error, info, stdout
 from ai_coding.cli.exit_codes import ExitCode
 from ai_coding.domain.enums import RunState, TaskStatus
@@ -156,10 +156,6 @@ def list_runs(
     for r in runs:
         table.add_row(short_id(r["id"]), r["state"], r["mode"], r["goal"], r["created_at"][:19])
     stdout.print(table)
-
-
-def resolve_run(orch: Orchestrator, run_id: str) -> uuid.UUID:
-    return _guard(lambda: orch.resolve_run_id(run_id))
 
 
 _RESUME_HINTS = {

@@ -269,7 +269,7 @@ class RunService(ProjectService):
                 projects = [
                     m.project_id
                     for m in members
-                    if allowed(self._role(s, principal, m.project_id), Permission.AUDIT_VIEW)
+                    if allowed(self.role_in(s, principal, m.project_id), Permission.AUDIT_VIEW)
                 ]
             scope: ColumnElement[bool] = AuditEvent.project_id.in_(projects)
             if project_id is None and server_level:
