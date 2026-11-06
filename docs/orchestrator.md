@@ -9,7 +9,10 @@
 | Task Planner | `orchestrator/planner.py` | `StepSpec` → `Plan`: проверка ключей, зависимостей, циклов (с выводом цикла), порядка фаз, критериев успеха (JSON Schema), бюджета; топологический порядок и уровни |
 | Agent Registry | `orchestrator/registry.py` | `HandlerRegistry`: регистрация обработчиков, entry points `ai_coding.handlers`, синхронизация с таблицей `agents` |
 | Agent Router | `orchestrator/router.py` | Выбор по capability → политика `agents.enabled` → стоимость → доступность; детерминированный выбор (самый дешёвый, затем по имени) с объяснением отказов |
-| Workflow Executor | `orchestrator/engine.py` | Параллельный DAG через asyncio с `max_parallel_tasks`, таймауты, повторы, пропуск зависимых задач при сбое |
+| Workflow Executor | `orchestrator/engine.py` | Фасад `Orchestrator`: конечный автомат прогона, параллельный DAG через asyncio с `max_parallel_tasks`, таймауты, повторы, пропуск зависимых задач при сбое |
+| Запросы о прогонах | `orchestrator/run_queries.py` | Только чтение: снимок прогона (`RunStatus`), журнал переходов, журнал аудита, вывод задачи, поиск по короткому id |
+| Approvals прогона | `orchestrator/run_approvals.py` | Действующая политика прогона, запросы approvals для плана и шагов, итоговое решение, решения с аудитом отказов |
+| Записи шагов | `orchestrator/recorders.py` | Артефакты, использование моделей и находки, всё с redaction |
 | Context Manager | `orchestrator/context.py` | Индекс репозитория (`git ls-files` + .gitignore); исключение `.env`, ключей и `secrets/`; TF-IDF-отбор в пределах бюджета токенов; redaction и пометка содержимого как недоверенного |
 | State Manager | `orchestrator/states.py` | Таблица переходов `RUN_TRANSITIONS`, идемпотентные переходы с журналом `run_events`, optimistic locking |
 | Checkpoint Manager | `orchestrator/checkpoint.py` | Снимок после каждого подтверждённого шага, SHA-256-контроль целостности |
@@ -17,7 +20,7 @@
 | Approval Manager | `orchestrator/approval.py` | Запросы, TTL, решения только Owner/Maintainer, аудит отказов |
 | Result Aggregator | `orchestrator/aggregator.py` | Итог run; `confidence` агента не может превратить неуспех в успех |
 | Audit Logger | `orchestrator/audit.py` | Append-only `audit_events` в той же транзакции, что и изменение; redaction |
-| Retry & Recovery | `orchestrator/retry.py`, `effects.py`, lease в `engine.py` | Backoff с jitter, классификация ошибок, журнал эффектов, lease/heartbeat |
+| Retry & Recovery | `orchestrator/retry.py`, `effects.py`, `lease.py` | Backoff с jitter, классификация ошибок, журнал эффектов, lease/heartbeat (`LeaseKeeper`) |
 | Бюджеты | `orchestrator/budget.py` | Токены, стоимость, время; учёт восстанавливается из `model_usage` при возобновлении |
 | LLM-порт | `llm/` | `LLMProvider`, `GuardedLLM`: политика → бюджет → redaction → вызов → учёт → проверка JSON Schema |
 
