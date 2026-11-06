@@ -91,11 +91,15 @@ class Redactor:
 
 
 def _replace(match: re.Match[str], group: int) -> str:
-    if group == 0:
-        return REDACTED
     whole = match.group(0)
     start = match.start(group) - match.start(0)
     end = match.end(group) - match.start(0)
+    secret = whole[start:end]
+    if (len(secret) - len(secret.rstrip("\\"))) % 2:
+        # The secret stops right before an escaped character (`token=$TOKEN\"` in the
+        # JSON of a tool): keep the escaping backslash, or the quote it escaped would end
+        # the string and the output would no longer parse.
+        end -= 1
     return whole[:start] + REDACTED + whole[end:]
 
 
