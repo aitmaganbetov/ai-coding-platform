@@ -527,3 +527,12 @@ async def test_approval_pause_does_not_consume_attempts(tmp_path: Path) -> None:
     assert status.state is RunState.COMPLETED, status.error
     assert calls == [1, 1]  # the retry after approval is still attempt 1
     assert status.tasks[0]["attempts"] == 1
+
+
+def test_lease_ttl_set_after_construction_applies_to_the_lease(tmp_path: Path) -> None:
+    """The server worker sets ``lease_ttl`` on a built orchestrator; the lease keeper
+    must use it (a stale TTL kept a crashed worker's run locked: AC-04)."""
+    orch = make_orchestrator(tmp_path, [handler("h", "cap")])
+    assert orch.lease_ttl == orch.leases.ttl
+    orch.lease_ttl = 0.6
+    assert orch.leases.ttl == 0.6 and orch.lease_ttl == 0.6

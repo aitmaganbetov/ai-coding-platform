@@ -42,7 +42,8 @@ ai-coding-platform/
 │   │                       resume|cancel|approve|reject
 │   ├── persistence/   ✅ S2 SQLAlchemy-модели (15 сущностей ТЗ + run_events, effects), Alembic,
 │   │                       append-only аудит, артефакты по SHA-256; ✅ S8 PostgreSQL, S3/MinIO, серверные таблицы
-│   ├── orchestrator/  ✅ S2 planner, registry, router, engine (workflow executor), context, state,
+│   ├── orchestrator/  ✅ S2 planner, registry, router, engine (фасад и workflow executor), run_queries,
+│   │                       lease, run_approvals, recorders, context, state,
 │   │                       checkpoint, policy, approval, aggregator, audit, retry, effects, budget,
 │   │                       встроенные discovery-обработчики
 │   ├── llm/           ✅ S2 порт LLMProvider, GuardedLLM; ✅ S5 адаптеры openai/anthropic/ollama/vllm, router+fallback, кэш
