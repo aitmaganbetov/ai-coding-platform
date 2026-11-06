@@ -250,3 +250,29 @@ def test_review_policy_blocking_and_skip(tmp_path: Path, fake_llm: FakeLLM, git_
     assert skipped.exit_code == 0 and "skipped" in skipped.plain
     usage = invoke(["review", "--base", "main", "-C", str(repo.root), "--comment"])
     assert usage.exit_code == ExitCode.USAGE
+
+
+def test_modernize_dry_run_resume_and_missing_step(
+    repo: LocalGitRepository, fake_llm: FakeLLM
+) -> None:
+    """Dry run shows the plan and policy; a waiting plan is resumed after approval; a run
+    without a completed step cannot be continued."""
+    base = ["-C", str(repo.root), "--no-interactive"]
+    dry = invoke(["modernize", PLAN["goal"], *base, "--dry-run"])
+    assert dry.exit_code == 0, dry.plain
+    assert "modernize.plan:" in dry.plain and "modernize.verify:" in dry.plain
+    assert "nothing changed" in dry.plain
+
+    fake_llm.scripts["migration"] = [PLAN]
+    fake_llm.scripts["developer"] = [STEP1]
+    waiting = invoke(["modernize", PLAN["goal"], *base])
+    assert waiting.exit_code == ExitCode.PENDING, waiting.plain
+    assert "modernize --resume" in waiting.plain
+    run_id = last_run(repo.root)
+    no_step = invoke(["modernize", "--continue", run_id, *base])
+    assert no_step.exit_code == ExitCode.NOT_FOUND
+    assert "no completed modernization step" in no_step.plain
+    assert invoke(["run", "approve", run_id, "-C", str(repo.root)]).exit_code == 0
+    resumed = invoke(["modernize", "--resume", run_id, *base])
+    assert resumed.exit_code == 0, resumed.plain
+    assert "next: ai-coding modernize --continue" in resumed.plain
