@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import os
 import socket
-import threading
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -21,7 +20,6 @@ from sqlalchemy.orm import Session
 
 from ai_coding.api.rbac import Permission, allowed, capped
 from ai_coding.api.settings import ServerSettings
-from ai_coding.config.models import AICodingConfig
 from ai_coding.domain.enums import Outcome, Role
 from ai_coding.orchestrator.audit import AuditLogger
 from ai_coding.persistence import Database, upgrade_to_head
@@ -88,8 +86,6 @@ class ServerCore:
         )
         self.audit = AuditLogger()
         self.worker_id = f"{socket.gethostname()}:{os.getpid()}"
-        self._config_cache: dict[tuple[str, int, int], AICodingConfig] = {}
-        self._config_lock = threading.Lock()
 
     def close(self) -> None:
         """Release database connections (orchestrators share this database)."""
@@ -115,7 +111,10 @@ class ServerCore:
             self.audit.record(s, actor=actor, action=action, outcome=Outcome.DENIED, **kw)
 
     # ------------------------------------------------------------ access --
-    def _role(self, s: Session, principal: Principal, project_id: uuid.UUID) -> Role | None:
+    def role_in(self, s: Session, principal: Principal, project_id: uuid.UUID) -> Role | None:
+        """The caller's effective role in a live project (capped by the token), or
+        ``None`` when not a member or the token is scoped to another project. Unlike
+        :meth:`require` it records nothing and raises nothing."""
         if principal.token_project_id is not None and principal.token_project_id != project_id:
             return None
         member = s.get(ProjectMember, (project_id, principal.user_id))
@@ -134,7 +133,7 @@ class ServerCore:
         a probe of a foreign project is a server-level event (no ``project_id``), so it
         never appears in that project's trail, only in the administrators' view.
         """
-        role = self._role(s, principal, project_id)
+        role = self.role_in(s, principal, project_id)
         if role is None:
             self._denied(
                 principal.username, f"access.{permission.value}", target=f"project:{project_id}"

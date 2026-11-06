@@ -203,6 +203,31 @@ def test_app_auth_exchanges_and_caches_installation_token(private_key: str) -> N
     assert c.json("GET", "/x")["auth"].startswith("Bearer ghs_install2")
 
 
+def test_access_token_shares_the_cached_installation_token(private_key: str) -> None:
+    """git push gets the token through the public access_token(); it is the same cached
+    installation token the API requests use (one exchange)."""
+    exchanges: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/access_tokens"):
+            exchanges.append(1)
+            return httpx.Response(201, json={"token": "ghs_shared" + "x" * 30,
+                                             "expires_at": "2027-01-15T08:00:00Z"})  # fmt: skip
+        return httpx.Response(200, json={"auth": request.headers["authorization"]})
+
+    auth = AppAuth("123", "456", private_key, clock=lambda: 1_790_000_000.0)
+    c = GitHubClient(auth, transport=httpx.MockTransport(handler))
+    token = c.access_token()
+    assert token.startswith("ghs_shared") and not token.startswith("Bearer")
+    assert c.json("GET", "/x")["auth"] == f"Bearer {token}"
+    assert len(exchanges) == 1
+
+
+def test_access_token_of_a_plain_token() -> None:
+    c = GitHubClient(TokenAuth(TOKEN), transport=httpx.MockTransport(lambda r: httpx.Response(200)))
+    assert c.access_token() == TOKEN
+
+
 def test_app_auth_validation(private_key: str) -> None:
     with pytest.raises(GitHubAuthError, match="numeric"):
         AppAuth("abc", "1", private_key)

@@ -129,6 +129,15 @@ class RunQueries:
                 return None
             return dict(task.output or {})
 
+    def task_input(self, run_id: uuid.UUID, key: str) -> dict[str, Any] | None:
+        """Input a task was planned with (e.g. the full text a goal only abbreviates)."""
+        with self.db.session() as session:
+            get_run(session, run_id)
+            task = session.scalars(
+                select(Task).where(Task.run_id == run_id, Task.key == key)
+            ).first()
+            return None if task is None else dict(task.input or {})
+
     @staticmethod
     def list_runs(session: Session, project_id: uuid.UUID, limit: int) -> list[dict[str, Any]]:
         """Most recent runs of a project."""

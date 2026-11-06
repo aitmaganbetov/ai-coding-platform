@@ -423,6 +423,10 @@ class Orchestrator:
         """Stored (redacted) output of a succeeded task, or ``None``."""
         return self.queries.task_output(run_id, key)
 
+    def task_input(self, run_id: uuid.UUID, key: str) -> dict[str, Any] | None:
+        """Input a task was planned with, or ``None`` if the run has no such task."""
+        return self.queries.task_input(run_id, key)
+
     def list_runs(self, limit: int = 20) -> list[dict[str, Any]]:
         """Most recent runs of this project."""
         with self.db.session() as session:

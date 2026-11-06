@@ -90,6 +90,11 @@ class GitHubClient:
         """Close the connection pool."""
         self._http.close()
 
+    def access_token(self) -> str:
+        """The token this client authenticates with (an App's installation token is
+        exchanged and cached by its auth) — for ``git push`` over HTTPS."""
+        return self._auth.authorization(self._exchange).removeprefix("Bearer ")
+
     def _exchange(self, path: str, app_jwt: str) -> Mapping[str, Any]:
         response = self._http.post(path, headers={"Authorization": f"Bearer {app_jwt}"})
         if response.status_code >= 400:

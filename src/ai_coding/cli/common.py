@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -57,6 +58,11 @@ def open_orchestrator(
     orch = Orchestrator(db=db, config=config, project_root=root, registry=registry)
     _OPENED.append(orch)
     return orch
+
+
+def resolve_run(orch: Orchestrator, ref: str) -> uuid.UUID:
+    """Full run id from a full UUID, a short id or a unique prefix (or exit)."""
+    return guard(lambda: orch.resolve_run_id(ref))
 
 
 def guard[T](fn: Callable[[], T]) -> T:
