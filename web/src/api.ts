@@ -241,6 +241,8 @@ export interface CoverageCategory {
   tools: CoverageTool[];
 }
 
+export type AgentVerdict = "confirmed" | "false_positive" | "needs_review";
+
 export interface SecurityFinding {
   id: string;
   source: string;
@@ -253,6 +255,36 @@ export interface SecurityFinding {
   fingerprint: string;
   status: string;
   created_at: string | null;
+  /** The Security Agent's advisory verdict (null: not assessed). Never changes the gates. */
+  agent_verdict?: AgentVerdict | null;
+}
+
+/** One assessment of the Security Agent; its code evidence is withheld by the server. */
+export interface AgentAssessment {
+  verdict: AgentVerdict;
+  severity: string | null;
+  exploit_scenario: string | null;
+  recommendation: string | null;
+  cwe: string | null;
+}
+
+export interface AgentRisk {
+  file: string | null;
+  line: number | null;
+  severity: string;
+  description: string | null;
+  recommendation: string | null;
+}
+
+export interface SecurityAgentState {
+  state: "not_requested" | "awaiting_approval" | "running" | "completed" | "skipped" | "error" | "not_run";
+  reason: string | null;
+  verdicts?: Record<AgentVerdict, number>;
+  triaged?: number;
+  total?: number | null;
+  models?: string[];
+  summary?: string | null;
+  additional_risks?: AgentRisk[];
 }
 
 export interface SecurityFindingDetail extends SecurityFinding {
@@ -267,6 +299,7 @@ export interface SecurityFindingDetail extends SecurityFinding {
     cwe?: string[];
   };
   withheld: string[];
+  agent?: AgentAssessment | null;
 }
 
 export interface SecurityOverview {
@@ -276,6 +309,8 @@ export interface SecurityOverview {
   run: { state: string; finished: boolean; mode: string; kind: string | null; created_at: string; finished_at: string | null };
   coverage: Record<SecurityCategory, CoverageCategory>;
   security_gate: { result: string; blocking: boolean } | null;
+  security_agent?: SecurityAgentState;
+  launch?: { kind: string; tools: string[] };
   summary: { total: number; by_severity: Record<string, number>; by_source: Record<string, number>; by_status: Record<string, number> };
   findings: SecurityFinding[];
   page: { limit: number; offset: number; total: number; filters: { severity: string | null; source: string | null; status: string | null } };

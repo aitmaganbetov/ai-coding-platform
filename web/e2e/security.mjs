@@ -79,6 +79,8 @@ if (expect === "off") {
   }
   if ((await coverage.getByText("Не реализовано").count()) < 2) fail("DAST and containers are not marked as not implemented");
   if ((await page.getByText("не оценивалось").count()) !== 1) fail("compliance is not shown as not assessed");
+  if ((await page.getByRole("button", { name: "Запустить аудит безопасности" }).count()) !== 1) fail("no security audit button");
+  if ((await page.getByText("Security Agent — AI-проверка находок").count()) !== 1) fail("no Security Agent card");
 
   const rows = page.getByRole("region", { name: "Находки run'а" }).locator("tbody tr");
   if ((await rows.count()) > 0) {

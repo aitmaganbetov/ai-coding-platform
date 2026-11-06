@@ -95,3 +95,45 @@
     grid-column: auto;
   }
 }
+
+/* Security Agent and the security audit launcher */
+.sc-agent-text {
+  margin: var(--space-1) 0 0;
+  white-space: pre-wrap; /* a model's paragraphs, rendered as text */
+  overflow-wrap: anywhere;
+  font-size: var(--text-sm);
+}
+.sc-risks {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.sc-risks li {
+  padding: var(--space-2);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  min-width: 0;
+}
+.sc-assessment {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-primary);
+}
+.sc-assessment h5 {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.sc-launch-agents {
+  margin: 0 0 var(--space-3);
+  padding-left: 1.2em;
+  font-size: var(--text-sm);
+}
+.sc-launch .check {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-bottom: var(--space-2);
+}

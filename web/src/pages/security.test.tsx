@@ -6,8 +6,8 @@ import type { Me, SecurityFinding, SecurityFindingDetail, SecurityOverview } fro
 import { queryClient } from "../data/queries";
 import { href, parseRoute, visibleNav } from "../shell/routes";
 import { useUi } from "../shell/store";
-import { TooltipProvider } from "../ui";
-import SecurityCenter, { PAGE_SIZE, safeReference } from "./SecurityCenter";
+import { Toaster, TooltipProvider } from "../ui";
+import SecurityCenter, { PAGE_SIZE, SECURITY_TOOLS, safeReference } from "./SecurityCenter";
 
 // The Security Center page against a stubbed API: the opt-in switch, real coverage
 // states, filters and pagination done by the server, safe details, scanner text shown as
@@ -77,6 +77,8 @@ function overview(over: Partial<SecurityOverview> = {}): SecurityOverview {
     },
     findings,
     page: { limit: PAGE_SIZE, offset: 0, total: findings.length, filters: { severity: null, source: null, status: null } },
+    security_agent: { state: "not_requested", reason: null },
+    launch: { kind: "audit", tools: SECURITY_TOOLS },
     capabilities: { dast: "not_implemented", container: "not_implemented" },
     compliance: { state: "not_assessed", attestation: false },
     ai_fix: { state: "disabled", requires_human_review: true },
@@ -88,14 +90,14 @@ type Reply = unknown | { status: number; body: unknown };
 const isReply = (r: unknown): r is { status: number; body: unknown } => typeof r === "object" && r !== null && "status" in r && "body" in r;
 
 /** Stubs fetch: ``handler`` gets the path with its query string (without /api/v1). */
-function serve(handler: (path: string) => Reply | undefined) {
+function serve(handler: (path: string, init?: RequestInit) => Reply | undefined) {
   const calls: string[] = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (url: string) => {
+    vi.fn(async (url: string, init?: RequestInit) => {
       const path = url.replace("/api/v1", "");
-      calls.push(path);
-      const reply = handler(path);
+      calls.push(init?.method && init.method !== "GET" ? `${init.method} ${path}` : path);
+      const reply = handler(path, init);
       if (reply === undefined) return new Response(JSON.stringify({ error: { message: `no route ${path}` } }), { status: 404 });
       const { status, body } = isReply(reply) ? reply : { status: 200, body: reply };
       return new Response(JSON.stringify(body), { status });
@@ -104,10 +106,11 @@ function serve(handler: (path: string) => Reply | undefined) {
   return calls;
 }
 
-function api(over: { overview?: (path: string) => Reply; runs?: unknown[]; projects?: unknown[]; detail?: SecurityFindingDetail } = {}) {
-  return serve((path) => {
+function api(over: { overview?: (path: string) => Reply; runs?: unknown[] | (() => unknown[]); projects?: unknown[]; detail?: SecurityFindingDetail; start?: (body: unknown) => Reply } = {}) {
+  return serve((path, init) => {
+    if (init?.method === "POST" && /^\/projects\/p\d\/runs$/.test(path)) return over.start?.(JSON.parse(String(init.body)));
     if (path === "/projects") return over.projects ?? PROJECTS;
-    if (/^\/projects\/p\d\/runs$/.test(path)) return over.runs ?? RUNS;
+    if (/^\/projects\/p\d\/runs$/.test(path)) return typeof over.runs === "function" ? over.runs() : (over.runs ?? RUNS);
     if (path.includes("/security-center/runs/") && path.includes("/findings/")) return over.detail;
     if (path.includes("/security-center/runs/")) return (over.overview ?? (() => overview()))(path);
     return undefined;
@@ -117,7 +120,10 @@ function api(over: { overview?: (path: string) => Reply; runs?: unknown[]; proje
 function show(ui: ReactNode) {
   return render(
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>{ui}</TooltipProvider>
+      <TooltipProvider>
+        {ui}
+        <Toaster />
+      </TooltipProvider>
     </QueryClientProvider>,
   );
 }
@@ -287,5 +293,110 @@ describe("security center empty and error states", () => {
     fireEvent.change(screen.getByLabelText("Проект"), { target: { value: "p2" } });
     await waitFor(() => expect(calls.some((c) => c.startsWith("/projects/p2/security-center/runs/r1"))).toBe(true));
     expect(useUi.getState().projectId).toBe("p2");
+  });
+});
+
+const DEV_PROJECTS = [{ ...PROJECTS[0], role: "developer" }];
+
+describe("security audit and the Security Agent", () => {
+  it("starts a security audit with the agent through the runs API", async () => {
+    const started: unknown[] = [];
+    let runs: unknown[] = RUNS;
+    const calls = api({
+      projects: DEV_PROJECTS,
+      runs: () => runs,
+      start: (body) => {
+        started.push(body);
+        runs = [{ ...RUNS[0], id: "r9", state: "RUNNING", finished_at: null }, ...RUNS];
+        return { status: 201, body: { ...RUNS[0], id: "r9", state: "PLANNED" } };
+      },
+    });
+    show(<SecurityCenter me={ON} query={{}} />);
+    await screen.findByRole("region", { name: "Покрытие сканирования" });
+    fireEvent.click(screen.getByRole("button", { name: "Запустить аудит безопасности" }));
+    const dialog = await screen.findByRole("dialog");
+    for (const tool of SECURITY_TOOLS) expect(within(dialog).getByText(tool)).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Запустить" }));
+    await waitFor(() => expect(started).toEqual([{ kind: "audit", params: { tools: SECURITY_TOOLS, triage: true } }]));
+    expect(await screen.findByText("Аудит безопасности запущен")).toBeTruthy();
+    await waitFor(() => expect(calls.some((c) => c.startsWith("/projects/p1/security-center/runs/r9"))).toBe(true));
+  });
+
+  it("leaves the start to roles that may run", async () => {
+    api(); // the default project role is auditor
+    show(<SecurityCenter me={ON} query={{}} />);
+    const button = await screen.findByRole("button", { name: "Запустить аудит безопасности" });
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("reports a start the server refuses", async () => {
+    api({ projects: DEV_PROJECTS, start: () => ({ status: 403, body: { error: { message: "forbidden" } } }) });
+    show(<SecurityCenter me={ON} query={{}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Запустить аудит безопасности" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Запустить" }));
+    expect(await screen.findByText("Аудит не запущен")).toBeTruthy();
+    expect(screen.getByText(/Недостаточно прав/)).toBeTruthy();
+  });
+
+  it("shows the agent's verdicts and extra risks as text", async () => {
+    const agent = {
+      state: "completed" as const,
+      reason: null,
+      verdicts: { confirmed: 1, false_positive: 2, needs_review: 3 },
+      triaged: 6,
+      total: 9,
+      models: ["anthropic/claude"],
+      summary: "Checked.\nSecond line",
+      additional_risks: [{ file: "app/auth.py", line: 7, severity: "high", description: XSS, recommendation: "Use hmac.compare_digest." }],
+    };
+    const findings = [row({ agent_verdict: "confirmed" }), row({ id: "f2", title: "other", agent_verdict: null })];
+    api({ overview: () => overview({ security_agent: agent, findings }) });
+    const { container } = show(<SecurityCenter me={ON} query={{}} />);
+    const card = (await screen.findByText("Security Agent — AI-проверка находок")).closest("section") as HTMLElement;
+    expect(within(card).getByText("Готово")).toBeTruthy();
+    expect(within(card).getByText(/Проверено 6 из 9 находок · anthropic\/claude/)).toBeTruthy();
+    expect(within(card).getByText("app/auth.py:7")).toBeTruthy();
+    expect(within(card).getByText(XSS)).toBeTruthy();
+    expect(container.querySelector("img")).toBeNull();
+    const table = screen.getByRole("region", { name: "Находки run'а" });
+    expect(within(table).getByText("подтверждена")).toBeTruthy();
+  });
+
+  it.each([
+    [{ state: "not_requested", reason: null }, /AI-проверка не запрашивалась/],
+    [{ state: "awaiting_approval", reason: null }, /ждёт утверждения/],
+    [{ state: "running", reason: null }, /Агент проверяет находки/],
+    [{ state: "error", reason: "ai_disabled" }, /AI выключен в настройках проекта/],
+    [{ state: "skipped", reason: "no_new_findings" }, /Новых находок для проверки нет/],
+  ])("explains the agent state %j", async (agent, text) => {
+    api({ overview: () => overview({ security_agent: agent as SecurityOverview["security_agent"] }) });
+    show(<SecurityCenter me={ON} query={{}} />);
+    expect(await screen.findByText(text)).toBeTruthy();
+  });
+
+  it("links the approval of an external model to the run page", async () => {
+    api({ overview: () => overview({ security_agent: { state: "awaiting_approval", reason: null } }) });
+    show(<SecurityCenter me={ON} query={{}} />);
+    const card = (await screen.findByText("Security Agent — AI-проверка находок")).closest("section") as HTMLElement;
+    expect(within(card).getByRole("link", { name: "странице run'а" }).getAttribute("href")).toBe("#/runs/r1");
+  });
+
+  it("shows the agent's assessment in the details, without code", async () => {
+    api({
+      detail: {
+        ...row({}),
+        details: {},
+        withheld: ["agent_evidence"],
+        agent: { verdict: "confirmed", severity: "critical", cwe: "CWE-95", exploit_scenario: "Input reaches eval().", recommendation: "Use literal_eval.\nAdd a test." },
+      },
+    });
+    show(<SecurityCenter me={ON} query={{}} />);
+    fireEvent.click(await screen.findByText("Use of eval"));
+    const section = await within(await screen.findByRole("dialog")).findByRole("region", { name: "Оценка Security Agent" });
+    expect(within(section).getByText("подтверждена")).toBeTruthy();
+    expect(within(section).getByText("Input reaches eval().")).toBeTruthy();
+    expect(within(section).getByText(/Use literal_eval/).textContent).toBe("Use literal_eval.\nAdd a test.");
+    expect(within(section).getByText(/Цитаты кода из ответа агента не показываются/)).toBeTruthy();
   });
 });

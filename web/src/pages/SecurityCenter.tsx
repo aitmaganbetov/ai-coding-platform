@@ -1,19 +1,22 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { Ban, Bot, Boxes, ChevronLeft, ChevronRight, FileWarning, Globe, KeyRound, Layers, ListChecks, Scale, ShieldAlert, SquareCode } from "lucide-react";
+import { Ban, Bot, Boxes, ChevronLeft, ChevronRight, FileWarning, Globe, KeyRound, Layers, ListChecks, Play, Scale, ShieldAlert, Sparkles, SquareCode } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
+  type AgentVerdict,
   ApiError,
   api,
+  TERMINAL,
   type CoverageCategory,
   type CoverageState,
   type Me,
+  type SecurityAgentState,
   type SecurityCategory,
   type SecurityFinding,
   type SecurityFindingDetail,
   type SecurityOverview,
   type ToolState,
 } from "../api";
-import { useProjects } from "../data/queries";
+import { queryClient, useProjects } from "../data/queries";
 import { featureOn, href } from "../shell/routes";
 import { useUi } from "../shell/store";
 import {
@@ -35,17 +38,57 @@ import {
   Stat,
   StateBadge,
   type Tone,
+  toast,
 } from "../ui";
 import "./quality.css";
 import "./security.css";
 
-// AI Security Center (opt-in, read-only): what the platform's analysers covered in one
-// run and what they found. Execution is not a verdict: a completed scan can hold many
-// findings, and no findings never means "secure". Every string below comes from
-// scanners or the scanned project and is rendered as plain text.
+// AI Security Center (opt-in): what the platform's analysers and the Security Agent
+// covered in one run and what they found. Execution is not a verdict: a completed scan
+// can hold many findings, and no findings never means "secure". Every string below comes
+// from scanners, the scanned project or a model and is rendered as plain text. Starting a
+// security audit goes through the ordinary runs API (rights, approvals, Quality Gates).
 
 export const PAGE_SIZE = 50;
 const LIVE = 5_000;
+
+/** The scanners of a security audit (the server's profile, GET … → launch.tools). */
+export const SECURITY_TOOLS = ["semgrep", "osv-scanner", "trivy", "gitleaks"];
+const TOOL_ROLE: Record<string, string> = {
+  semgrep: "SAST: опасные конструкции в коде",
+  "osv-scanner": "SCA: уязвимые зависимости по базе OSV",
+  trivy: "SCA и IaC: уязвимые пакеты и ошибки конфигурации",
+  gitleaks: "секреты в репозитории",
+};
+/** Project roles that may start runs (the server checks it again). */
+const RUN_ROLES = new Set(["owner", "maintainer", "developer"]);
+
+export const VERDICTS: Record<AgentVerdict, { label: string; tone: Tone }> = {
+  confirmed: { label: "подтверждена", tone: "danger" },
+  false_positive: { label: "вероятно ложная", tone: "neutral" },
+  needs_review: { label: "нужна проверка", tone: "warning" },
+};
+
+const AGENT_STATE: Record<SecurityAgentState["state"], { label: string; tone: Tone }> = {
+  not_requested: { label: "Не запрашивалась", tone: "neutral" },
+  awaiting_approval: { label: "Ждёт утверждения", tone: "warning" },
+  running: { label: "Проверяет", tone: "info" },
+  completed: { label: "Готово", tone: "info" },
+  skipped: { label: "Пропущено", tone: "warning" },
+  error: { label: "Ошибка", tone: "danger" },
+  not_run: { label: "Не выполнялась", tone: "warning" },
+};
+
+export const AGENT_REASONS: Record<string, string> = {
+  ai_disabled: "AI выключен в настройках проекта — подключите AI-провайдер.",
+  ai_key_missing: "Не задан ключ AI-провайдера проекта.",
+  ai_unavailable: "Нет доступной модели (провайдер или политика проекта).",
+  agent_failed: "Агент не смог выполнить проверку; аудит и Quality Gates при этом действительны.",
+  task_failed: "Шаг агента завершился ошибкой.",
+  task_skipped: "Шаг агента пропущен.",
+  no_new_findings: "Новых находок для проверки нет.",
+  cancelled: "Run отменён до проверки.",
+};
 
 const CATEGORIES: { id: SecurityCategory; label: string; icon: ReactNode; about: string }[] = [
   { id: "sast", label: "SAST", icon: <SquareCode size={15} />, about: "Статический анализ кода (Semgrep)." },
@@ -186,6 +229,121 @@ function Assurance({ data }: { data: SecurityOverview }) {
   );
 }
 
+// ------------------------------------------------------------ security agent --
+function AgentCard({ data }: { data: SecurityOverview }) {
+  const agent: SecurityAgentState = data.security_agent ?? { state: "not_requested", reason: null };
+  const info = AGENT_STATE[agent.state] ?? AGENT_STATE.not_run;
+  const risks = agent.additional_risks ?? [];
+  return (
+    <Card title="Security Agent — AI-проверка находок" icon={<Sparkles size={15} />} actions={<Badge tone={info.tone} dot>{info.label}</Badge>} className="sc-agent">
+      {agent.state === "not_requested" && <p className="text-muted sc-about">В этом run'е AI-проверка не запрашивалась. Её можно включить при запуске аудита безопасности.</p>}
+      {agent.state === "awaiting_approval" && (
+        <p className="sc-about">
+          Отправка находок и фрагментов кода во внешнюю модель ждёт утверждения. Утвердить или отклонить можно на <a href={href("run", data.run_id)}>странице run'а</a>.
+        </p>
+      )}
+      {agent.state === "running" && <p className="text-muted sc-about">Агент проверяет находки сканеров…</p>}
+      {agent.reason && agent.state !== "completed" && <p className="text-muted sc-about">{AGENT_REASONS[agent.reason] ?? AGENT_REASONS.agent_failed}</p>}
+      {agent.state === "completed" && (
+        <>
+          <div className="stats">
+            {(Object.keys(VERDICTS) as AgentVerdict[]).map((v) => (
+              <Stat key={v} label={VERDICTS[v].label} value={agent.verdicts?.[v] ?? 0} tone={v === "confirmed" ? "danger" : v === "needs_review" ? "warning" : undefined} />
+            ))}
+            <Stat label="доп. риски" value={risks.length} />
+          </div>
+          <p className="text-muted sc-about">
+            Проверено {agent.triaged ?? 0} из {agent.total ?? "?"} находок{agent.models && agent.models.length > 0 ? ` · ${agent.models.join(", ")}` : ""}. Вердикты — рекомендации модели: Quality Gates они не меняют, ложное срабатывание снимает только человек через baseline.
+          </p>
+          {agent.summary && <p className="sc-agent-text">{agent.summary}</p>}
+          {risks.length > 0 && (
+            <section aria-label="Дополнительные риски">
+              <h4 className="section-title">Дополнительные риски, найденные агентом</h4>
+              <ul className="sc-risks">
+                {risks.map((r, i) => (
+                  <li key={`${r.file}-${r.line}-${i}`}>
+                    <SeverityBadge severity={r.severity} /> <span className="path">{r.file ? (r.line ? `${r.file}:${r.line}` : r.file) : "—"}</span>
+                    {r.description && <p className="sc-agent-text">{r.description}</p>}
+                    {r.recommendation && <p className="sc-agent-text text-secondary">Рекомендация: {r.recommendation}</p>}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+// ----------------------------------------------------------------- launch --
+function LaunchAudit({ projectId, role, onStarted }: { projectId: string; role: string | null | undefined; onStarted: (runId: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [triage, setTriage] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const allowed = RUN_ROLES.has(role ?? "");
+  function start() {
+    setBusy(true);
+    api.createRun(projectId, "audit", { tools: SECURITY_TOOLS, triage }).then(
+      (run) => {
+        setBusy(false);
+        setOpen(false);
+        void queryClient.invalidateQueries({ queryKey: ["security-runs", projectId] });
+        void queryClient.invalidateQueries({ queryKey: ["runs"] });
+        toast({ tone: "success", title: "Аудит безопасности запущен", text: triage ? "Сканеры и Security Agent" : "Сканеры безопасности" });
+        setTriage(false);
+        onStarted(run.id);
+      },
+      (err: unknown) => {
+        setBusy(false);
+        toast({ tone: "danger", title: "Аудит не запущен", text: errorMessage(err) });
+      },
+    );
+  }
+  return (
+    <>
+      <Button variant="primary" icon={<Play size={14} />} disabled={!allowed} title={allowed ? undefined : "Запускать аудит могут owner, maintainer и developer проекта"} onClick={() => setOpen(true)}>
+        Запустить аудит безопасности
+      </Button>
+      {open && (
+        <Dialog
+          open
+          onOpenChange={(o) => !o && !busy && setOpen(false)}
+          title="Аудит безопасности"
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setOpen(false)} disabled={busy}>
+                Отмена
+              </Button>
+              <Button variant="primary" icon={<Play size={14} />} onClick={start} disabled={busy}>
+                {busy ? "Запуск…" : "Запустить"}
+              </Button>
+            </>
+          }
+        >
+          <div className="sc-launch">
+            <p className="sc-about">Run вида audit в Docker-песочнице: код только читается, затем Quality Gates и отчёт — как в Audit Center. Проверяют:</p>
+            <ul className="sc-launch-agents">
+              {SECURITY_TOOLS.map((t) => (
+                <li key={t}>
+                  <span className="mono">{t}</span> — {TOOL_ROLE[t]}
+                </li>
+              ))}
+            </ul>
+            <label className="check">
+              <input type="checkbox" checked={triage} onChange={(e) => setTriage(e.target.checked)} /> AI-проверка: Security Agent оценит каждую находку
+            </label>
+            <p className="text-muted sc-about">
+              Агент получает находки и фрагменты затронутых файлов (файлы с секретами не отправляются), подтверждает или отклоняет находки, описывает сценарий атаки и исправление. Нужен AI-провайдер
+              проекта; для внешнего провайдера run остановится и будет ждать утверждения на странице run'а. Вердикты агента — рекомендации, Quality Gates они не меняют.
+            </p>
+          </div>
+        </Dialog>
+      )}
+    </>
+  );
+}
+
 // ---------------------------------------------------------------- details --
 function FindingDetails({ projectId, runId, finding, onClose }: { projectId: string; runId: string; finding: SecurityFinding; onClose: () => void }) {
   const detail = useQuery({
@@ -230,6 +388,35 @@ function FindingDetails({ projectId, runId, finding, onClose }: { projectId: str
             </>
           )}
         </dl>
+        {detail.data?.agent && (
+          <section className="sc-assessment" aria-label="Оценка Security Agent">
+            <h4 className="section-title">Оценка Security Agent</h4>
+            <p>
+              <Badge tone={VERDICTS[detail.data.agent.verdict]?.tone ?? "neutral"} dot>
+                {VERDICTS[detail.data.agent.verdict]?.label ?? detail.data.agent.verdict}
+              </Badge>
+              {detail.data.agent.severity && (
+                <>
+                  {" "}· важность по мнению агента: <SeverityBadge severity={detail.data.agent.severity} />
+                </>
+              )}
+              {detail.data.agent.cwe && <span className="mono"> · {detail.data.agent.cwe}</span>}
+            </p>
+            {detail.data.agent.exploit_scenario && (
+              <>
+                <h5>Сценарий атаки</h5>
+                <p className="sc-agent-text">{detail.data.agent.exploit_scenario}</p>
+              </>
+            )}
+            {detail.data.agent.recommendation && (
+              <>
+                <h5>Как исправить</h5>
+                <p className="sc-agent-text">{detail.data.agent.recommendation}</p>
+              </>
+            )}
+            <p className="text-muted sc-about">Это рекомендация модели: она не меняет находку и Quality Gates. Цитаты кода из ответа агента не показываются.</p>
+          </section>
+        )}
         {detail.isLoading && <Skeleton lines={2} />}
         {detail.isError && <ErrorState error={new Error(errorMessage(detail.error))} title="Детали не загрузились" onRetry={() => void detail.refetch()} />}
         <p className="text-muted sc-withheld" role="note">
@@ -278,6 +465,11 @@ function Findings({ data, filters, onFilter, offset, onOffset, onOpen, fetching 
       ),
     },
     { id: "category", header: "Категория", cell: (f) => <Badge>{FINDING_CATEGORY[f.category] ?? f.category}</Badge> },
+    {
+      id: "agent",
+      header: "AI-агент",
+      cell: (f) => (f.agent_verdict && VERDICTS[f.agent_verdict] ? <Badge tone={VERDICTS[f.agent_verdict].tone}>{VERDICTS[f.agent_verdict].label}</Badge> : <span className="text-muted">—</span>),
+    },
     { id: "file", header: "Файл", cell: (f) => <span className="path">{location(f)}</span> },
     { id: "source", header: "Инструмент", cell: (f) => <span className="mono">{f.source}</span> },
     { id: "status", header: "Статус", cell: (f) => <Badge tone={f.status === "open" ? "warning" : "neutral"}>{f.status}</Badge> },
@@ -361,6 +553,7 @@ function Overview({ projectId, runId }: { projectId: string; runId: string }) {
         ))}
       </section>
       <Assurance data={data} />
+      <AgentCard data={data} />
       <Card title={`Находки run'а по важности · всего ${s.total}`} icon={<ShieldAlert size={15} />} className="sc-severity">
         <div className="stats">
           {SEVERITIES.map((level) => (
@@ -386,13 +579,20 @@ function Overview({ projectId, runId }: { projectId: string; runId: string }) {
   );
 }
 
-function Header({ run }: { run?: string }) {
+function Header({ run, launch }: { run?: string; launch?: ReactNode }) {
   return (
     <PageHeader
       icon={<ShieldAlert size={20} />}
       title="Security Center"
-      subtitle="Только чтение: покрытие сканирования и находки выбранного run'а. Права проверяются сервером."
-      actions={run ? <LinkButton href={href("run", run)}>Открыть run</LinkButton> : undefined}
+      subtitle="Покрытие сканирования, находки и AI-проверка выбранного run'а. Права проверяются сервером."
+      actions={
+        run || launch ? (
+          <>
+            {run && <LinkButton href={href("run", run)}>Открыть run</LinkButton>}
+            {launch}
+          </>
+        ) : undefined
+      }
     />
   );
 }
@@ -421,11 +621,14 @@ function Enabled({ query }: { query: Record<string, string> }) {
     queryKey: ["security-runs", project],
     queryFn: () => api.runs(project),
     enabled: Boolean(project),
+    refetchInterval: (q) => (q.state.data?.some((r) => !TERMINAL.has(r.state)) ? LIVE : false),
   });
   const run = useMemo(() => (runs.data?.some((r) => r.id === runId) ? runId : runs.data?.[0]?.id ?? ""), [runs.data, runId]);
+  const role = projects.data?.find((p) => p.id === project)?.role;
+  const launch = project ? <LaunchAudit projectId={project} role={role} onStarted={setRunId} /> : undefined;
   return (
     <div className="page security-center">
-      <Header run={run} />
+      <Header run={run} launch={launch} />
       {projects.isError ? (
         <ErrorState error={projects.error} onRetry={() => void projects.refetch()} />
       ) : projects.isLoading ? (
@@ -460,8 +663,8 @@ function Enabled({ query }: { query: Record<string, string> }) {
           ) : runs.isLoading ? (
             <Skeleton lines={4} />
           ) : !run ? (
-            <EmptyState title="У проекта ещё нет run'ов" action={<LinkButton href={href("audit")}>Audit Center</LinkButton>}>
-              Без run'а нечего показать — и это не означает, что проект безопасен. Запустите аудит в Audit Center.
+            <EmptyState title="У проекта ещё нет run'ов" action={launch}>
+              Без run'а нечего показать — и это не означает, что проект безопасен. Запустите аудит безопасности.
             </EmptyState>
           ) : (
             <Overview projectId={project} runId={run} />
