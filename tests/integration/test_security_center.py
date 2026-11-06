@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from ai_coding.api.app import create_app
 from ai_coding.api.services import NotFoundError, Server
 from ai_coding.api.settings import ServerSettings
-from ai_coding.domain.enums import Role
+from ai_coding.domain.enums import Role, Severity
 from ai_coding.persistence.models import Finding, Run, Task
 
 pytestmark = pytest.mark.integration
@@ -75,7 +75,7 @@ def world(tmp_path: Path) -> Iterator[dict[str, Any]]:
                     run_id=run_id,
                     source=source,
                     rule_id="rule",
-                    severity="HIGH",
+                    severity=Severity.HIGH.value,
                     title=SECRET,
                     message=SECRET,
                     file_path="app.py",
@@ -88,7 +88,7 @@ def world(tmp_path: Path) -> Iterator[dict[str, Any]]:
             Finding(
                 project_id=project,
                 source="semgrep",
-                severity="CRITICAL",
+                severity=Severity.CRITICAL.value,
                 title="different run",
                 fingerprint="x" * 64,
             )
@@ -127,7 +127,7 @@ def test_snapshot_and_pagination(world: dict[str, Any]) -> None:
         assert SECRET not in first.text
         assert "evidence" not in first.text and "message" not in first.text
         assert data["summary"]["total"] == 2
-        assert data["summary"]["by_severity"]["CRITICAL"] == 0
+        assert data["summary"]["by_severity"][Severity.CRITICAL.value] == 0
         assert data["coverage"]["sast"]["state"] == "completed"
         assert data["coverage"]["iac"]["state"] == "incomplete"
         assert data["compliance"]["state"] == "not_assessed"
