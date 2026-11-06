@@ -257,3 +257,36 @@ def test_planted_pilot_root_dockerfile_is_baselined_not_fixed() -> None:
     assert entry_.expires_at >= date.today()
     _, suppressed, _ = baseline.partition([ds002])
     assert suppressed == [ds002]
+
+
+PILOT = "tests/fixtures/pilot-laravel-react/"
+
+
+@pytest.mark.parametrize(
+    ("tool", "rule", "lockfile", "package"),
+    [
+        ("trivy", "CVE-2022-24775", "composer.lock", "guzzlehttp/psr7@1.8.0"),
+        ("trivy", "CVE-2020-8203", "package-lock.json", "lodash@4.17.15"),
+        ("osv-scanner", "GHSA-q7rv-6hp3-vh96", "composer.lock", "guzzlehttp/psr7@1.8.0"),
+        ("osv-scanner", "GHSA-p6mc-m468-83gw", "package-lock.json", "lodash@4.17.15"),
+    ],
+)
+def test_planted_pilot_dependencies_are_baselined(
+    tool: str, rule: str, lockfile: str, package: str
+) -> None:
+    """The pilot's vulnerable dependencies are planted for AC-02 (Trivy and OSV-Scanner
+    must find them), so the self-audit accepts them through the baseline."""
+    path = PILOT + lockfile
+    planted = Finding(tool, rule, Severity.HIGH, rule, rule, path, None,
+                      fingerprint(tool, rule, path, package))  # fmt: skip
+    _, suppressed, _ = load_baseline(REPO).partition([planted])
+    assert suppressed == [planted]
+
+
+def test_repository_baseline_accepts_only_planted_test_data() -> None:
+    """Real vulnerabilities (web/, uv.lock, deploy/) are fixed, never baselined."""
+    entries = load_baseline(REPO).entries
+    assert entries
+    for e in entries:
+        assert e.path is not None and e.path.startswith(PILOT), e
+        assert e.expires_at >= date.today()

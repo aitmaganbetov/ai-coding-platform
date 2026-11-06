@@ -9,6 +9,222 @@
       "owner": "admin",
       "reason": "Planted on purpose in the AC-02 pilot fixture (root container); tests/integration/test_pilot_audit.py asserts Trivy reports it. Test data, never deployed.",
       "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "3cef3806f10c39fbcaa5b17e57d1c36d253992c061a777aa9c21049ca353dcdc",
+      "tool": "trivy",
+      "rule_id": "DS026",
+      "path": "tests/fixtures/pilot-laravel-react/Dockerfile",
+      "owner": "admin",
+      "reason": "The AC-02 pilot fixture's Dockerfile is a minimal test image without HEALTHCHECK. Test data, never built or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "a3fdd33e3d1f018dff3b2b93c072ada14f1c52f37959f2ee46c39450b5fe7be1",
+      "tool": "osv-scanner",
+      "rule_id": "GHSA-34xg-wgjx-8xph",
+      "path": "tests/fixtures/pilot-laravel-react/composer.lock",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: guzzlehttp/psr7 1.8.0 is pinned in composer.lock so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "130ed65b9bbb1f51bdde67a25f408469972713cb5c26e0bf8d200cbd55b90b90",
+      "tool": "osv-scanner",
+      "rule_id": "GHSA-c2w2-prh8-qm98",
+      "path": "tests/fixtures/pilot-laravel-react/composer.lock",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: guzzlehttp/psr7 1.8.0 is pinned in composer.lock so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "5bc9b611116bf9074a2386db7c688714c3d2e2f81847ed4e0f5a05b8946f6e38",
+      "tool": "osv-scanner",
+      "rule_id": "GHSA-hq7v-mx3g-29hw",
+      "path": "tests/fixtures/pilot-laravel-react/composer.lock",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: guzzlehttp/psr7 1.8.0 is pinned in composer.lock so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "2cc334705f6b4a6c1d75b4f5ddb12cc1e8170fe03d2b466d3b4295545a558968",
+      "tool": "osv-scanner",
+      "rule_id": "GHSA-q7rv-6hp3-vh96",
+      "path": "tests/fixtures/pilot-laravel-react/composer.lock",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: guzzlehttp/psr7 1.8.0 is pinned in composer.lock so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "2a29baf57fb10ea6500de4edc430190fe10e8695830efee167cd1dc81f62a2db",
+      "tool": "osv-scanner",
+      "rule_id": "GHSA-vm85-hxw5-5432",
+      "path": "tests/fixtures/pilot-laravel-react/composer.lock",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: guzzlehttp/psr7 1.8.0 is pinned in composer.lock so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "442627e98648c0f88d477013351772b5d20f45a9d5305987d234f2872e0ca96c",
+      "tool": "osv-scanner",
+      "rule_id": "GHSA-wxmh-65f7-jcvw",
+      "path": "tests/fixtures/pilot-laravel-react/composer.lock",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: guzzlehttp/psr7 1.8.0 is pinned in composer.lock so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "fdf9b230fa2e7acd4f0031990d62f6bebf76ab43c4c5576ca7153687718a7778",
+      "tool": "trivy",
+      "rule_id": "CVE-2022-24775",
+      "path": "tests/fixtures/pilot-laravel-react/composer.lock",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: guzzlehttp/psr7 1.8.0 is pinned in composer.lock so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "3b55dc9e54c5a0cb74eba7ceb0f5c19f6fc0ea07328f91194afaec715da93009",
+      "tool": "trivy",
+      "rule_id": "CVE-2023-29197",
+      "path": "tests/fixtures/pilot-laravel-react/composer.lock",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: guzzlehttp/psr7 1.8.0 is pinned in composer.lock so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "3a7bd6434b238b6fc9036995c1707454e080c219d12d7e80e7019643113ac89d",
+      "tool": "trivy",
+      "rule_id": "CVE-2026-48998",
+      "path": "tests/fixtures/pilot-laravel-react/composer.lock",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: guzzlehttp/psr7 1.8.0 is pinned in composer.lock so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "48d29469d36f9ceb2dedab42f50d66492722672eedaec611ad8cc29529609bf4",
+      "tool": "trivy",
+      "rule_id": "CVE-2026-49214",
+      "path": "tests/fixtures/pilot-laravel-react/composer.lock",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: guzzlehttp/psr7 1.8.0 is pinned in composer.lock so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "75893d95c1edc035edcc97cb055308cd29ba84c8a5ac49c199d07108efc731dc",
+      "tool": "trivy",
+      "rule_id": "CVE-2026-55766",
+      "path": "tests/fixtures/pilot-laravel-react/composer.lock",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: guzzlehttp/psr7 1.8.0 is pinned in composer.lock so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "de525095e170b7fba2939a4d4c11d2662b17952a0c70ae7248336ac16dcf01ad",
+      "tool": "trivy",
+      "rule_id": "CVE-2026-59882",
+      "path": "tests/fixtures/pilot-laravel-react/composer.lock",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: guzzlehttp/psr7 1.8.0 is pinned in composer.lock so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "3f385858f9d0baaafa468bb11ac0c52acee1ad308a33f0ba60faf1f30da145f1",
+      "tool": "osv-scanner",
+      "rule_id": "GHSA-29mw-wpgm-hmr9",
+      "path": "tests/fixtures/pilot-laravel-react/package-lock.json",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: lodash 4.17.15 is pinned in package-lock.json so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "e646c6f8da5539f65d0ed4b593fc877ae3d719e3500c4fd2fe2ef710998e45c3",
+      "tool": "osv-scanner",
+      "rule_id": "GHSA-35jh-r3h4-6jhm",
+      "path": "tests/fixtures/pilot-laravel-react/package-lock.json",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: lodash 4.17.15 is pinned in package-lock.json so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "0bf6b8643210448f3926c002e4d8fd236585d89d290ab3e9852742a81663f73c",
+      "tool": "osv-scanner",
+      "rule_id": "GHSA-p6mc-m468-83gw",
+      "path": "tests/fixtures/pilot-laravel-react/package-lock.json",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: lodash 4.17.15 is pinned in package-lock.json so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "3927d0ce8199c0178c8d0cb3263fbb84f44c065d692d41383ae76a387eba4bb9",
+      "tool": "osv-scanner",
+      "rule_id": "GHSA-r5fr-rjxr-66jc",
+      "path": "tests/fixtures/pilot-laravel-react/package-lock.json",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: lodash 4.17.15 is pinned in package-lock.json so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "d231d3716dcbc0326992efa5d238489ae227ab5a590dfbeaf50d2afafdb2a3af",
+      "tool": "osv-scanner",
+      "rule_id": "GHSA-xxjr-mmjv-4gpg",
+      "path": "tests/fixtures/pilot-laravel-react/package-lock.json",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: lodash 4.17.15 is pinned in package-lock.json so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "fac2043e8b7a33dbd08fdb327408ef54f77191885e57a8e0a9f13f493949f27b",
+      "tool": "trivy",
+      "rule_id": "CVE-2020-28500",
+      "path": "tests/fixtures/pilot-laravel-react/package-lock.json",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: lodash 4.17.15 is pinned in package-lock.json so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "46af66731be2351bc7fb067cdd3e1899d7f3b6595849615de91523ede0aaa6c3",
+      "tool": "trivy",
+      "rule_id": "CVE-2020-8203",
+      "path": "tests/fixtures/pilot-laravel-react/package-lock.json",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: lodash 4.17.15 is pinned in package-lock.json so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "d618a39ca29cf93904068f310d5f050caab8eb517b3d1d4d89050ccfb9038ac5",
+      "tool": "trivy",
+      "rule_id": "CVE-2021-23337",
+      "path": "tests/fixtures/pilot-laravel-react/package-lock.json",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: lodash 4.17.15 is pinned in package-lock.json so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "d0330c3882398ca210bc0e846b3ceb8c106a8244af9e260838f9f48fbf8e4665",
+      "tool": "trivy",
+      "rule_id": "CVE-2025-13465",
+      "path": "tests/fixtures/pilot-laravel-react/package-lock.json",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: lodash 4.17.15 is pinned in package-lock.json so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "2a3e401f647eb24043e92c46ef90e54dc0718553e20221b978d117f678825ca8",
+      "tool": "trivy",
+      "rule_id": "CVE-2026-4800",
+      "path": "tests/fixtures/pilot-laravel-react/package-lock.json",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: lodash 4.17.15 is pinned in package-lock.json so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
+    },
+    {
+      "fingerprint": "a22889fb97bffd280fc573309d2228709c76d75be2427a8130934ba9020d226e",
+      "tool": "trivy",
+      "rule_id": "NSWG-ECO-516",
+      "path": "tests/fixtures/pilot-laravel-react/package-lock.json",
+      "owner": "admin",
+      "reason": "Planted on purpose in the AC-02 pilot fixture: lodash 4.17.15 is pinned in package-lock.json so Trivy and OSV-Scanner have a known vulnerable dependency to report (tests/integration/test_pilot_audit.py). Test data, never installed or deployed.",
+      "expires_at": "2027-11-06"
     }
   ]
 }
