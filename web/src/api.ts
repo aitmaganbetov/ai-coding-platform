@@ -16,6 +16,116 @@ export interface Member {
 export interface ProjectDetail extends Project {
   members: Member[];
   kinds: string[];
+  config?: ProjectConfig | null;
+}
+
+/** Non-secret summary of a project's .ai-coding.yml (null when it cannot be read). */
+export interface ProjectConfig {
+  stacks: string[];
+  mode: string;
+  execution: { backend: string; network: string };
+  ai: { enabled: boolean; provider: string; model: string | null };
+  security: { network: string; egress_allowlist: string[] };
+  budgets: { max_tokens_per_run: number; max_cost_usd_per_run: number; max_duration_minutes: number };
+  quality_gates: Record<string, { enabled: boolean; blocking: boolean; [key: string]: unknown }>;
+}
+
+/** A workspace's changes for the AI Changes Review (GET …/workspace/diff, ADR-0040). */
+export interface DiffLine {
+  kind: "context" | "add" | "del" | "meta";
+  text: string;
+}
+
+export interface DiffHunk {
+  header: string;
+  section: string;
+  old_start: number;
+  old_lines: number;
+  new_start: number;
+  new_lines: number;
+  lines: DiffLine[];
+  /** The file's header and this hunk: what `git apply` takes for this hunk alone. */
+  patch: string;
+}
+
+export interface DiffFile {
+  path: string;
+  old_path: string | null;
+  status: "modified" | "added" | "deleted" | "renamed";
+  binary: boolean;
+  header: string;
+  hunks: DiffHunk[];
+  additions: number;
+  deletions: number;
+}
+
+export interface WorkspaceDiff {
+  accepted: DiffFile[];
+  pending: DiffFile[];
+  new_files: DiffFile[];
+  truncated: boolean;
+}
+
+export type ReviewAction = "accept" | "reject" | "unstage" | "accept_file" | "reject_file";
+
+/** A run of any project the caller may view (GET /runs). */
+export interface GlobalRun extends RunSummary {
+  project_id: string;
+  project_name: string;
+}
+
+export interface Gate {
+  gate: string;
+  result: string;
+  blocking: boolean;
+  reason: string | null;
+  evidence?: string[];
+}
+
+export interface AgentInfo {
+  name: string;
+  inputs: string;
+  outputs: string;
+  requires_llm: boolean;
+  implemented: boolean;
+  sprint: string;
+  capabilities: string[];
+  allowed_tools: string[];
+}
+
+export interface AgentExecution {
+  id: string;
+  run_id: string;
+  task_key: string;
+  agent_name: string;
+  attempt: number;
+  status: string;
+  confidence: number | null;
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
+  duration_seconds: number | null;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  models: string[];
+}
+
+export interface Usage {
+  totals: { calls: number; input_tokens: number; output_tokens: number; cost_usd: number };
+  by_model: { provider: string; model: string; calls: number; input_tokens: number; output_tokens: number; cost_usd: number }[];
+  daily: { date: string; input_tokens: number; output_tokens: number; cost_usd: number }[];
+}
+
+export interface SystemInfo {
+  version: string;
+  database: string;
+  workspaces: string;
+  queue: Record<string, number>;
+  runs: Record<string, number>;
+  workers: { id: string; active_jobs: number; last_seen: string | null }[];
+  analysers: Record<string, boolean>;
+  time: string;
 }
 
 export interface RunSummary {
@@ -56,6 +166,9 @@ export interface RunDetail {
   tasks: Task[];
   approvals: Approval[];
   jobs: { kind: string; state: string; attempts: number; error: string | null }[];
+  dependencies?: { task: string; depends_on: string }[];
+  gates?: Gate[] | null;
+  usage?: { input_tokens: number; output_tokens: number; cost_usd: number };
 }
 
 export interface ArtifactInfo {
@@ -75,6 +188,13 @@ export interface FindingRow {
   line: number | null;
   title: string;
   status: string;
+  message?: string;
+  run_id?: string | null;
+  project_id?: string;
+  project_name?: string;
+  fingerprint?: string;
+  evidence?: Record<string, unknown>;
+  created_at?: string;
 }
 
 export interface AuditRow {
@@ -90,7 +210,114 @@ export interface AuditRow {
 export interface Me {
   username: string;
   is_admin: boolean;
+  can_create_projects?: boolean;
+  token_id?: string | null;
 }
+
+export interface UserRow {
+  id: string;
+  username: string;
+  display_name: string | null;
+  is_admin: boolean;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface NewUser {
+  username: string;
+  password: string;
+  display_name?: string;
+  is_admin: boolean;
+}
+
+export interface UserPatch {
+  display_name?: string;
+  is_admin?: boolean;
+  is_active?: boolean;
+}
+
+export interface SourceDirectory {
+  name: string;
+  path: string;
+  git: boolean;
+  used: boolean; // another project's directory is it, contains it or lies in it
+  project: string | null; // that project's name, when the caller may know it
+}
+
+export interface SourceRoot extends SourceDirectory {
+  directories: SourceDirectory[];
+}
+
+export interface ProjectSources {
+  git: boolean;
+  upload_max_bytes: number;
+  roots: SourceRoot[];
+}
+
+// Exactly one source: a Git URL (the server clones it) or a directory on the server.
+// An uploaded folder goes through api.uploadProject instead.
+export type NewProject =
+  | { name: string; git_url: string; branch?: string; git_token?: string }
+  | { name: string; path: string };
+
+export interface TokenRow {
+  id: string;
+  name: string;
+  project_id: string | null;
+  max_role: string | null;
+  created_at: string;
+  expires_at: string | null;
+  last_used_at: string | null;
+  revoked: boolean;
+}
+
+export interface NewToken {
+  name: string;
+  project_id?: string;
+  max_role?: string;
+  ttl_hours?: number;
+}
+
+export const ROLES = ["owner", "maintainer", "developer", "auditor", "agent"];
+
+export interface WorkspaceInfo {
+  git: boolean; // the project is a git repository (workspaces need one)
+  exists: boolean; // the caller's own workspace was created
+  can_edit: boolean; // the caller's role may use a workspace
+  terminal: "on" | "off";
+  branch_prefix: string; // "ws/<user>/": where "publish" puts the workspace branch
+}
+
+export type FileScope = "workspace" | "project";
+
+export interface FileEntry {
+  name: string;
+  type: "dir" | "file" | "link" | "other";
+  size: number;
+}
+
+export interface FileContent {
+  path: string;
+  size: number;
+  content: string | null;
+  binary: boolean;
+  too_large: boolean;
+  version: string | null;
+}
+
+export interface GitStatus {
+  branch: string | null;
+  files: { status: string; path: string }[];
+}
+
+export interface GitResult {
+  ok: boolean;
+  output: string;
+  branch: string | null;
+}
+
+const fileQuery = (path: string, scope?: FileScope) =>
+  `path=${encodeURIComponent(path)}${scope ? `&scope=${scope}` : ""}`;
 
 export const TERMINAL = new Set(["COMPLETED", "FAILED", "CANCELLED"]);
 const TOKEN_KEY = "ai-coding-token";
@@ -113,15 +340,25 @@ export function setToken(token: string | null): void {
   else sessionStorage.removeItem(TOKEN_KEY);
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  if (body === undefined) return send<T>(method, path);
+  return send<T>(method, path, JSON.stringify(body), "application/json");
+}
+
+async function send<T>(
+  method: string,
+  path: string,
+  body?: BodyInit,
+  contentType?: string,
+): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json" };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
-  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (contentType) headers["Content-Type"] = contentType;
   const response = await fetch(`/api/v1${path}`, {
     method,
     headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body,
     credentials: "omit",
   });
   if (response.status === 401) setToken(null);
@@ -154,11 +391,43 @@ export async function download(path: string, filename: string): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
+export function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+export function shortDate(iso: string | null): string {
+  return iso ? iso.slice(0, 19).replace("T", " ") : "—";
+}
+
+const user = (username: string) => `/users/${encodeURIComponent(username)}`;
+
 export const api = {
   login: (username: string, password: string) =>
     request<{ token: string }>("POST", "/auth/login", { username, password }),
   me: () => request<Me>("GET", "/me"),
+  changePassword: (current_password: string, new_password: string) =>
+    request<void>("PUT", "/me/password", { current_password, new_password }),
+  tokens: () => request<TokenRow[]>("GET", "/tokens"),
+  issueToken: (body: NewToken) =>
+    request<{ token: string; token_id: string }>("POST", "/tokens", body),
+  revokeToken: (id: string) => request<void>("DELETE", `/tokens/${id}`),
+  users: () => request<UserRow[]>("GET", "/users"),
+  createUser: (body: NewUser) => request<{ id: string }>("POST", "/users", body),
+  updateUser: (username: string, patch: UserPatch) =>
+    request<UserRow>("PATCH", user(username), patch),
+  resetPassword: (username: string, password: string) =>
+    request<void>("PUT", `${user(username)}/password`, { password }),
   projects: () => request<Project[]>("GET", "/projects"),
+  projectSources: () => request<ProjectSources>("GET", "/project-sources"),
+  createProject: (body: NewProject) => request<ProjectDetail>("POST", "/projects", body),
+  uploadProject: (name: string, archive: Blob) =>
+    send<ProjectDetail>(
+      "POST",
+      `/projects/upload?name=${encodeURIComponent(name)}`,
+      archive,
+      "application/x-tar",
+    ),
+  deleteProject: (id: string) => request<void>("DELETE", `/projects/${id}`),
   project: (id: string) => request<ProjectDetail>("GET", `/projects/${id}`),
   runs: (projectId: string) => request<RunSummary[]>("GET", `/projects/${projectId}/runs`),
   createRun: (projectId: string, kind: string, params: Record<string, unknown>) =>
@@ -179,4 +448,72 @@ export const api = {
     ),
   removeMember: (projectId: string, username: string) =>
     request<void>("DELETE", `/projects/${projectId}/members/${encodeURIComponent(username)}`),
+  workspace: (projectId: string) => request<WorkspaceInfo>("GET", `/projects/${projectId}/workspace`),
+  openWorkspace: (projectId: string) =>
+    request<WorkspaceInfo>("POST", `/projects/${projectId}/workspace`, {}),
+  files: (projectId: string, path: string, scope: FileScope) =>
+    request<FileEntry[]>("GET", `/projects/${projectId}/files?${fileQuery(path, scope)}`),
+  file: (projectId: string, path: string, scope: FileScope) =>
+    request<FileContent>("GET", `/projects/${projectId}/file?${fileQuery(path, scope)}`),
+  saveFile: (projectId: string, path: string, content: string, version: string | null, create = false) =>
+    request<{ path: string; version: string }>("PUT", `/projects/${projectId}/file?${fileQuery(path)}`, {
+      content,
+      version,
+      create,
+    }),
+  deleteFile: (projectId: string, path: string) =>
+    request<void>("DELETE", `/projects/${projectId}/file?${fileQuery(path)}`),
+  restartWorkspace: (projectId: string) =>
+    request<{ status: string }>("POST", `/projects/${projectId}/workspace/restart`, {}),
+  gitStatus: (projectId: string) =>
+    request<GitStatus>("GET", `/projects/${projectId}/workspace/git`),
+  commit: (projectId: string, message: string, stagedOnly = false) =>
+    request<GitResult>("POST", `/projects/${projectId}/workspace/commit`, stagedOnly ? { message, staged_only: true } : { message }),
+  workspaceDiff: (projectId: string) => request<WorkspaceDiff>("GET", `/projects/${projectId}/workspace/diff`),
+  review: (projectId: string, body: { action: ReviewAction; patch?: string; path?: string }) =>
+    request<{ ok: boolean; output: string }>("POST", `/projects/${projectId}/workspace/review`, body),
+  pullProject: (projectId: string) =>
+    request<GitResult>("POST", `/projects/${projectId}/workspace/pull`, {}),
+  publish: (projectId: string) =>
+    request<{ branch: string; commit: string }>("POST", `/projects/${projectId}/workspace/publish`, {}),
+  // NEXUS views: data across projects (only those the caller may see) and insights.
+  allRuns: (filter: { limit?: number; state?: string; kind?: string; project_id?: string } = {}) =>
+    request<GlobalRun[]>("GET", `/runs${query(filter)}`),
+  allFindings: (filter: { limit?: number; severity?: string; status?: string; source?: string; project_id?: string; run_id?: string } = {}) =>
+    request<FindingRow[]>("GET", `/findings${query(filter)}`),
+  events: (limit = 50) => request<AuditRow[]>("GET", `/audit-events${query({ limit })}`),
+  agents: () => request<AgentInfo[]>("GET", "/agents"),
+  agentExecutions: (projectId: string, limit = 100) =>
+    request<AgentExecution[]>("GET", `/projects/${projectId}/agent-executions${query({ limit })}`),
+  usage: (projectId: string, days = 30) => request<Usage>("GET", `/projects/${projectId}/usage${query({ days })}`),
+  system: () => request<SystemInfo>("GET", "/system"),
 };
+
+/** Readiness of the server and its database (outside /api/v1, no token). */
+export async function readiness(): Promise<boolean> {
+  try {
+    return (await fetch("/readyz", { credentials: "omit" })).ok;
+  } catch {
+    return false;
+  }
+}
+
+function query(params: Record<string, string | number | undefined>): string {
+  const entries = Object.entries(params).filter((e): e is [string, string | number] => e[1] !== undefined && e[1] !== "");
+  return entries.length ? `?${new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString()}` : "";
+}
+
+/** WebSocket URL of the caller's terminal in a project's workspace. */
+export function terminalUrl(projectId: string): string {
+  return workspaceSocket(projectId, "terminal");
+}
+
+/** WebSocket URL of the caller's AI chat (Claude Code, Codex) in a project's workspace. */
+export function chatUrl(projectId: string): string {
+  return workspaceSocket(projectId, "chat");
+}
+
+function workspaceSocket(projectId: string, kind: "terminal" | "chat"): string {
+  const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+  return `${scheme}://${window.location.host}/api/v1/projects/${projectId}/workspace/${kind}`;
+}

@@ -9,14 +9,17 @@ TLS is terminated by the reverse proxy (``deploy/Caddyfile``).
 from __future__ import annotations
 
 import asyncio
+import json
+import os
+import tempfile
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request, Response
+from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request, Response, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -27,16 +30,36 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ai_coding import __version__
 from ai_coding.api import lifecycle
+from ai_coding.api.agent_bridge import AgentBridge
+from ai_coding.api.diffs import PATH_OPS, patch_path, review_payload, validate_patch, validate_path
 from ai_coding.api.kinds import KINDS
 from ai_coding.api.limits import RateLimiter, SharedRateLimiter, client_address
 from ai_coding.api.metrics import Metrics
 from ai_coding.api.security import same_digest
 from ai_coding.api.services import (
     ApiError,
-    ForbiddenError,
+    ConflictError,
+    InvalidError,
     Principal,
     Server,
+    TooLargeError,
     UnauthorizedError,
+    UnsupportedMediaTypeError,
+)
+from ai_coding.api.terminal import (
+    bridge,
+    chat_bridge,
+    first_message,
+    parse_status,
+    refuse,
+    terminal_size,
+)
+from ai_coding.api.workspace_broker import (
+    Broker,
+    BrokerError,
+    GitOutcome,
+    WorkspaceRef,
+    make_broker,
 )
 from ai_coding.domain.enums import Role
 from ai_coding.observability import get_logger
@@ -51,9 +74,13 @@ SECURITY_HEADERS = {
     "Cross-Origin-Opener-Policy": "same-origin",
     "Cross-Origin-Resource-Policy": "same-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+    # Inline *styles* are allowed: the browser terminal (xterm.js) sizes and themes itself
+    # with <style> elements. Scripts stay 'self' only (ADR-0036). connect-src 'self'
+    # covers the terminal's same-origin WebSocket (CSP Level 3).
     "Content-Security-Policy": (
-        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
-        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
+        "form-action 'self'"
     ),
 }
 _DOCS_CSP = (  # Swagger UI loads its assets from a CDN and runs an inline bootstrap script
@@ -87,15 +114,52 @@ class UserIn(_In):
     is_admin: bool = False
 
 
+class UserPatchIn(_In):
+    display_name: str | None = Field(default=None, max_length=200)
+    is_admin: bool | None = None
+    is_active: bool | None = None
+
+
+class PasswordIn(_In):
+    password: str = Field(min_length=12, max_length=1024)
+
+
+class PasswordChangeIn(_In):
+    current_password: str = Field(min_length=1, max_length=1024)
+    new_password: str = Field(min_length=12, max_length=1024)
+
+
 class ProjectIn(_In):
     name: str = Field(min_length=1, max_length=100)
     git_url: str | None = Field(default=None, max_length=2000)
     branch: str | None = Field(default=None, max_length=255)
     path: str | None = Field(default=None, max_length=4096)
+    # Opens a private HTTPS repository for the clone only; never stored or logged.
+    git_token: str | None = Field(default=None, min_length=1, max_length=1000)
 
 
 class MemberIn(_In):
     role: Role
+
+
+class FileIn(_In):
+    content: str = Field(max_length=1_000_000)
+    # The version the editor loaded: the save is refused if the file changed meanwhile.
+    version: str | None = Field(default=None, max_length=64)
+    create: bool = False  # a new file only: 409 if it exists
+
+
+class CommitIn(_In):
+    message: str = Field(min_length=1, max_length=2000)
+    staged_only: bool = False  # "commit accepted": the index alone (AI Changes Review)
+
+
+class ReviewIn(_In):
+    """A decision on a change of the workspace (ADR-0040): a hunk's patch, or a new file."""
+
+    action: Literal["accept", "reject", "unstage", "accept_file", "reject_file"]
+    patch: str | None = Field(default=None, max_length=1024 * 1024)
+    path: str | None = Field(default=None, max_length=4096)
 
 
 class RunIn(_In):
@@ -114,6 +178,10 @@ class CancelIn(_In):
 
 
 # --------------------------------------------------------------- plumbing --
+class UnavailableError(ApiError):
+    status, code = 503, "unavailable"
+
+
 class RateLimitedError(Exception):
     """Raised by the limiter dependency; rendered as 429 with ``Retry-After``."""
 
@@ -249,14 +317,23 @@ def login(body: LoginIn, request: Request, server: Srv) -> dict[str, Any]:
 
 
 @auth.get("/me")
-def me(caller: Caller) -> dict[str, Any]:
+def me(caller: Caller, server: Srv) -> dict[str, Any]:
     scope = caller.token_project_id
     return {
         "username": caller.username,
         "is_admin": caller.is_admin,
+        "can_create_projects": server.can_create_projects(caller),
+        "token_id": str(caller.token_id) if caller.token_id else None,
         "token_project_id": str(scope) if scope else None,
         "token_max_role": caller.token_max_role.value if caller.token_max_role else None,
     }
+
+
+@auth.put("/me/password", status_code=204)
+def change_password(body: PasswordChangeIn, caller: Caller, server: Srv) -> Response:
+    """Replace the caller's password; the current one is required."""
+    server.change_own_password(caller, body.current_password, body.new_password)
+    return Response(status_code=204)
 
 
 @auth.get("/tokens")
@@ -289,10 +366,14 @@ def revoke_token(token_id: uuid.UUID, caller: Caller, server: Srv) -> Response:
     return Response(status_code=204)
 
 
+@auth.get("/users", tags=["admin"])
+def list_users(caller: Caller, server: Srv) -> list[dict[str, Any]]:
+    return server.list_users(caller)
+
+
 @auth.post("/users", status_code=201, tags=["admin"])
 def create_user(body: UserIn, caller: Caller, server: Srv) -> dict[str, Any]:
-    if not caller.is_admin or caller.token_project_id is not None:
-        raise ForbiddenError("only instance administrators may create users")
+    server.require_admin(caller, "create users")
     user_id = server.create_user(
         body.username,
         body.password,
@@ -301,6 +382,25 @@ def create_user(body: UserIn, caller: Caller, server: Srv) -> dict[str, Any]:
         actor=caller.username,
     )
     return {"id": str(user_id), "username": body.username}
+
+
+@auth.patch("/users/{username}", tags=["admin"])
+def update_user(username: str, body: UserPatchIn, caller: Caller, server: Srv) -> dict[str, Any]:
+    """Rename, grant or withdraw administrator rights, block (revokes all tokens) or
+    unblock a user."""
+    return server.update_user(
+        caller,
+        username,
+        display_name=body.display_name,
+        is_admin=body.is_admin,
+        is_active=body.is_active,
+    )
+
+
+@auth.put("/users/{username}/password", status_code=204, tags=["admin"])
+def reset_password(username: str, body: PasswordIn, caller: Caller, server: Srv) -> Response:
+    server.reset_password(caller, username, body.password)
+    return Response(status_code=204)
 
 
 # --------------------------------------------------------------- projects --
@@ -312,6 +412,13 @@ def list_projects(caller: Caller, server: Srv) -> list[dict[str, Any]]:
     return server.list_projects(caller)
 
 
+@projects.get("/project-sources", tags=["admin"])
+def project_sources(caller: Caller, server: Srv) -> dict[str, Any]:
+    """Where a project can be registered from: Git, and the directories under
+    ``AI_CODING_SERVER_ALLOWED_ROOTS`` (instance admins)."""
+    return server.project_sources(caller)
+
+
 @projects.post("/projects", status_code=201)
 async def create_project(
     request: Request,
@@ -321,16 +428,62 @@ async def create_project(
     *,
     idempotency_key: Annotated[str | None, Header()] = None,
 ) -> dict[str, Any]:
-    """Register a project (instance admins); idempotent with ``Idempotency-Key``."""
+    """Register a project from a Git URL or a server directory; the caller becomes its
+    owner. Idempotent with ``Idempotency-Key``."""
     server = server_of(request)
 
     def produce() -> tuple[int, dict[str, Any]]:
         pid = server.create_project(
-            caller, body.name, git_url=body.git_url, branch=body.branch, path=body.path
+            caller,
+            body.name,
+            git_url=body.git_url,
+            branch=body.branch,
+            path=body.path,
+            git_token=body.git_token,
         )
         return 201, server.get_project(caller, pid)
 
     return await idempotent_call(request, response, caller, idempotency_key, produce)
+
+
+UPLOAD_PATH = f"{API}/projects/upload"
+_TAR_TYPES = {"application/x-tar", "application/tar", "application/octet-stream"}
+
+
+@projects.post("/projects/upload", status_code=201)
+async def upload_project(
+    request: Request,
+    caller: Caller,
+    name: Annotated[str, Query(min_length=1, max_length=100)],
+    content_type: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
+    """Register a project from a folder uploaded from the caller's computer.
+
+    The body is an **uncompressed tar** of the folder (``Content-Type:
+    application/x-tar``), at most ``AI_CODING_SERVER_MAX_UPLOAD_MB``. The files become
+    the first commit of a new Git repository; the caller becomes the owner.
+    """
+    server = server_of(request)
+    if (content_type or "").split(";")[0].strip().lower() not in _TAR_TYPES:
+        raise UnsupportedMediaTypeError("send the folder as an uncompressed tar archive")
+    await run_in_threadpool(server.check_new_project, caller, name)  # before the body
+    limit = server.settings.max_upload_bytes
+    uploads = server.settings.data_dir / "uploads"
+    await run_in_threadpool(uploads.mkdir, parents=True, exist_ok=True)
+    fd, name_on_disk = tempfile.mkstemp(suffix=".tar", dir=uploads)
+    archive = Path(name_on_disk)
+    try:
+        size = 0
+        with os.fdopen(fd, "wb") as out:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > limit:  # also without Content-Length (chunked)
+                    raise TooLargeError(f"the folder is larger than {limit / 2**20:g} MB")
+                await run_in_threadpool(out.write, chunk)
+        pid = await run_in_threadpool(server.create_uploaded_project, caller, name, archive)
+        return await run_in_threadpool(server.get_project, caller, pid)
+    finally:
+        archive.unlink(missing_ok=True)
 
 
 @projects.get("/projects/{project_id}")
@@ -478,6 +631,259 @@ def download_artifact(
     )
 
 
+# ---------------------------------------------------------------- insights --
+insights = APIRouter(prefix=API)
+Filter = Annotated[str | None, Query(max_length=200)]  # empty or unknown: matches nothing
+
+
+@insights.get("/agents", tags=["agents"])
+def agents(_caller: Caller, server: Srv) -> list[dict[str, Any]]:
+    """The agents of ТЗ §6: inputs, outputs, LLM, capabilities, allowed tools."""
+    return server.agents()
+
+
+@insights.get("/runs", tags=["runs"])
+def all_runs(
+    caller: Caller, server: Srv, *, limit: Annotated[int, Query(ge=1)] = 50,
+    state: Filter = None, kind: Filter = None, project_id: Filter = None,
+) -> list[dict[str, Any]]:  # fmt: skip
+    """Runs of every project the caller may view, newest first (at most 200)."""
+    return server.all_runs(caller, limit=limit, state=state, kind=kind, project_id=project_id)
+
+
+@insights.get("/findings", tags=["projects"])
+def all_findings(
+    caller: Caller, server: Srv, *, limit: Annotated[int, Query(ge=1)] = 500,
+    severity: Filter = None, status: Filter = None, source: Filter = None,
+    project_id: Filter = None, run_id: Filter = None,
+) -> list[dict[str, Any]]:  # fmt: skip
+    """Findings of every project the caller may view, newest first (at most 2000)."""
+    return server.all_findings(caller, limit=limit, severity=severity, status=status,
+                               source=source, project_id=project_id, run_id=run_id)  # fmt: skip
+
+
+@insights.get("/projects/{project_id}/agent-executions", tags=["runs"])
+def agent_executions(
+    project_id: uuid.UUID, caller: Caller, server: Srv, limit: Annotated[int, Query(ge=1)] = 100
+) -> list[dict[str, Any]]:
+    """Attempts of the project's tasks with their LLM tokens, cost and models (at most 500)."""
+    return server.agent_executions(caller, project_id, limit=limit)
+
+
+@insights.get("/projects/{project_id}/usage", tags=["runs"])
+def usage(
+    project_id: uuid.UUID,
+    caller: Caller,
+    server: Srv,
+    days: Annotated[int, Query(ge=1, le=365)] = 30,
+) -> dict[str, Any]:
+    """LLM tokens and cost of the project's runs: totals, per model, per UTC day."""
+    return server.usage(caller, project_id, days=days)
+
+
+@insights.get("/system", tags=["admin"])
+def system(request: Request, caller: Caller, server: Srv) -> dict[str, Any]:
+    """Version, database, queue, runs, workers and analysers' offline data (administrators)."""
+    return server.system_status(caller, workspaces=request.app.state.broker is not None)
+
+
+# --------------------------------------------------------------- workspace --
+workspace = APIRouter(prefix=API, tags=["workspace"])
+Scope = Annotated[Literal["workspace", "project"], Query()]
+FilePath = Annotated[str, Query(max_length=4096)]
+
+
+def broker_of(request: Request) -> Broker:
+    broker: Broker | None = request.app.state.broker
+    if broker is None:
+        raise UnavailableError("workspace terminals are disabled (AI_CODING_SERVER_WORKSPACES)")
+    return broker
+
+
+@workspace.get("/projects/{project_id}/workspace")
+def workspace_info(project_id: uuid.UUID, caller: Caller, server: Srv) -> dict[str, Any]:
+    """Whether the caller has a workspace in the project and may edit."""
+    return server.workspace_info(caller, project_id)
+
+
+@workspace.post("/projects/{project_id}/workspace", status_code=201)
+def open_workspace(project_id: uuid.UUID, caller: Caller, server: Srv) -> dict[str, Any]:
+    """The caller's own clone of the project, for the editor and the terminal."""
+    return server.create_workspace(caller, project_id)
+
+
+@workspace.get("/projects/{project_id}/files")
+def list_files(
+    project_id: uuid.UUID, caller: Caller, server: Srv, path: FilePath = "",
+    scope: Scope = "workspace",
+) -> list[dict[str, Any]]:  # fmt: skip
+    """A directory of the caller's workspace, or (read-only) of the project."""
+    return server.list_files(caller, project_id, path, scope)
+
+
+@workspace.get("/projects/{project_id}/file")
+def read_file(
+    project_id: uuid.UUID, caller: Caller, server: Srv, path: FilePath = "",
+    scope: Scope = "workspace",
+) -> dict[str, Any]:  # fmt: skip
+    return server.read_file(caller, project_id, path, scope)
+
+
+@workspace.put("/projects/{project_id}/file")
+def write_file(
+    project_id: uuid.UUID, body: FileIn, caller: Caller, server: Srv, path: FilePath = ""
+) -> dict[str, Any]:
+    """Save a file of the caller's workspace (409 if it changed since it was loaded)."""
+    return server.write_file(caller, project_id, path, body.content, body.version,
+                             create=body.create)  # fmt: skip
+
+
+@workspace.delete("/projects/{project_id}/file", status_code=204)
+def delete_file(
+    project_id: uuid.UUID, caller: Caller, server: Srv, path: FilePath = ""
+) -> Response:
+    server.delete_file(caller, project_id, path)
+    return Response(status_code=204)
+
+
+async def _workspace_git(
+    request: Request,
+    caller: Principal,
+    project_id: uuid.UUID,
+    op: str,
+    message: str | None = None,
+    **extra: str | None,
+) -> tuple[WorkspaceRef, GitOutcome]:
+    server = server_of(request)
+    ref = await run_in_threadpool(server.workspace_ref, caller, project_id)
+    return ref, await broker_of(request).git(ref, op, message, **extra)
+
+
+@workspace.post("/projects/{project_id}/workspace/restart")
+async def restart_workspace(
+    project_id: uuid.UUID, request: Request, caller: Caller
+) -> dict[str, str]:
+    """Stop the caller's workspace container (a new one starts on the next use, from the
+    current image). Running agents and terminals end; files and sign-ins are kept."""
+    server = server_of(request)
+    ref = await run_in_threadpool(server.workspace_ref, caller, project_id)
+    await broker_of(request).stop(ref)
+    await run_in_threadpool(server.record_terminal, caller, project_id, "workspace.restart")
+    return {"status": "restarted"}
+
+
+@workspace.get("/projects/{project_id}/workspace/git")
+async def git_status(project_id: uuid.UUID, request: Request, caller: Caller) -> dict[str, Any]:
+    """Branch and changed files of the caller's workspace."""
+    _, outcome = await _workspace_git(request, caller, project_id, "status")
+    if not outcome.ok:
+        raise InvalidError(outcome.output.strip() or "git status failed")
+    return parse_status(outcome.output)
+
+
+@workspace.post("/projects/{project_id}/workspace/commit")
+async def git_commit(
+    project_id: uuid.UUID, body: CommitIn, request: Request, caller: Caller
+) -> dict[str, Any]:
+    """Commit every change of the workspace on its current branch (``staged_only``: the
+    changes accepted in the review alone)."""
+    op = "commit_staged" if body.staged_only else "commit"
+    _, outcome = await _workspace_git(request, caller, project_id, op, body.message)
+    return {"ok": outcome.ok, "output": outcome.output, "branch": outcome.branch}
+
+
+@workspace.get("/projects/{project_id}/workspace/diff")
+async def workspace_diff(project_id: uuid.UUID, request: Request, caller: Caller) -> dict[str, Any]:
+    """The workspace's changes for review: accepted (index) and pending (working tree and
+    new files), parsed into files and hunks (ADR-0040)."""
+    _, outcome = await _workspace_git(request, caller, project_id, "diff")
+    if not outcome.ok:
+        raise InvalidError(outcome.output.strip() or "git diff failed")
+    texts = json.loads(outcome.output)
+    return review_payload(texts["staged"], texts["unstaged"], texts["untracked"])
+
+
+@workspace.post("/projects/{project_id}/workspace/review")
+async def workspace_review(
+    project_id: uuid.UUID, body: ReviewIn, request: Request, caller: Caller
+) -> dict[str, Any]:
+    """Accept (stage), reject (revert) or send back (unstage) a hunk; accept or reject a
+    new file. A hunk that no longer applies (the file changed meanwhile) is refused."""
+    server = server_of(request)
+    # Access first (another project's id gets 403/404, never a validation message).
+    ref = await run_in_threadpool(server.workspace_ref, caller, project_id)
+    try:
+        target = validate_path(body.path) if body.action in PATH_OPS else validate_patch(body.patch)
+    except ValueError as exc:
+        raise InvalidError(str(exc)) from exc
+    outcome = await broker_of(request).git(ref, body.action, patch=body.patch, path=body.path)
+    if not outcome.ok:
+        raise ConflictError(outcome.output.strip()[-1000:] or "the change no longer applies")
+    path = target if body.action in PATH_OPS else patch_path(target)
+    await run_in_threadpool(server.record_review, caller, project_id, body.action, path)
+    return {"ok": True, "output": outcome.output}
+
+
+@workspace.post("/projects/{project_id}/workspace/pull")
+async def git_pull(project_id: uuid.UUID, request: Request, caller: Caller) -> dict[str, Any]:
+    """Fetch the project repository and fast-forward the workspace branch."""
+    _, outcome = await _workspace_git(request, caller, project_id, "pull")
+    return {"ok": outcome.ok, "output": outcome.output, "branch": outcome.branch}
+
+
+@workspace.post("/projects/{project_id}/workspace/publish")
+async def git_publish(project_id: uuid.UUID, request: Request, caller: Caller) -> dict[str, Any]:
+    """Copy the workspace branch into the project repository as ``ws/<user>/<branch>``."""
+    _, outcome = await _workspace_git(request, caller, project_id, "bundle")
+    if outcome.bundle is None or outcome.branch is None:
+        raise InvalidError(outcome.output.strip() or "nothing to publish")
+    server = server_of(request)
+    return await run_in_threadpool(server.publish_bundle, caller, project_id, outcome.bundle,
+                                   outcome.branch)  # fmt: skip
+
+
+@workspace.websocket("/projects/{project_id}/workspace/terminal")
+async def workspace_terminal(websocket: WebSocket, project_id: uuid.UUID) -> None:
+    """The caller's terminal in their workspace (protocol: :mod:`ai_coding.api.terminal`)."""
+    await _workspace_socket(websocket, project_id, chat=False)
+
+
+@workspace.websocket("/projects/{project_id}/workspace/chat")
+async def workspace_chat(websocket: WebSocket, project_id: uuid.UUID) -> None:
+    """The caller's AI chat (Claude Code, Codex) running in their workspace container."""
+    await _workspace_socket(websocket, project_id, chat=True)
+
+
+async def _workspace_socket(websocket: WebSocket, project_id: uuid.UUID, *, chat: bool) -> None:
+    await websocket.accept()
+    server: Server = websocket.app.state.server
+    try:
+        first = await first_message(websocket)
+        found, ref = await _workspace_caller(websocket, server, project_id, first)
+        broker: Broker = websocket.app.state.broker
+        session = await (broker.chat(ref) if chat else broker.attach(ref, *terminal_size(first)))
+    except (ApiError, BrokerError, ValueError, TypeError, TimeoutError) as exc:
+        await refuse(websocket, getattr(exc, "message", None) or str(exc) or "refused")
+        return
+    action = "workspace.chat.open" if chat else "workspace.terminal.open"
+    await run_in_threadpool(server.record_terminal, found, project_id, action)
+    await (chat_bridge(websocket, session) if chat else bridge(websocket, session))
+
+
+async def _workspace_caller(
+    websocket: WebSocket, server: Server, project_id: uuid.UUID, first: dict[str, Any]
+) -> tuple[Principal, WorkspaceRef]:
+    """Authenticate the first message and check the caller's role in the project."""
+    found = await run_in_threadpool(server.authenticate, str(first.get("token", "")))
+    if found is None:
+        raise UnauthorizedError("missing or invalid API token")
+    if websocket.app.state.limiter.check(f"user:{found.user_id}") is not None:
+        raise ApiError("too many requests")
+    if websocket.app.state.broker is None:
+        raise UnavailableError("workspace terminals are disabled")
+    return found, await run_in_threadpool(server.workspace_ref, found, project_id)
+
+
 _HTTP_CODES = {
     400: "bad_request",
     401: "unauthorized",
@@ -514,30 +920,37 @@ def create_app(
     ui_dir: Path | None = None,
     run_worker: bool = False,
     multi_process: bool = False,
+    broker: Broker | Literal["auto"] | None = "auto",
 ) -> FastAPI:
     """The API application bound to ``server`` (and the Web UI, when built).
 
     ``run_worker`` runs a worker pool inside the API process (small installations);
     larger ones run ``ai-coding server worker`` processes separately. ``multi_process``:
     this is one of several API processes on the same database (``serve --workers N``).
+    ``broker`` drives the workspace terminals (default: from ``AI_CODING_SERVER_WORKSPACES``).
     """
     settings = server.settings
     metrics = Metrics(server)
+    terminals = make_broker(settings) if broker == "auto" else broker
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        if not run_worker:
-            yield
-            return
-        from ai_coding.api.worker import Worker  # noqa: PLC0415 - only when embedded
-
         stop = asyncio.Event()
-        task = asyncio.create_task(Worker(server, metrics=metrics).run(stop))
+        tasks = []
+        if terminals is not None:  # removes idle workspace containers
+            tasks.append(asyncio.create_task(terminals.run(stop)))
+            # The orchestrator as tools of the chat agents (ADR-0038).
+            tasks.append(asyncio.create_task(AgentBridge(server).run(stop)))
+        if run_worker:
+            from ai_coding.api.worker import Worker  # noqa: PLC0415 - only when embedded
+
+            tasks.append(asyncio.create_task(Worker(server, metrics=metrics).run(stop)))
         try:
             yield
         finally:
             stop.set()
-            await task
+            for task in tasks:
+                await task
 
     app = FastAPI(
         lifespan=lifespan,
@@ -548,6 +961,7 @@ def create_app(
         redoc_url=None,
     )
     app.state.server = server
+    app.state.broker = terminals
     shared = shared_rate_limits(
         settings.rate_limit_backend, is_sqlite=server.db.is_sqlite, multi_process=multi_process
     )
@@ -560,7 +974,7 @@ def create_app(
     app.state.metrics = metrics
     _install_handlers(app)
     app.middleware("http")(_guard)
-    for router in (ops, auth, projects, runs):
+    for router in (ops, auth, projects, runs, insights, workspace):
         app.include_router(router)
     if ui_dir is not None and (ui_dir / "index.html").is_file():
         app.mount("/", StaticFiles(directory=ui_dir, html=True), name="ui")
@@ -572,7 +986,9 @@ async def _guard(request: Request, call_next: Callable[[Request], Awaitable[Resp
     settings = server_of(request).settings
     started = time.perf_counter()
     length = request.headers.get("content-length")
-    if length and length.isdigit() and int(length) > settings.max_request_bytes:
+    upload = request.method == "POST" and request.url.path == UPLOAD_PATH
+    limit = settings.max_upload_bytes if upload else settings.max_request_bytes
+    if length and length.isdigit() and int(length) > limit:
         response: Response = error_response(413, "too_large", "request body too large")
     else:
         response = await call_next(request)
@@ -608,6 +1024,10 @@ def _install_handlers(app: FastAPI) -> None:
         if exc.status == 401:
             response.headers["WWW-Authenticate"] = "Bearer"
         return response
+
+    @app.exception_handler(BrokerError)
+    async def workspace_failed(_request: Request, exc: BrokerError) -> JSONResponse:
+        return error_response(503, "unavailable", str(exc))
 
     @app.exception_handler(RateLimitedError)
     async def limited(_request: Request, exc: RateLimitedError) -> JSONResponse:

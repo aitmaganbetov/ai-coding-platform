@@ -244,13 +244,17 @@ class Worker:
             s.expunge(project)
             state = RunState(run.state)
             kind, params = run.options.get("kind"), run.options.get("params") or {}
+            source = run.options.get("source")
             actor = run.requested_by
         if state in TERMINAL_STATES:
             return
         if not kind:
             raise RuntimeError(f"run {job.run_id} has no server run kind")
         orch, config = self.server.orchestrator(project, actor=actor)
-        (registry, _steps), _ = build_kind(str(kind), orch.project_root, config, params)
+        if source:  # a workspace snapshot (ADR-0038): checked again, it is a path
+            orch.source_root = self.server.run_source(project.id, str(source))
+        root = orch.source_root or orch.project_root
+        (registry, _steps), _ = build_kind(str(kind), root, config, params)
         orch.registry = registry
         orch.lease_ttl = self.lease_seconds
         if state is RunState.CREATED and job.kind == "execute":

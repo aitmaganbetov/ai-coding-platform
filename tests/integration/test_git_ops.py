@@ -71,6 +71,43 @@ def test_clone_shallow_and_guards(git_repo: LocalGitRepository, tmp_path: Path) 
     assert full.head_commit() == git_repo.head_commit()
 
 
+def test_clone_with_a_token_keeps_it_out_of_argv_and_config(
+    tmp_path: Path, git_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A private repository's token reaches git through its environment only."""
+    from ai_coding.git import local  # noqa: PLC0415
+
+    with pytest.raises(InvalidRefError, match="https"):
+        LocalGitRepository.clone("git@github.com:org/repo.git", tmp_path / "x", token="t0ken")
+    seen: dict[str, object] = {}
+
+    def fake_run(args: list[str], cwd: Path, **kw: object) -> None:
+        seen["args"], seen["env"] = args, kw.get("extra_env")
+        (tmp_path / "clone").mkdir()
+
+    monkeypatch.setattr(local, "_run", fake_run)
+    LocalGitRepository.clone("https://github.com/org/private.git", tmp_path / "clone",
+                             token="t0ken")  # fmt: skip
+    assert not any("t0ken" in a for a in seen["args"])  # type: ignore[attr-defined]
+    env = seen["env"]
+    assert isinstance(env, dict) and env["GIT_CONFIG_KEY_0"] == "http.extraHeader"
+    assert env["GIT_CONFIG_VALUE_0"].startswith("AUTHORIZATION: basic ")
+
+
+def test_commit_imported_tree(tmp_path: Path, git_env: None) -> None:
+    repo = LocalGitRepository.init(tmp_path / "imported")
+    (repo.root / "a.py").write_text("x = 1\n", encoding="utf-8")
+    sha = repo.commit_imported_tree("Import", author=("alice", "alice@example.invalid"))
+    log = subprocess.run(["git", "log", "--format=%an <%ae> %cn", "main"], cwd=repo.root,
+                         capture_output=True, text=True, check=True).stdout.strip()  # fmt: skip
+    assert sha == repo.head_commit() and log == "alice <alice@example.invalid> alice"
+    assert repo.list_files("main") == ["a.py"]
+    with pytest.raises(GitCommandError, match="already has commits"):
+        repo.commit_imported_tree("again", author=("a", "a@example.invalid"))
+    with pytest.raises(GitCommandError, match="empty"):
+        LocalGitRepository.init(tmp_path / "new").commit_imported_tree(" ", author=("a", "b"))
+
+
 def test_clone_failure_is_reported(tmp_path: Path, git_env: None) -> None:
     with pytest.raises(GitCommandError):
         LocalGitRepository.clone((tmp_path / "missing.git").as_uri(), tmp_path / "x",

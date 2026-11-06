@@ -253,15 +253,24 @@ def _res(code: int, out: str, **kw: object) -> ExecutionResult:
     )  # type: ignore[arg-type]
 
 
-async def test_runner_sandbox_mounts_and_semgrep_config(tmp_path: Path) -> None:
+async def test_runner_sandbox_mounts_and_semgrep_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AI_CODING_CACHE_DIR", str(tmp_path / "cache"))
     ex = FakeExecutor(results={"scan": _res(0, SEMGREP_OUT)})
-    run = await ToolRunner(ex, tmp_path).run(SemgrepAdapter())
+    run = await ToolRunner(ex, tmp_path / "src").run(SemgrepAdapter())
     assert run.succeeded and run.version == "1.2.3" and len(run.findings) == 2
     scan = ex.specs[-1]
     assert scan.image == SemgrepAdapter.spec.image and scan.workdir == "/src"
     assert {m.target for m in scan.mounts} == {"/src", "/rules"}
     assert all(m.read_only for m in scan.mounts)
     assert "/rules/ai-coding-baseline.yml" in scan.argv
+    # The rules are mounted from the platform cache (a path of the Docker host in a
+    # containerised worker), not from the installed package.
+    (rules,) = [m.source for m in scan.mounts if m.target == "/rules"]
+    assert Path(rules).is_relative_to(tmp_path / "cache" / "semgrep-rules")
+    bundled = bundled_rules_dir() / "ai-coding-baseline.yml"
+    assert (Path(rules) / "ai-coding-baseline.yml").read_bytes() == bundled.read_bytes()
     assert run.to_dict()["findings"][0]["path"] == "app/main.py"
     assert ToolRun.from_dict(run.to_dict(include_raw=True)) == run
 

@@ -42,6 +42,7 @@ from ai_coding.security import default_redactor
 DEFAULT_TIMEOUT_SECONDS = 60.0
 DEFAULT_PROTECTED = ("main", "master", "release/*")
 _TRAILER_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9-]{0,63}$")
+_REMOTE_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,63}$")
 
 _SAFETY_CONFIG: tuple[str, ...] = (
     "-c", "core.fsmonitor=false",
@@ -141,6 +142,7 @@ class LocalGitRepository:
         depth: int | None = 1,
         timeout: float = 600.0,
         allow_file_protocol: bool = False,
+        token: str | None = None,
         **kwargs: object,
     ) -> LocalGitRepository:
         """Clone a remote repository into an empty/new directory (FR-01).
@@ -149,7 +151,11 @@ class LocalGitRepository:
         ``file://``, local paths and ``ext::`` transports are refused. Submodules are not
         fetched, hooks never run, and no credentials are prompted for.
         ``allow_file_protocol`` exists for offline tests and mirrors; the CLI never sets it.
+        ``token`` (a private HTTPS repository) reaches git through its environment only:
+        it is in neither argv nor the clone's ``.git/config``.
         """
+        if token is not None and not url.lower().startswith("https://"):
+            raise InvalidRefError("an access token can only be used with an https:// URL")
         if allow_file_protocol and url.startswith("file://"):
             protocols = ["-c", "protocol.file.allow=always"]
         else:
@@ -173,7 +179,7 @@ class LocalGitRepository:
         if branch is not None:
             args += ["--branch", branch, "--single-branch"]
         args += ["--", url, str(target)]
-        _run(args, target.parent, timeout=timeout)
+        _run(args, target.parent, timeout=timeout, extra_env=_auth_env(token) if token else None)
         return cls(target, **kwargs)  # type: ignore[arg-type]
 
     @staticmethod
@@ -324,6 +330,55 @@ class LocalGitRepository:
         if not message.strip():
             raise GitCommandError(["commit"], 1, "commit message must not be empty")
         self._git("commit", "--quiet", "--no-verify", "--allow-empty", "-m", message)
+        sha = self.head_commit()
+        if sha is None:  # pragma: no cover
+            raise GitCommandError(["commit"], 1, "HEAD missing after commit")
+        return sha
+
+    def set_remote(self, name: str, url: str | None) -> None:
+        """Point remote ``name`` at ``url`` (added if missing); ``None`` removes it."""
+        if not _REMOTE_NAME.match(name):
+            raise InvalidRefError(f"invalid remote name {name!r}")
+        exists = name in self._git("remote").stdout.split()
+        if url is None:
+            if exists:
+                self._git("remote", "remove", name)
+            return
+        if url.startswith("-") or any(c in url for c in "\0\n\r"):
+            raise InvalidRefError(f"invalid remote URL {url!r}")
+        self._git("remote", "set-url" if exists else "add", "--", name, url)
+
+    def fetch_bundle(self, bundle: Path, source_branch: str, target_branch: str) -> str:
+        """Store branch ``source_branch`` of a git bundle file as ``target_branch`` here
+        (forced: the target belongs to whoever sends the bundle); returns its commit.
+
+        A bundle is plain data: unlike fetching from another repository, git reads no
+        configuration of the sender, so a repository the sender controls cannot make this
+        process run anything.
+        """
+        validate_branch_name(source_branch)
+        validate_branch_name(target_branch)
+        self._git("bundle", "verify", "--quiet", str(bundle))
+        spec = f"+refs/heads/{source_branch}:refs/heads/{target_branch}"
+        self._git("fetch", "--quiet", "--no-tags", "--", str(bundle), spec)
+        return self.rev_parse(target_branch)
+
+    def commit_imported_tree(self, message: str, *, author: tuple[str, str]) -> str:
+        """First commit of a brand-new repository holding its whole working tree (a
+        project imported from files); ``author`` is (name, email), also the committer.
+
+        Like :meth:`create_root_commit`, refused once the repository has commits.
+        """
+        if self.head_commit() is not None:
+            raise GitCommandError(["commit"], 1, "repository already has commits")
+        if not message.strip():
+            raise GitCommandError(["commit"], 1, "commit message must not be empty")
+        name, email = author
+        identity = {"GIT_AUTHOR_NAME": name, "GIT_AUTHOR_EMAIL": email,
+                    "GIT_COMMITTER_NAME": name, "GIT_COMMITTER_EMAIL": email}  # fmt: skip
+        self._git("add", "--all")
+        _run(["commit", "--quiet", "--no-verify", "--allow-empty", "-m", message], self._root,
+             timeout=self._timeout, extra_env=identity)  # fmt: skip
         sha = self.head_commit()
         if sha is None:  # pragma: no cover
             raise GitCommandError(["commit"], 1, "HEAD missing after commit")

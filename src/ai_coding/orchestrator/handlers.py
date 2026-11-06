@@ -75,11 +75,11 @@ class GitDiscoveryHandler(_Builtin):
     def _inspect(ctx: StepContext) -> dict[str, Any]:
         if not git_available():
             return {"is_repository": False, "reason": "git not installed"}
-        if not LocalGitRepository.is_repository(ctx.project_root):
+        if not LocalGitRepository.is_repository(ctx.tree):
             return {"is_repository": False, "reason": "not a git working tree"}
         try:
             repo = LocalGitRepository.open(
-                ctx.project_root, protected_branches=ctx.config.project.protected_branches
+                ctx.tree, protected_branches=ctx.config.project.protected_branches
             )
             status = repo.status()
             remote = repo.remote_url()
@@ -105,7 +105,7 @@ class StackDiscoveryHandler(_Builtin):
     capabilities = frozenset({"discovery.stacks"})
 
     async def run(self, ctx: StepContext) -> StepResult:
-        evidence = await asyncio.to_thread(detect_stacks, ctx.project_root)
+        evidence = await asyncio.to_thread(detect_stacks, ctx.tree)
         detected = [e.stack.value for e in evidence]
         configured = [s.value for s in ctx.config.stacks]
         return StepResult(
@@ -127,7 +127,7 @@ class ContextIndexHandler(_Builtin):
     capabilities = frozenset({"discovery.context"})
 
     async def run(self, ctx: StepContext) -> StepResult:
-        manager = ContextManager(ctx.project_root)
+        manager = ContextManager(ctx.tree)
         index = await asyncio.to_thread(manager.build_index)
         extensions = Counter(PurePosixPath(p).suffix or "<none>" for p in index)
         return StepResult(

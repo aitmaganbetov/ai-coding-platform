@@ -104,7 +104,7 @@ class SnapshotHandler(_Handler):
     capabilities = frozenset({"audit.snapshot"})
 
     async def run(self, ctx: StepContext) -> StepResult:
-        digest, files = await asyncio.to_thread(snapshot_digest, ctx.project_root)
+        digest, files = await asyncio.to_thread(snapshot_digest, ctx.tree)
         return StepResult(output={"digest": digest, "files": files})
 
 
@@ -145,7 +145,7 @@ class ToolScanHandler(_Handler):
             if isinstance(self.adapter, ProjectTool):
                 docker = ctx.config.execution.docker
                 project = ProjectToolRunner(
-                    self.runner.executor, ctx.project_root,
+                    self.runner.executor, ctx.tree,
                     network_allowed=lambda host: ctx.policy.network(host).allowed,
                     sandbox_network=docker.network == "bridge",
                     timeout_seconds=self.runner.timeout,
@@ -179,7 +179,7 @@ class SuppressionsHandler(_Handler):
     capabilities = frozenset({"audit.suppressions"})
 
     async def run(self, ctx: StepContext) -> StepResult:
-        return StepResult(output=await asyncio.to_thread(scan_suppressions, ctx.project_root))
+        return StepResult(output=await asyncio.to_thread(scan_suppressions, ctx.tree))
 
 
 TRIAGE_MAX_FINDINGS = 100
@@ -254,7 +254,7 @@ class TriageHandler(_Handler):
         if not findings:
             return StepResult(output={"status": "skipped", "reason": "no new findings"})
         stacks = ctx.dependencies.get("discover.stacks", {}).get("effective", [])
-        inputs = triage_inputs(ctx.project_root, findings, [str(s) for s in stacks])
+        inputs = triage_inputs(ctx.tree, findings, [str(s) for s in stacks])
         try:
             agent_ctx, result = await run_agent(ctx, SecurityAgent(), inputs)
         except (ApprovalRequiredError, BudgetExceededError):
@@ -301,7 +301,7 @@ class IntegrityHandler(_Handler):
 
     async def run(self, ctx: StepContext) -> StepResult:
         before = ctx.dependencies["audit.snapshot"]["digest"]
-        after, files = await asyncio.to_thread(snapshot_digest, ctx.project_root)
+        after, files = await asyncio.to_thread(snapshot_digest, ctx.tree)
         if after != before:
             raise PermanentError(
                 "the working tree changed during a read-only audit (FR-06); "

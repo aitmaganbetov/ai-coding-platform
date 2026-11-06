@@ -5,6 +5,12 @@ ARG PYTHON_IMAGE=mirror.gcr.io/library/python@sha256:da54eb86849fe19be7584d8b3f2
 
 ARG NODE_IMAGE=mirror.gcr.io/library/node@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d
 
+# docker 28.5.2-cli: a static Docker CLI. Debian's docker.io (20.10, API 1.41) is rejected
+# by Docker Engine >= 29, whose minimum API version is 1.44.
+ARG DOCKER_CLI_IMAGE=mirror.gcr.io/library/docker@sha256:625d9431a9f54c5a2bc90f24f0e1c3d55b1349fd857dd85035f98c2c9acbdd4d
+
+FROM ${DOCKER_CLI_IMAGE} AS docker-cli
+
 FROM ${NODE_IMAGE} AS web
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
@@ -26,10 +32,11 @@ LABEL org.opencontainers.image.title="ai-coding-platform" \
 # git: cloning project repositories; docker CLI (workers only) talks to the daemon
 # that starts the sandboxes — the sandboxes themselves never get the socket.
 RUN apt-get update \
- && apt-get install --no-install-recommends -y git ca-certificates docker.io \
+ && apt-get install --no-install-recommends -y git ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --gid 10001 aicoding \
  && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin aicoding
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=build /dist/*.whl /tmp/
 COPY --from=web /web/dist /opt/ai-coding/ui
 RUN python -m pip install --no-cache-dir --disable-pip-version-check \

@@ -40,3 +40,8 @@
 | [0033](0033-sandbox-egress-and-e2e-tools.md) | Egress-allowlist песочницы (прокси, internal-сеть, защита от SSRF), Playwright и k6 для проектов | Принято | S9 |
 | [0034](0034-server-scaling-and-isolation.md) | Масштабирование и изоляция сервера: процессы API, общий rate limiter, пул БД, rootless или удалённый Docker, S3 | Принято | S9 |
 | [0035](0035-runtime-isolation-and-release.md) | Изоляция выполнения (gVisor, Job Objects Windows) и процесс релиза (SBOM, Sigstore, SLSA) | Принято | S9 |
+| [0036](0036-workspaces-and-browser-terminal.md) | Рабочие области и терминал в браузере: Claude Code и Codex на подписках пользователей, изоляция, git только в контейнере | Принято | — |
+| [0037](0037-ai-chat-agents.md) | Чат с ИИ в рабочей области: Claude Code (stream-json) и Codex (app-server) в фоне, разрешения и вход как в VS Code | Принято | — |
+| [0040](0040-ai-changes-review.md) | AI Changes Review: изменения рабочей области по фрагментам — принять (индекс), отклонить (откат), коммит принятого; git в контейнере пользователя | Принято | — |
+| [0039](0039-nexus-web-ui.md) | Web UI «NEXUS Developer OS»: дизайн-токены и три темы, App Shell, командная палитра, разделы на реальных данных | Принято | — |
+| [0038](0038-orchestrator-tools-for-chat-agents.md) | Оркестратор как инструменты агентов чата: MCP-сервер `platform`, почтовый ящик рабочей области, аудит снимка ветки | Принято | — |

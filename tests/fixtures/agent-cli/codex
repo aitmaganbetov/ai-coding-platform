@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""Fake Codex CLI for the chat daemon tests: `codex login status` (not logged in) and
+`codex app-server` (JSON-RPC over stdio): a turn runs a command that needs approval."""
+import json
+import os
+import sys
+
+args = sys.argv[1:]
+if args[:2] == ["login", "status"]:
+    print("Not logged in")
+    sys.exit(1)
+assert args[:1] == ["app-server"], args
+
+
+def log(**entry):
+    if os.environ.get("FAKE_CLI_LOG"):
+        with open(os.environ["FAKE_CLI_LOG"], "a") as fh:
+            fh.write(json.dumps({"cli": "codex", **entry}) + "\n")
+
+
+def out(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+
+def read():
+    line = sys.stdin.readline()
+    return json.loads(line) if line else None
+
+
+initialized = False
+threads = 0
+while (msg := read()) is not None:
+    method, rid, params = msg.get("method"), msg.get("id"), msg.get("params") or {}
+    if method == "initialize":
+        initialized = True
+        out({"id": rid, "result": {"userAgent": "fake"}})
+    elif method == "initialized":
+        continue
+    elif not initialized:
+        out({"id": rid, "error": {"code": -32000, "message": "Not initialized"}})
+    elif method == "thread/start":
+        assert params["sandbox"] == "danger-full-access", params
+        assert "language of the user's most recent message" in params["developerInstructions"]
+        log(method=method, params=params)
+        threads += 1
+        out({"id": rid, "result": {"thread": {"id": f"th-{threads}"}}})
+        out({"method": "thread/started", "params": {"thread": {"id": f"th-{threads}"}}})
+    elif method == "account/login/start":
+        assert params == {"type": "chatgptDeviceCode"}, params
+        out({"id": rid, "result": {"type": "chatgptDeviceCode", "loginId": "l1",
+                                   "verificationUrl": "https://auth.openai.com/codex/device",
+                                   "userCode": "ABCD-1234"}})
+        out({"method": "account/login/completed", "params": {"loginId": "l1", "success": True}})
+    elif method == "turn/start":
+        assert params["sandboxPolicy"]["type"] == "externalSandbox", params
+        log(method=method, params=params)
+        tid = params["threadId"]
+        out({"id": rid, "result": {"turn": {"id": "tu-1", "status": "inProgress"}}})
+        out({"method": "turn/started", "params": {"threadId": tid, "turn": {"id": "tu-1"}}})
+        text = params["input"][0]["text"]
+        if text.startswith("elicit"):  # an MCP server asks before a tool call
+            server = text.split()[1]
+            out({"id": 901, "method": "mcpServer/elicitation/request", "params": {
+                "threadId": tid, "turnId": "tu-1", "serverName": server,
+                "message": "Allow start_task?", "mode": "form", "requestedSchema": {}}})
+            log(elicitation=read()["result"])
+            out({"method": "turn/completed", "params": {"threadId": tid, "turn": {
+                "id": "tu-1", "status": "completed", "durationMs": 1}}})
+            continue
+        command = "rm -rf build" if text.startswith("remove") else "ls -la"
+        item = {"type": "commandExecution", "id": "it-1", "command": command, "status": "inProgress"}
+        out({"method": "item/started", "params": {"threadId": tid, "turnId": "tu-1", "item": item,
+                                                  "startedAtMs": 1}})
+        out({"id": 900, "method": "item/commandExecution/requestApproval", "params": {
+            "threadId": tid, "turnId": "tu-1", "itemId": "it-1", "command": command,
+            "reason": "list files", "startedAtMs": 1}})
+        answer = read()
+        accepted = answer["result"]["decision"] in ("accept", "acceptForSession")
+        out({"method": "item/completed", "params": {"threadId": tid, "turnId": "tu-1", "item": {
+            **item, "status": "completed" if accepted else "declined",
+            "aggregatedOutput": "total 0\n" if accepted else "", "exitCode": 0 if accepted else None}}})
+        out({"method": "item/agentMessage/delta", "params": {"threadId": tid, "turnId": "tu-1",
+                                                             "itemId": "it-2", "delta": "Гото"}})
+        out({"method": "item/completed", "params": {"threadId": tid, "turnId": "tu-1", "item": {
+            "type": "agentMessage", "id": "it-2", "text": "Готово" if accepted else "Отменено"}}})
+        out({"method": "turn/completed", "params": {"threadId": tid, "turn": {
+            "id": "tu-1", "status": "completed", "durationMs": 7}}})
+    else:
+        out({"id": rid, "error": {"code": -32601, "message": f"unknown {method}"}})

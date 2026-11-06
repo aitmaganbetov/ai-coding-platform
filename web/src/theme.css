@@ -1,0 +1,253 @@
+/* NEXUS Developer OS — design tokens (the only place colours, sizes and motion are set).
+   Themes: Obsidian Dark (default), Arctic Light, Midnight OLED; "system" follows the OS.
+   The accent can be overridden by the user (--accent-primary, set on <html>). */
+
+:root,
+:root[data-theme="obsidian"] {
+  --bg-primary: #090b10;
+  --bg-secondary: #101319;
+  --bg-tertiary: #161b24;
+  --bg-elevated: #1c2230;
+  --bg-hover: #1a1f2a;
+  --bg-overlay: rgb(5 7 10 / 72%);
+
+  --border-primary: #252b37;
+  --border-secondary: #343c4d;
+
+  --text-primary: #f3f5f9;
+  --text-secondary: #9aa4b5;
+  --text-muted: #667085;
+
+  --accent-primary: #8b7cff;
+  --accent-hover: #a79cff;
+  --accent-cyan: #45d6e8;
+  --accent-contrast: #0b0912;
+
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #fb7185;
+  --info: #60a5fa;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+  --shadow-md: 0 8px 24px rgb(0 0 0 / 45%);
+  --shadow-lg: 0 24px 64px rgb(0 0 0 / 55%);
+  --glow: 0 0 0 1px color-mix(in srgb, var(--accent-primary) 45%, transparent),
+    0 0 24px color-mix(in srgb, var(--accent-primary) 18%, transparent);
+  color-scheme: dark;
+}
+
+:root[data-theme="arctic"] {
+  --bg-primary: #f6f7fb;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #eef1f6;
+  --bg-elevated: #ffffff;
+  --bg-hover: #e9edf4;
+  --bg-overlay: rgb(15 18 25 / 38%);
+
+  --border-primary: #dfe3ec;
+  --border-secondary: #c9d0dd;
+
+  --text-primary: #111827;
+  --text-secondary: #4b5565;
+  --text-muted: #6b7486;
+
+  --accent-primary: #6c5ce7;
+  --accent-hover: #5a49d6;
+  --accent-cyan: #0e9fb3;
+  --accent-contrast: #ffffff;
+
+  --success: #059669;
+  --warning: #b45309;
+  --danger: #e11d48;
+  --info: #2563eb;
+
+  --shadow-sm: 0 1px 2px rgb(16 24 40 / 6%);
+  --shadow-md: 0 8px 24px rgb(16 24 40 / 10%);
+  --shadow-lg: 0 24px 64px rgb(16 24 40 / 16%);
+  --glow: 0 0 0 1px color-mix(in srgb, var(--accent-primary) 40%, transparent),
+    0 0 18px color-mix(in srgb, var(--accent-primary) 14%, transparent);
+  color-scheme: light;
+}
+
+:root[data-theme="oled"] {
+  --bg-primary: #000000;
+  --bg-secondary: #06070a;
+  --bg-tertiary: #0c0e13;
+  --bg-elevated: #12151c;
+  --bg-hover: #0f1218;
+  --bg-overlay: rgb(0 0 0 / 80%);
+
+  --border-primary: #1a1e27;
+  --border-secondary: #272d3a;
+
+  --text-primary: #eef1f6;
+  --text-secondary: #8f99aa;
+  --text-muted: #5e6778;
+  color-scheme: dark;
+}
+
+:root {
+  /* Typography */
+  --font-sans: "Inter Variable", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --text-2xs: 10.5px;
+  --text-xs: 11.5px;
+  --text-sm: 12.5px;
+  --text-base: 13.5px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+  --leading: 1.5;
+
+  /* Space, radius, layout */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --sidebar-width: 232px;
+  --sidebar-collapsed: 56px;
+  --commandbar-height: 48px;
+  --copilot-width: 400px;
+
+  /* Motion */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --dur-slow: 320ms;
+
+  /* Layers */
+  --z-sidebar: 20;
+  --z-header: 30;
+  --z-drawer: 40;
+  --z-overlay: 50;
+  --z-toast: 60;
+
+  /* Semantic surfaces derived from the palette */
+  --accent-soft: color-mix(in srgb, var(--accent-primary) 14%, transparent);
+  --accent-border: color-mix(in srgb, var(--accent-primary) 45%, var(--border-primary));
+  --success-soft: color-mix(in srgb, var(--success) 14%, transparent);
+  --warning-soft: color-mix(in srgb, var(--warning) 14%, transparent);
+  --danger-soft: color-mix(in srgb, var(--danger) 14%, transparent);
+  --info-soft: color-mix(in srgb, var(--info) 14%, transparent);
+  --focus-ring: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--accent-primary);
+
+  /* Aliases kept for the pages written before NEXUS (Workspace, chat, terminal…). */
+  --bg: var(--bg-primary);
+  --fg: var(--text-primary);
+  --muted: var(--text-secondary);
+  --card: var(--bg-secondary);
+  --border: var(--border-primary);
+  --accent: var(--accent-primary);
+  --ok: var(--success);
+  --bad: var(--danger);
+  --warn: var(--warning);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur: 0ms;
+    --dur-slow: 0ms;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0ms !important;
+    transition-duration: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ------------------------------------------------------------------ base -- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading);
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+a {
+  color: var(--accent-primary);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--accent-hover);
+}
+code,
+kbd,
+pre,
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+h1 {
+  font-size: var(--text-xl);
+}
+h2 {
+  font-size: var(--text-lg);
+}
+h3 {
+  font-size: var(--text-md);
+}
+::selection {
+  background: color-mix(in srgb, var(--accent-primary) 35%, transparent);
+}
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-secondary);
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

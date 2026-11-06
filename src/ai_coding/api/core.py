@@ -62,6 +62,14 @@ class InvalidError(ApiError):
     status, code = 422, "invalid"
 
 
+class TooLargeError(ApiError):
+    status, code = 413, "too_large"
+
+
+class UnsupportedMediaTypeError(ApiError):
+    status, code = 415, "unsupported_media_type"
+
+
 @dataclass(frozen=True, slots=True)
 class Principal:
     """The authenticated caller."""

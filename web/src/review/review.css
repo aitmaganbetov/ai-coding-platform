@@ -1,0 +1,221 @@
+/* AI Changes Review: files, hunks, unified and side-by-side diffs. */
+
+.review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.review[aria-busy="true"] .hunk-body {
+  opacity: 0.7;
+}
+.review-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.review-title {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+  min-width: 0;
+}
+.review-title span {
+  font-size: var(--text-xs);
+}
+.review-warn {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: var(--text-sm);
+}
+.review-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.review-section-title {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.review-commit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.review-commit .input {
+  flex: 1;
+  min-width: 180px;
+}
+
+.rfile {
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  min-width: 0;
+  overflow: hidden;
+}
+.rfile.layer-accepted {
+  border-left: 3px solid var(--success);
+}
+.rfile.layer-pending,
+.rfile.layer-new {
+  border-left: 3px solid var(--warning);
+}
+.rfile-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px var(--space-2);
+  padding: 6px var(--space-2);
+  border-bottom: 1px solid var(--border-primary);
+  background: var(--bg-tertiary);
+}
+.rfile-toggle {
+  display: inline-flex;
+  padding: 2px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.rfile-path {
+  min-width: 0;
+  font: 500 var(--text-sm) / 1.3 var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.rfile-open {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.rfile-open:hover {
+  color: var(--accent-primary);
+  text-decoration: underline;
+}
+.rfile-stat {
+  font: 500 var(--text-xs) var(--font-mono);
+}
+.rfile-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.rfile-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+}
+.rfile-body > .btn {
+  margin: var(--space-2);
+}
+
+.hunk + .hunk {
+  border-top: 1px dashed var(--border-primary);
+}
+.hunk-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px var(--space-2) 2px var(--space-3);
+  background: color-mix(in srgb, var(--info) 7%, transparent);
+  min-width: 0;
+}
+.hunk-range {
+  color: var(--info);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+}
+.hunk-section {
+  font: var(--text-2xs) var(--font-mono);
+  color: var(--text-muted);
+  min-width: 0;
+}
+.hunk-body {
+  overflow-x: auto;
+}
+
+.diff-table {
+  width: 100%;
+  margin: 0;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font: var(--text-xs) / 1.55 var(--font-mono);
+}
+.diff-table td {
+  padding: 0 8px;
+  border: none;
+  vertical-align: top;
+}
+.diff-table .ln {
+  width: 46px;
+  text-align: right;
+  color: var(--text-muted);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+.diff-table.unified .sign {
+  width: 16px;
+  padding: 0;
+  text-align: center;
+  color: var(--text-muted);
+  user-select: none;
+}
+.diff-table .code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.diff-table.unified tr.add,
+.diff-table.split td.add {
+  background: color-mix(in srgb, var(--success) 13%, transparent);
+}
+.diff-table.unified tr.del,
+.diff-table.split td.del {
+  background: color-mix(in srgb, var(--danger) 13%, transparent);
+}
+.diff-table.unified tr.add .sign {
+  color: var(--success);
+}
+.diff-table.unified tr.del .sign {
+  color: var(--danger);
+}
+.diff-table tr.meta .code,
+.diff-table td.meta {
+  color: var(--text-muted);
+  font-style: italic;
+}
+.diff-table.split td.empty {
+  background: repeating-linear-gradient(135deg, transparent 0 6px, var(--bg-tertiary) 6px 7px);
+}
+.diff-table.split td.code:nth-child(2) {
+  border-right: 1px solid var(--border-primary);
+}
+@media (max-width: 480px) {
+  .diff-table .ln {
+    width: 32px;
+    padding: 0 4px;
+  }
+  .rfile-actions {
+    width: 100%;
+  }
+}

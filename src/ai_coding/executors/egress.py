@@ -122,6 +122,41 @@ async def egress_gateway(
                 await asyncio.to_thread(call, *args)
 
 
+async def start_gateway(
+    docker: str, name: str, allow: tuple[str, ...], env: Mapping[str, str]
+) -> Gateway:
+    """A long-lived gateway (a workspace terminal's) named after ``name``; removed by
+    :func:`stop_gateway`, by name, from any process."""
+    gateway = Gateway(network=f"{name}-net", proxy=f"{name}-egress")
+
+    def call(*args: str) -> str:
+        return _run(docker, env, *args)
+
+    try:
+        await asyncio.to_thread(call, "network", "create", "--internal",
+                                "--label", "ai-coding.egress=network", gateway.network)  # fmt: skip
+        await asyncio.to_thread(call, *proxy_argv(gateway.proxy, allow))
+        await asyncio.to_thread(call, "network", "connect", gateway.network, gateway.proxy)
+        address = await asyncio.to_thread(
+            call, "inspect", "--format",
+            f'{{{{(index .NetworkSettings.Networks "{gateway.network}").IPAddress}}}}',
+            gateway.proxy,
+        )  # fmt: skip
+        await _wait_ready(call, gateway.proxy)
+    except BaseException:
+        await stop_gateway(docker, name, env)
+        raise
+    gateway.route = (gateway.network, f"http://{address}:{PROXY_PORT}")
+    return gateway
+
+
+async def stop_gateway(docker: str, name: str, env: Mapping[str, str]) -> None:
+    """Remove the gateway of :func:`start_gateway` (missing parts are ignored)."""
+    for args in (("rm", "-f", f"{name}-egress"), ("network", "rm", f"{name}-net")):
+        with suppress(ExecutorError, subprocess.TimeoutExpired):
+            await asyncio.to_thread(_run, docker, env, *args)
+
+
 async def _wait_ready(call: Callable[..., str], proxy: str, timeout: float = 20.0) -> None:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout

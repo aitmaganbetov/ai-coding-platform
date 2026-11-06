@@ -51,6 +51,8 @@ server = [
     "argon2-cffi>=23.1,<26",
     "fastapi>=0.115,<1",
     "uvicorn>=0.32,<1",
+    # WebSockets for the browser terminal of the workspaces (uvicorn serves them with it).
+    "websockets>=17.3,<18",
 ]
 postgres = [
     "psycopg[binary]>=3.2,<4",
@@ -68,6 +70,7 @@ dev = [
   "import-linter>=2.1",
   "fastapi>=0.115,<1",
   "uvicorn>=0.32,<1",
+  "websockets>=17.3,<18",
   "argon2-cffi>=23.1,<26",
   "psycopg[binary]>=3.2,<4",
   "httpx2>=2.16,<3",

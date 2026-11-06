@@ -166,6 +166,7 @@ def delete_project(server: Server, principal: Principal, project_id: uuid.UUID) 
             target=project.name,
         )
     store.clear()
+    shutil.rmtree(server.settings.sources_dir / str(project_id), ignore_errors=True)
     managed = server.settings.projects_dir.resolve()
     if root.resolve().is_relative_to(managed):  # a clone the server made: remove it
         shutil.rmtree(root, ignore_errors=True)

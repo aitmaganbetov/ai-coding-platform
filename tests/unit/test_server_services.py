@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
@@ -167,8 +168,16 @@ def test_agent_tokens_are_project_scoped_and_short_lived(
 def test_project_creation_rules(server: Server, tmp_path: Path) -> None:
     admin = user(server, "admin", admin=True)
     alice = user(server, "alice")
-    with pytest.raises(ForbiddenError):
-        server.create_project(alice, "p1", path=make_repo(server, "p1"))
+    own = server.create_project(alice, "p1", path=make_repo(server, "p1"))  # any user
+    assert server.get_project(alice, own)["role"] == "owner"
+    everyone = server.settings
+    server.settings = replace(everyone, project_creators="admins")
+    try:
+        with pytest.raises(ForbiddenError):
+            server.create_project(alice, "p0", path=make_repo(server, "p0"))
+        assert server.can_create_projects(admin) and not server.can_create_projects(alice)
+    finally:
+        server.settings = everyone
     with pytest.raises(ForbiddenError, match="ALLOWED_ROOTS"):
         server.create_project(admin, "p2", path=str(tmp_path))
     with pytest.raises(InvalidError):

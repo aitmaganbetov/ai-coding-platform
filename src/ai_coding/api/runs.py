@@ -4,9 +4,11 @@ workers, status, approvals, cancellation, artifacts, findings and the audit trai
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 from typing import Any
 
-from sqlalchemy import ColumnElement, or_, select
+from sqlalchemy import ColumnElement, func, or_, select
+from sqlalchemy.orm import Session, aliased
 
 from ai_coding.api.core import (
     ConflictError,
@@ -29,12 +31,19 @@ from ai_coding.persistence.models import (
     Artifact,
     AuditEvent,
     Finding,
+    ModelUsage,
     Project,
     ProjectMember,
     Run,
     RunJob,
+    Task,
+    TaskDependency,
 )
 from ai_coding.persistence.types import utcnow
+
+# Kinds that only read the tree they examine: they may examine a workspace snapshot.
+SOURCE_KINDS = frozenset({"audit", "discover"})
+GATES_TASK = "quality.gates"  # the audit step whose output holds the Quality Gates
 
 
 class RunService(ProjectService):
@@ -63,26 +72,41 @@ class RunService(ProjectService):
         params: dict[str, Any],
         *,
         idempotency_key: str | None = None,
+        source: Path | None = None,
+        goal: str | None = None,
     ) -> uuid.UUID:
-        """Plan a run of ``kind`` and queue it for the workers."""
+        """Plan a run of ``kind`` and queue it for the workers.
+
+        ``source``: a workspace snapshot under :attr:`ServerSettings.sources_dir` the run
+        examines instead of the project's tree (read-only kinds only). Set by the server
+        (the chat agents' bridge, ADR-0038), never taken from request parameters.
+        """
         spec = KINDS.get(kind)
         if spec is None:
             raise InvalidError(f"unknown run kind '{kind}' (known: {', '.join(sorted(KINDS))})")
+        if source is not None and kind not in SOURCE_KINDS:
+            raise InvalidError(f"a '{kind}' run works on the project, not on a workspace")
         with self.session() as s:
             self.require(s, principal, project_id, spec.permission)
             project = detached_project(s, project_id)
+        if source is not None:
+            source = self.run_source(project_id, str(source))
         orch, config = self.orchestrator(project, actor=principal.username)
         try:
-            (_registry, steps), fixed = build_kind(kind, orch.project_root, config, params)
+            built = build_kind(kind, source or orch.project_root, config, params)
+            (_registry, steps), fixed = built
         except (ValueError, KeyError) as exc:
             raise InvalidError(f"invalid parameters: {exc}") from exc
+        extra: dict[str, Any] = {"kind": kind, "params": fixed}
+        if source is not None:
+            extra["source"] = str(source)
         try:
             run_id = orch.create_run(
                 TaskPlanner().build(steps),
                 mode=spec.mode,
-                goal=_goal(kind, fixed),
+                goal=(goal or _goal(kind, fixed))[:200],
                 idempotency_key=idempotency_key,
-                options=RunOptions(extra={"kind": kind, "params": fixed}),
+                options=RunOptions(extra=extra),
             )
         except OrchestratorError as exc:
             raise ConflictError(str(exc)) from exc
@@ -101,6 +125,14 @@ class RunService(ProjectService):
             )
         return run_id
 
+    def run_source(self, project_id: uuid.UUID, source: str) -> Path:
+        """The snapshot a run examines: an existing directory of this project's sources."""
+        base = (self.settings.sources_dir / str(project_id)).resolve()
+        path = Path(source).resolve()
+        if not path.is_relative_to(base) or path == base or not path.is_dir():
+            raise InvalidError("the run's source is not a snapshot of this project")
+        return path
+
     def run_status(self, principal: Principal, run_id: uuid.UUID) -> dict[str, Any]:
         with self.session() as s:
             run, _ = self._run(s, principal, run_id, Permission.RUN_VIEW)
@@ -112,9 +144,11 @@ class RunService(ProjectService):
                 )
             ]
             kind = run.options.get("kind")
+            details = _run_details(s, run_id)
         orch, _ = self.orchestrator(project, actor=principal.username)
         status = orch.status(run_id)
-        return {**status.to_dict(), "project_id": str(project.id), "kind": kind, "jobs": jobs}
+        return {**status.to_dict(), "project_id": str(project.id), "kind": kind, "jobs": jobs,
+                **details}  # fmt: skip
 
     def list_runs(
         self, principal: Principal, project_id: uuid.UUID, limit: int = 50
@@ -247,7 +281,7 @@ class RunService(ProjectService):
                 .order_by(Finding.created_at.desc())
                 .limit(min(limit, 2000))
             )
-            return [_finding_dict(f) for f in rows]
+            return [finding_dict(f) for f in rows]
 
     def audit_events(
         self, principal: Principal, project_id: uuid.UUID | None = None, *, limit: int = 200
@@ -304,7 +338,48 @@ def _goal(kind: str, params: dict[str, Any]) -> str:
     return f"{kind}: {title}"[:200] if title else kind
 
 
-def _finding_dict(f: Finding) -> dict[str, Any]:
+def _run_details(s: Session, run_id: uuid.UUID) -> dict[str, Any]:
+    """What the run page draws besides the status: the edges of the task graph, the
+    Quality Gates (``None`` until the gates step has an output) and the LLM usage."""
+    task, needed = aliased(Task), aliased(Task)
+    edges = s.execute(
+        select(task.key, needed.key)
+        .select_from(TaskDependency)
+        .join(task, task.id == TaskDependency.task_id)
+        .join(needed, needed.id == TaskDependency.depends_on_id)
+        .where(task.run_id == run_id)
+        .order_by(task.key, needed.key)
+    ).all()
+    output = s.scalar(select(Task.output).where(Task.run_id == run_id, Task.key == GATES_TASK))
+    gates = output.get("gates") if isinstance(output, dict) else None
+    usage = s.execute(select(*usage_sums()).where(ModelUsage.run_id == run_id)).one()
+    return {
+        "dependencies": [{"task": key, "depends_on": dep} for key, dep in edges],
+        "gates": gates if isinstance(gates, list) else None,
+        "usage": usage_dict(*usage),
+    }
+
+
+def usage_sums() -> tuple[ColumnElement[Any], ColumnElement[Any], ColumnElement[Any]]:
+    """Input tokens, output tokens and cost of the selected ``model_usage`` rows (zero
+    when there are none)."""
+    return (
+        func.coalesce(func.sum(ModelUsage.input_tokens), 0),
+        func.coalesce(func.sum(ModelUsage.output_tokens), 0),
+        func.coalesce(func.sum(ModelUsage.cost_usd), 0.0),
+    )
+
+
+def usage_dict(input_tokens: Any, output_tokens: Any, cost_usd: Any) -> dict[str, Any]:
+    """JSON form of :func:`usage_sums` (PostgreSQL sums integers as ``Decimal``)."""
+    return {
+        "input_tokens": int(input_tokens or 0),
+        "output_tokens": int(output_tokens or 0),
+        "cost_usd": round(float(cost_usd or 0.0), 6),
+    }
+
+
+def finding_dict(f: Finding) -> dict[str, Any]:
     return {
         c.key: (
             str(v)
