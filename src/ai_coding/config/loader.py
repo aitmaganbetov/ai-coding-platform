@@ -81,18 +81,33 @@ def _expanded_size(root: yaml.Node, limit: int) -> int:
     Aliases make the composed graph a DAG: "billion laughs" is tiny as a graph but
     expands to 9**9 nodes, which the schema validator would walk (B-801, found by
     fuzzing). Stops counting as soon as ``limit`` is exceeded.
+
+    A node may also contain itself (``a: &x [*x]``: PyYAML registers the anchor before
+    composing its children), which no configuration can mean and which expands without
+    end: that raises :class:`ConfigLoadError`.
     """
     sizes: dict[int, int] = {}
+    expanding: set[int] = set()  # nodes whose subtree is being walked (the current path)
     stack: list[tuple[yaml.Node, bool]] = [(root, False)]
     while stack:  # iterative post-order: no recursion limit on deep documents
         node, done = stack.pop()
-        if id(node) in sizes:
+        key = id(node)
+        if key in sizes:
             continue
         children = _children(node)
         if done or not children:
             total = 1 + sum(sizes.get(id(c), 0) for c in children)
-            sizes[id(node)] = min(total, limit + 1)
+            sizes[key] = min(total, limit + 1)
+            expanding.discard(key)
             continue
+        if key in expanding:  # reached again from inside its own subtree
+            mark = node.start_mark
+            raise ConfigLoadError(
+                "recursive YAML alias: a node contains itself; refusing it",
+                line=mark.line + 1 if mark else None,
+                column=mark.column + 1 if mark else None,
+            )
+        expanding.add(key)
         stack.append((node, True))
         stack.extend((c, False) for c in children if id(c) not in sizes)
     return sizes[id(root)]

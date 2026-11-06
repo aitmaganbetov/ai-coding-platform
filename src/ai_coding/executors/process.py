@@ -13,10 +13,12 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from ai_coding.executors.base import ExecutorError
 from ai_coding.executors.winjob import JobLimits, JobObject
 from ai_coding.security import redact
 
 _READ_CHUNK = 65536
+_WINDOWS = os.name == "nt"
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,7 +99,16 @@ async def run_process(
         **kwargs,  # type: ignore[arg-type]
     )
     assert proc.stdout is not None and proc.stderr is not None  # noqa: S101 - PIPE requested
-    windows_job = _job_for(proc, job)
+    try:
+        windows_job = _job_for(proc, job)
+    except OSError as exc:
+        # The command is already running: never leave it without its limits and timeout.
+        _kill_tree(proc)
+        with contextlib.suppress(OSError):
+            await asyncio.wait_for(proc.communicate(), timeout=30)
+        raise ExecutorError(
+            f"cannot place the command in a Windows Job Object (resource limits): {exc}"
+        ) from exc
     try:
         return await _supervise(proc, timeout=timeout, max_output_bytes=max_output_bytes,
                                 on_timeout=on_timeout, windows_job=windows_job,
@@ -108,16 +119,19 @@ async def run_process(
 
 
 def _job_for(proc: asyncio.subprocess.Process, limits: JobLimits | None) -> JobObject | None:
-    if limits is None or os.name != "nt":
+    """The Job Object holding ``proc`` (Windows), or None; OSError if it cannot be applied
+    to a still-running process (the caller then kills it)."""
+    if limits is None or not _WINDOWS:
         return None
-    job = JobObject(limits)  # pragma: no cover - Windows
-    try:  # pragma: no cover - Windows
+    job = JobObject(limits)
+    try:
         job.assign(proc.pid)
-    except OSError:  # pragma: no cover - the process already ended
+    except OSError:
+        job.close()
         if proc.returncode is None:
-            job.close()
             raise
-    return job  # pragma: no cover - Windows
+        return None  # it already ended: nothing left to limit
+    return job
 
 
 async def _supervise(

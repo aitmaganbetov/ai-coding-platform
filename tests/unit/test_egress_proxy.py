@@ -11,7 +11,13 @@ from typing import Any
 import pytest
 
 from ai_coding.executors.egress import _decisions, proxy_argv
-from ai_coding.executors.egress_proxy import Proxy, host_matches, public_address
+from ai_coding.executors.egress_proxy import (
+    Proxy,
+    RequestError,
+    host_matches,
+    public_address,
+    rebuild_http_request,
+)
 
 
 def test_matching_and_addresses() -> None:
@@ -103,3 +109,80 @@ async def test_tunnels_only_what_is_allowed(capsys: pytest.CaptureFixture[str]) 
 def test_proxy_container_flags() -> None:
     assert "--allow-private" in proxy_argv("p", ("x.internal:8080",), allow_private=True)
     assert "--allow-private" not in proxy_argv("p", ("pypi.org",))
+
+
+def test_plain_http_request_is_rebuilt() -> None:
+    host, port, head, body = rebuild_http_request(
+        "POST", "http://api.example.org:8080/v1?q=1", "HTTP/1.1",
+        ["Host: api.example.org:8080", "Content-Length: 5", "Connection: keep-alive",
+         "Keep-Alive: timeout=5", "Proxy-Authorization: x", "Accept: */*"],
+    )  # fmt: skip
+    assert (host, port, body) == ("api.example.org", 8080, 5)
+    lines = head.decode().split("\r\n")
+    assert lines[0] == "POST /v1?q=1 HTTP/1.1"
+    assert "Accept: */*" in lines and lines[-3] == "Connection: close"
+    assert not any(n.split(":")[0].lower() in {"keep-alive", "proxy-authorization"}
+                   for n in lines[1:-2] if n != "Connection: close")  # fmt: skip
+    for bad in (
+        ["Host: attacker.example"],  # domain fronting behind an allowed address
+        ["Host: api.example.org", "Host: attacker.example"],
+        [],  # no Host
+        ["Host: api.example.org:9999"],
+        ["Host: api.example.org", "Transfer-Encoding: chunked"],
+        ["Host: api.example.org", "Content-Length: 1", "Content-Length: 2"],
+        ["Host: api.example.org", "Content-Length: -1"],
+        ["Host : api.example.org"],
+    ):
+        with pytest.raises(RequestError):
+            rebuild_http_request("GET", "http://api.example.org:8080/", "HTTP/1.1", bad)
+
+
+async def _recording_http(log: list[bytes]) -> Callable[..., Any]:
+    async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        data = b""
+        try:
+            while chunk := await asyncio.wait_for(reader.read(65536), timeout=1):
+                data += chunk
+                if b"\r\n\r\n" in data and b"Connection: close" in data:
+                    break
+        except TimeoutError:
+            pass
+        log.append(data)
+        writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+        await writer.drain()
+        await asyncio.sleep(0.2)  # anything the proxy still sends would arrive now
+        try:
+            while more := await asyncio.wait_for(reader.read(65536), timeout=0.3):
+                log.append(more)
+        except (TimeoutError, OSError):
+            pass
+        writer.close()
+
+    return handler
+
+
+async def test_plain_http_cannot_front_or_smuggle_a_second_request() -> None:
+    """Domain fronting through an allowed address, and a second request on a kept-alive
+    connection, must never reach the upstream (only the target's own request does)."""
+    seen: list[bytes] = []
+    async with _server(await _recording_http(seen)) as http:
+        proxy = Proxy([f"localhost:{http}"], allow_private=True)
+        async with _server(proxy.handle) as port:
+            fronted = await _ask(port, f"GET http://localhost:{http}/ HTTP/1.1\r\n"
+                                       f"Host: attacker.example\r\n\r\n".encode())  # fmt: skip
+            assert b"403" in fronted and b"does not match" in fronted and not seen
+
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(
+                f"POST http://localhost:{http}/up HTTP/1.1\r\nHost: localhost:{http}\r\n"
+                f"Content-Length: 4\r\nConnection: keep-alive\r\n\r\nbody"
+                f"GET /exfil HTTP/1.1\r\nHost: attacker.example\r\n\r\n".encode()
+            )
+            await writer.drain()
+            response = await asyncio.wait_for(reader.read(), timeout=5)
+            writer.close()
+    assert response.startswith(b"HTTP/1.1 200") and response.endswith(b"ok")
+    upstream = b"".join(seen)
+    assert upstream.startswith(b"POST /up HTTP/1.1\r\n") and upstream.endswith(b"\r\n\r\nbody")
+    assert b"Connection: close" in upstream and b"keep-alive" not in upstream
+    assert b"exfil" not in upstream and b"attacker" not in upstream

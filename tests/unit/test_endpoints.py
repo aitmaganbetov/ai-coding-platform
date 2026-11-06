@@ -106,3 +106,69 @@ def test_runtime_check_catches_a_local_name_that_resolves_outside() -> None:
     assert llm is not None
     default = AICodingConfig.model_validate(_config())  # Ollama's default localhost URL
     assert build_llm(default, AgentName.SECURITY, policy=gate, budget=budget) is not None
+
+
+async def test_every_request_is_checked_against_the_address_it_goes_to() -> None:
+    """DNS rebinding: the name resolved to a local address when the model was set up,
+    then to a public one. A check made once (and a client resolving again on its own)
+    let prompts with source code go outside; each request is now checked and sent to the
+    checked address."""
+    import httpx  # noqa: PLC0415
+
+    from ai_coding.security.endpoints import LocalOnlyTransport  # noqa: PLC0415
+
+    answers = iter([["172.18.0.2"], ["93.184.216.34"], ["10.0.0.7", "8.8.8.8"]])
+    sent: list[httpx.Request] = []
+
+    def upstream(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(200, json={"ok": True})
+
+    transport = LocalOnlyTransport(httpx.MockTransport(upstream),
+                                   resolver=lambda _h: next(answers))  # fmt: skip
+    async with httpx.AsyncClient(transport=transport) as client:
+        ok = await client.post("http://ollama:11434/api/chat", json={})
+        assert ok.status_code == 200
+        for _ in range(2):  # rebound to a public address; one public address among local
+            with pytest.raises(httpx.ConnectError, match="public address"):
+                await client.post("http://ollama:11434/api/chat", json={})
+        with pytest.raises(httpx.ConnectError, match="public address"):
+            await client.get("http://93.184.216.34/")
+    assert len(sent) == 1
+    assert sent[0].url.host == "172.18.0.2" and sent[0].headers["Host"] == "ollama:11434"
+
+
+async def test_https_keeps_the_name_for_tls() -> None:
+    import httpx  # noqa: PLC0415
+
+    from ai_coding.security.endpoints import LocalOnlyTransport  # noqa: PLC0415
+
+    sent: list[httpx.Request] = []
+
+    def upstream(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(200)
+
+    transport = LocalOnlyTransport(httpx.MockTransport(upstream),
+                                   resolver=lambda _h: ["10.1.2.3"])  # fmt: skip
+    async with httpx.AsyncClient(transport=transport) as client:
+        await client.get("https://vllm.internal:8443/v1/models")
+    (req,) = sent
+    assert req.url.host == "10.1.2.3" and req.url.port == 8443
+    assert req.extensions["sni_hostname"] == "vllm.internal"
+    assert req.headers["Host"] == "vllm.internal:8443"
+
+
+def test_local_only_models_get_the_checking_transport() -> None:
+    from ai_coding.security.endpoints import LocalOnlyTransport  # noqa: PLC0415
+
+    cfg = AICodingConfig.model_validate(_config(base_url="http://ollama:11434/v1"))
+    gate: Any = _Pass()
+    budget: Any = _Pass()
+    llm = build_llm(cfg, AgentName.SECURITY, policy=gate, budget=budget,
+                    resolver=lambda h: ["172.18.0.2"])  # fmt: skip
+    assert all(isinstance(r.provider._transport, LocalOnlyTransport) for r in llm.routes)  # type: ignore[attr-defined]
+    open_doc = {**_config(base_url="http://ollama:11434/v1"), "security": {"network": "open"}}
+    other = build_llm(AICodingConfig.model_validate(open_doc), AgentName.SECURITY,
+                      policy=gate, budget=budget)  # fmt: skip
+    assert not any(isinstance(r.provider._transport, LocalOnlyTransport) for r in other.routes)  # type: ignore[attr-defined]

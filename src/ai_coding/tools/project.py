@@ -19,6 +19,8 @@ Docker sandbox (never on the host) and follow the same rules as sandboxed tests:
 
 from __future__ import annotations
 
+import os
+import shutil
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -46,6 +48,7 @@ _COPY_SKIP = frozenset({".git", ".ai-coding", "node_modules", "vendor", ".venv",
                         "target", "__pycache__", ".mypy_cache", ".pytest_cache"})  # fmt: skip
 _MAX_COPY = 500 * 1024 * 1024
 _DEPENDENCY_DIRS = ("node_modules", "vendor")
+_MAX_DEPENDENCY_COPY = 2 * 1024 * 1024 * 1024
 _ERROR_CHARS = 400
 
 
@@ -193,18 +196,18 @@ class ProjectToolRunner:
                 copy_tree(self.root, work, skip=_COPY_SKIP, max_bytes=_MAX_COPY)
             else:
                 work, work_ro = self.root, True
-            open_permissions(Path(tmp))
             mounts: tuple[Mount, ...] = (Mount(work, WORK, read_only=work_ro),
                                          Mount(deps, DEPS, read_only=False))  # fmt: skip
             if plan.toolchain is not None:
                 mounts += (Mount(tool_cache(plan.toolchain), TOOLCHAIN, read_only=False),)
             if not work_ro and plan.install is None:
                 # The copy leaves out dependency trees (size); a tool that writes into the
-                # copy still needs the project's installed ones: mounted read-only.
+                # copy still needs the project's installed ones. Copied, not mounted: tools
+                # write caches into them (node_modules/.vite, .cache), and a bind mount
+                # would follow a symlinked node_modules out of the project.
                 for name in _DEPENDENCY_DIRS:
-                    if (self.root / name).is_dir():
-                        (work / name).mkdir(exist_ok=True)
-                        mounts += (Mount(self.root / name, f"{WORK}/{name}", read_only=True),)
+                    copy_dependencies(self.root, name, work / name)
+            open_permissions(Path(tmp))
 
             def command(
                 argv: tuple[str, ...],
@@ -256,3 +259,41 @@ class ProjectToolRunner:
 def has_any(root: Path, names: Sequence[str]) -> bool:
     """Whether any of ``names`` exists under ``root``."""
     return any((root / n).exists() for n in names)
+
+
+def copy_dependencies(
+    root: Path, name: str, target: Path, *, max_bytes: int = _MAX_DEPENDENCY_COPY
+) -> bool:
+    """Copy the installed dependency tree ``root/name`` to ``target``; False if absent.
+
+    Nothing outside the project is copied: a symlinked tree itself is ignored, and links
+    inside it are recreated only when they are relative and stay within the project
+    (``node_modules/.bin``, workspace packages); any other link is left out.
+    """
+    source = root / name
+    if source.is_symlink() or not source.is_dir():
+        return False
+    project = root.resolve()
+    total = 0
+    for dirpath, dirnames, filenames in os.walk(source):  # does not descend into links
+        here = Path(dirpath)
+        dest = target / here.relative_to(source)
+        dest.mkdir(parents=True, exist_ok=True)
+        for entry in [*dirnames, *filenames]:
+            src = here / entry
+            if src.is_symlink():
+                link = src.readlink()
+                inside = Path(os.path.normpath(here / link))
+                if not link.is_absolute() and inside.resolve().is_relative_to(project):
+                    (dest / entry).symlink_to(link)
+                continue
+            if entry in dirnames:
+                continue
+            total += src.stat().st_size
+            if total > max_bytes:
+                raise ExecutorError(
+                    f"{name}/ is larger than {max_bytes // 1024**3} GiB; too large to copy "
+                    "into the sandbox"
+                )
+            shutil.copy2(src, dest / entry)
+    return True

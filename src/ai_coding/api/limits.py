@@ -94,8 +94,18 @@ class SharedRateLimiter:
 
     The estimate weights the previous minute by the part still inside the window, so
     a burst at a minute boundary cannot double the limit. If the database fails, this
-    process's own count decides (a failure never resets it).
+    process's own count decides (a failure never resets it), and the database is left
+    alone for a back-off period (1 s doubling to 30 s): only one request at a time probes
+    it, the others never wait for an unreachable database.
+
+    At ``max_keys`` keys, room is made without losing counts: keys of minutes outside
+    the window go first, then keys whose counts are all in the database (a later sync
+    reads them back); only if every key still holds unsent counts are those sent in one
+    transaction before the keys are dropped.
     """
+
+    BACKOFF_MIN = 1.0
+    BACKOFF_MAX = 30.0
 
     def __init__(
         self, db: Database, per_minute: int, *, sync_seconds: float = 0.5,
@@ -109,26 +119,29 @@ class SharedRateLimiter:
         self._state: dict[str, _Shared] = {}
         self._syncs = 0
         self._lock = threading.Lock()
+        self._down_until = float("-inf")  # no database calls before this time
+        self._backoff = 0.0
+        self._probing = False  # one request at a time tries a database that failed
 
     def check(self, key: str, now: float | None = None) -> float | None:
         """``None`` if allowed, else the seconds to wait (Retry-After)."""
         now = time.time() if now is None else now
         minute, into = int(now // 60), (now % 60) / 60.0
         digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
-        flush: tuple[int, int] | None = None  # (minute, count) of a minute that ended
+        flush: list[tuple[str, int, int]] = []  # (key, minute, count) not yet in the database
         with self._lock:
             state = self._state.get(digest)
             if state is None or state.minute != minute:
                 if state is not None and state.pending:
-                    flush = (state.minute, state.pending)
-                if len(self._state) >= self.max_keys:
-                    self._state.clear()
+                    flush.append((digest, state.minute, state.pending))
+                if state is None and len(self._state) >= self.max_keys:
+                    flush += self._make_room(minute)
                 old, state = state, _Shared(minute)
                 self._state[digest] = state
                 if old is not None and old.minute == minute - 1:
                     state.previous = old.current + old.pending + old.in_flight
-        if flush is not None:
-            self._send(digest, *flush)
+        if flush:
+            self._send_many(flush, now)
         if self.sync_seconds <= 0 or now - state.synced_at >= self.sync_seconds:
             self._sync(digest, state, now)
         with self._lock:
@@ -141,15 +154,52 @@ class SharedRateLimiter:
             self._sync(digest, state, now)
         return None
 
+    def _make_room(self, minute: int) -> list[tuple[str, int, int]]:
+        """Free key slots (under the lock); the counts that must still be sent."""
+        for digest in [d for d, st in self._state.items() if st.minute < minute - 1]:
+            del self._state[digest]  # outside the sliding window: no longer counts
+        if len(self._state) >= self.max_keys:
+            for digest in [d for d, st in self._state.items()
+                           if not st.pending and not st.in_flight]:  # fmt: skip
+                del self._state[digest]  # all in the database; a sync reads it back
+        unsent: list[tuple[str, int, int]] = []
+        if len(self._state) >= self.max_keys:
+            for digest, st in list(self._state.items()):
+                if not st.in_flight:  # in flight: another thread is sending it now
+                    unsent.append((digest, st.minute, st.pending))
+                    del self._state[digest]
+        return unsent
+
+    def _database_usable(self, now: float) -> bool:
+        """False during the back-off after a failure (one caller may probe after it)."""
+        with self._lock:
+            if now >= self._down_until and not self._probing:
+                self._probing = self._backoff > 0
+                return True
+            return False
+
+    def _record(self, ok: bool, now: float) -> None:
+        with self._lock:
+            self._probing = False
+            if ok:
+                self._backoff, self._down_until = 0.0, float("-inf")
+            else:
+                self._backoff = min(self.BACKOFF_MAX, max(self.BACKOFF_MIN, self._backoff * 2))
+                self._down_until = now + self._backoff
+
     def _sync(self, digest: str, state: _Shared, now: float) -> None:
         """Send this process's pending count; read every process's totals."""
         with self._lock:
             if state.in_flight:  # another thread is syncing this key right now
                 return
+            if now < self._down_until or self._probing:
+                return  # back-off: keep counting locally, do not wait for the database
+            self._probing = self._backoff > 0
             state.in_flight, state.pending = state.pending, 0
             state.synced_at = now
             sending = state.in_flight
         totals = self._send(digest, state.minute, sending)
+        self._record(totals is not None, now)
         with self._lock:
             state.in_flight = 0
             if totals is None:  # database unavailable: keep counting locally
@@ -157,6 +207,21 @@ class SharedRateLimiter:
             else:
                 state.current, previous = totals
                 state.previous = previous or state.previous
+
+    def _send_many(self, counts: list[tuple[str, int, int]], now: float) -> None:
+        """Add counts of keys leaving this process's state, in one transaction."""
+        counts = [c for c in counts if c[2]]
+        if not counts or not self._database_usable(now):
+            return
+        try:
+            with self.db.session() as s:
+                for digest, minute, count in counts:
+                    self._increment(s, digest, minute, count)
+        except SQLAlchemyError as exc:
+            _log.warning("shared rate limiter unavailable; counts not shared", error=str(exc))
+            self._record(False, now)
+            return
+        self._record(True, now)
 
     def _send(self, digest: str, minute: int, count: int) -> tuple[int, int] | None:
         """Add ``count``; ``(current, previous)`` totals of all processes, or ``None``."""

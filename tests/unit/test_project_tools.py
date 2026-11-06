@@ -4,6 +4,7 @@ runner (sandbox-only, install gating, read-only vs scratch copy) and offline dat
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -12,7 +13,7 @@ import pytest
 
 from ai_coding.domain.enums import ExecutionBackend, Severity
 from ai_coding.executors.base import CommandSpec, ExecutionResult, ExecutorError
-from ai_coding.tools.base import ToolCategory, ToolRun
+from ai_coding.tools.base import ToolCategory, ToolRun, ToolSpec
 from ai_coding.tools.cache import ENV, cache_root, tool_cache
 from ai_coding.tools.golang import GolangciLintAdapter, GoTestAdapter
 from ai_coding.tools.mypy import MypyAdapter
@@ -390,35 +391,88 @@ def test_failure_reason_keeps_the_panic_line() -> None:
     assert failure_reason("a\nb\nc\nd") == "b | c | d"
 
 
-async def test_writable_copy_keeps_installed_dependencies(tmp_path: Path) -> None:
-    """A tool that writes into a copy of the tree still sees the project's installed
-    node_modules (left out of the copy for size): mounted read-only at the same path."""
-    from ai_coding.tools.base import ToolCategory as Cat  # noqa: PLC0415
-    from ai_coding.tools.base import ToolSpec as Spec  # noqa: PLC0415
+class _Writer:
+    """A tool that writes into a copy of the tree (Playwright: test-results/, caches)."""
 
-    (tmp_path / "node_modules" / "x").mkdir(parents=True)
+    spec = ToolSpec(name="writer", category=ToolCategory.TESTS, binary="node",
+                 image="img@sha256:" + "a" * 64)  # fmt: skip
+
+    def plan(self, root: Path) -> Invocation:
+        return Invocation(argv=("node", "x"), writable=True)
+
+    def ok_exit_codes(self) -> frozenset[int]:
+        return frozenset({0})
+
+    def parse(self, stdout: str, stderr: str, exit_code: int) -> list[Any]:
+        return []
+
+    def parse_version(self, output: str) -> str | None:
+        return None
+
+
+@dataclass
+class _InspectingExecutor(FakeExecutor):
+    """Looks at the work tree while the command 'runs' (it is removed afterwards)."""
+
+    snapshot: dict[str, Any] = field(default_factory=dict)
+
+    async def run(self, spec: CommandSpec) -> ExecutionResult:
+        modules = spec.cwd / "node_modules"
+        entries = list(modules.rglob("*"))
+        self.snapshot = {
+            "files": sorted(p.relative_to(modules).as_posix() for p in entries),
+            "links": {
+                p.relative_to(modules).as_posix(): p.readlink().as_posix()
+                for p in entries
+                if p.is_symlink()
+            },
+            "writable": os.access(modules, os.W_OK)
+            and not any(m.target.startswith("/work/node_modules") for m in spec.mounts),
+        }
+        return await super().run(spec)
+
+
+async def test_writable_copy_keeps_installed_dependencies_writable(tmp_path: Path) -> None:
+    """A tool that writes into a copy of the tree still sees the project's installed
+    node_modules — copied, so it can write caches there (node_modules/.vite, .cache),
+    and never bind-mounted from the host."""
+    modules = tmp_path / "node_modules"
+    (modules / "pkg").mkdir(parents=True)
+    (modules / "pkg" / "cli.js").write_text("1\n", encoding="utf-8")
+    (modules / ".bin").mkdir()
+    (modules / ".bin" / "pkg").symlink_to("../pkg/cli.js")
     (tmp_path / "app.js").write_text("1\n", encoding="utf-8")
 
-    class Writer:
-        spec = Spec(
-            name="writer", category=Cat.TESTS, binary="node", image="img@sha256:" + "a" * 64
-        )
-
-        def plan(self, root: Path) -> Invocation:
-            return Invocation(argv=("node", "x"), writable=True)
-
-        def ok_exit_codes(self) -> frozenset[int]:
-            return frozenset({0})
-
-        def parse(self, stdout: str, stderr: str, exit_code: int) -> list[Any]:
-            return []
-
-        def parse_version(self, output: str) -> str | None:
-            return None
-
-    ex = FakeExecutor()
-    run = await runner(ex, tmp_path).run(Writer())
+    ex = _InspectingExecutor()
+    run = await runner(ex, tmp_path).run(_Writer())
     assert run.succeeded, run.error
+    assert "pkg/cli.js" in ex.snapshot["files"]
+    assert ex.snapshot["links"] == {".bin/pkg": "../pkg/cli.js"}  # in-tree link kept
+    assert ex.snapshot["writable"]
+
+
+async def test_dependency_links_never_lead_out_of_the_project(tmp_path: Path) -> None:
+    """A repository can commit symlinks; none of them may bring host files into the
+    sandbox (a bind mount follows them: node_modules -> ~/.ssh)."""
+    secret = tmp_path / "host-secret"
+    secret.mkdir()
+    (secret / "id_rsa").write_text("PRIVATE\n", encoding="utf-8")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.js").write_text("1\n", encoding="utf-8")
+    (repo / "vendor").symlink_to(secret)  # the whole tree is a link out
+    modules = repo / "node_modules"
+    (modules / "ok").mkdir(parents=True)
+    (modules / "abs").symlink_to(secret)  # absolute link out
+    (modules / "rel").symlink_to("../../host-secret")  # relative link out
+    (modules / "inside").symlink_to("../app.js")  # relative link inside the project
+
+    ex = _InspectingExecutor()
+    run = await runner(ex, repo).run(_Writer())
+    assert run.succeeded, run.error
+    assert ex.snapshot["links"] == {"inside": "../app.js"}
+    assert not any("id_rsa" in f for f in ex.snapshot["files"])
     (spec,) = ex.seen
-    deps = [m for m in spec.mounts if m.target == "/work/node_modules"]
-    assert deps and deps[0].read_only and deps[0].source == tmp_path / "node_modules"
+    sources = [m.source.resolve() for m in spec.mounts]
+    assert not any(src == secret or secret in src.parents for src in sources)
+    assert all(m.target in {"/work", "/deps"} for m in spec.mounts)
