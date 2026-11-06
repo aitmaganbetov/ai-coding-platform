@@ -3,7 +3,6 @@ dependencies into an approved plan; one small verified PR per item (B-610, B-612
 
 from __future__ import annotations
 
-import asyncio
 import json
 import sys
 from dataclasses import replace
@@ -14,14 +13,13 @@ import typer
 from rich.markup import escape
 
 from ai_coding.cli.approvals import settle
-from ai_coding.cli.commands.develop import report_change
-from ai_coding.cli.commands.pr import _github_runtime
-from ai_coding.cli.commands.run import _finish, _resolve
+from ai_coding.cli.commands.run import finish_run, resolve_run
 from ai_coding.cli.common import close_all, guard, load_project, open_orchestrator
 from ai_coding.cli.console import error, info
 from ai_coding.cli.exit_codes import ExitCode
+from ai_coding.cli.workflow import github_runtime, report_change, show_preview, start_or_resume
 from ai_coding.domain.enums import Mode, RunState
-from ai_coding.orchestrator import HandlerRegistry, RunOptions, TaskPlanner
+from ai_coding.orchestrator import HandlerRegistry
 from ai_coding.workflows.implement import ImplementSettings
 from ai_coding.workflows.maintain import MaintainRequest, build_maintain, sources_from_report
 
@@ -79,7 +77,7 @@ def _continued(
     settings: ImplementSettings,
 ) -> tuple[MaintainRequest, list[str], str]:
     """The next item of an earlier run's approved plan."""
-    rid = _resolve(probe, run)
+    rid = resolve_run(probe, run)
     prev = probe.task_output(rid, "maintain.item")
     if not prev:
         error(f"run {run} has no completed maintenance item")
@@ -158,7 +156,7 @@ def maintain(
     config = config.model_copy(update={"mode": Mode.MAINTAIN})
     interactive = sys.stdin.isatty() if interactive is None else interactive
     target = base or config.project.default_branch
-    runtime = _github_runtime(repo, root) if (pr or issue) and not dry_run else None
+    runtime = github_runtime(repo, root) if (pr or issue) and not dry_run else None
     settings = ImplementSettings(max_iterations=max_iterations)
     probe = open_orchestrator(root, config, HandlerRegistry([]))
     if resume:  # inputs are persisted in the run's tasks
@@ -185,16 +183,10 @@ def maintain(
                 f"finding(s), {len(request.dependencies)} vulnerable dependenc(y/ies)")  # fmt: skip
     orch = open_orchestrator(root, config, registry)
     if dry_run:
-        for p in orch.preview(TaskPlanner().build(steps), RunOptions()):
-            info(escape(f"{p.key}: {p.handler or p.route_error}"))
+        show_preview(orch, steps, verdicts=False)
         info("dry run: nothing changed")
         return
-    if resume:
-        run_id = _resolve(orch, resume)
-        status = guard(lambda: asyncio.run(orch.resume(run_id)))
-    else:
-        run_id = guard(lambda: orch.create_run(TaskPlanner().build(steps), goal=goal[:200]))
-        status = guard(lambda: asyncio.run(orch.execute(run_id)))
+    run_id, status = start_or_resume(orch, steps, resume=resume, goal=goal)
     hint = f"ai-coding maintain --resume {run_id} -C {root}" + (" --pr" if pr else "")
     status = settle(orch, run_id, status, interactive=interactive, project=root,
                     resume_hint=hint, show=lambda _: _show_plan(orch, run_id))  # fmt: skip
@@ -203,4 +195,4 @@ def maintain(
         nxt = (orch.task_output(run_id, "maintain.item") or {}).get("next_item")
         if nxt:
             info(f"next: ai-coding maintain --continue {run_id} -C {root}  (item {nxt})")
-    _finish(status, as_json=False)
+    finish_run(status, as_json=False)

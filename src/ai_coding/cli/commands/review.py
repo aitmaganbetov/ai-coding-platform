@@ -10,7 +10,7 @@ from typing import Annotated
 import typer
 
 from ai_coding.cli.commands.github import make_host, resolve_repo
-from ai_coding.cli.commands.run import _finish
+from ai_coding.cli.commands.run import finish_run
 from ai_coding.cli.common import close_all, guard, load_project, open_orchestrator
 from ai_coding.cli.console import error, info
 from ai_coding.cli.exit_codes import ExitCode
@@ -54,7 +54,7 @@ def review(
     )
     status = guard(lambda: asyncio.run(orch.execute(run_id)))
     if status.state is not RunState.COMPLETED:
-        _finish(status, as_json=False)
+        finish_run(status, as_json=False)
     out = orch.task_output(run_id, "review.run") or {}
     text = json.dumps(out["review"], indent=2, ensure_ascii=False) if as_json else out["markdown"]
     if output:

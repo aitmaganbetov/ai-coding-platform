@@ -108,7 +108,9 @@ class TaskPlanner:
             )
         return plan
 
-    def _validate(self, steps: Sequence[StepSpec]) -> Iterable[str]:  # noqa: PLR0912
+    def _validate(self, steps: Sequence[StepSpec]) -> Iterable[str]:
+        """Every problem of the plan, in step order: keys and fields of each step, then
+        its dependencies, then a dependency cycle."""
         if not steps:
             yield "plan has no steps"
             return
@@ -121,33 +123,43 @@ class TaskPlanner:
             if s.key in keys:
                 yield f"duplicate step key {s.key!r}"
             keys[s.key] = s
-            if not s.capability:
-                yield f"step {s.key!r} has no capability"
-            if s.max_attempts < 1:
-                yield f"step {s.key!r}: max_attempts must be >= 1"
-            if s.timeout_seconds <= 0:
-                yield f"step {s.key!r}: timeout_seconds must be > 0"
-            if s.budget_usd < 0:
-                yield f"step {s.key!r}: budget_usd must be >= 0"
-            if s.success_criteria is not None:
-                try:
-                    Draft202012Validator.check_schema(dict(s.success_criteria))
-                except SchemaError as exc:
-                    yield f"step {s.key!r}: success_criteria is not a JSON Schema ({exc.message})"
+            yield from _step_errors(s)
         for s in steps:
-            for dep in s.depends_on:
-                if dep == s.key:
-                    yield f"step {s.key!r} depends on itself"
-                elif dep not in keys:
-                    yield f"step {s.key!r} depends on unknown step {dep!r}"
-                elif PHASE_ORDER[keys[dep].phase] > PHASE_ORDER[s.phase]:
-                    yield (
-                        f"step {s.key!r} ({s.phase}) cannot depend on later-phase step "
-                        f"{dep!r} ({keys[dep].phase})"
-                    )
+            yield from _dependency_errors(s, keys)
         cycle = _find_cycle(steps)
         if cycle:
             yield "dependency cycle: " + " → ".join(cycle)
+
+
+def _step_errors(s: StepSpec) -> Iterable[str]:
+    """Problems of one step's own fields."""
+    if not s.capability:
+        yield f"step {s.key!r} has no capability"
+    if s.max_attempts < 1:
+        yield f"step {s.key!r}: max_attempts must be >= 1"
+    if s.timeout_seconds <= 0:
+        yield f"step {s.key!r}: timeout_seconds must be > 0"
+    if s.budget_usd < 0:
+        yield f"step {s.key!r}: budget_usd must be >= 0"
+    if s.success_criteria is not None:
+        try:
+            Draft202012Validator.check_schema(dict(s.success_criteria))
+        except SchemaError as exc:
+            yield f"step {s.key!r}: success_criteria is not a JSON Schema ({exc.message})"
+
+
+def _dependency_errors(s: StepSpec, keys: Mapping[str, StepSpec]) -> Iterable[str]:
+    """A step may depend only on other, known steps of the same or an earlier phase."""
+    for dep in s.depends_on:
+        if dep == s.key:
+            yield f"step {s.key!r} depends on itself"
+        elif dep not in keys:
+            yield f"step {s.key!r} depends on unknown step {dep!r}"
+        elif PHASE_ORDER[keys[dep].phase] > PHASE_ORDER[s.phase]:
+            yield (
+                f"step {s.key!r} ({s.phase}) cannot depend on later-phase step "
+                f"{dep!r} ({keys[dep].phase})"
+            )
 
 
 def _find_cycle(steps: Sequence[StepSpec]) -> list[str] | None:

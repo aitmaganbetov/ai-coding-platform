@@ -231,3 +231,49 @@ def test_maintain_cli(tmp_path: Path, project: LocalGitRepository, fake_llm: Fak
     assert "M1 [p1/bug] Add multiply()" in waiting.output
     assert "ai-coding maintain --resume" in waiting.output
     assert runner.invoke(app, [*base, "--continue", "nope"]).exit_code != 0
+
+
+def test_maintain_cli_resume_complete_and_continue(
+    tmp_path: Path, project: LocalGitRepository, fake_llm: FakeLLM
+) -> None:
+    """The whole CLI cycle: plan waits for approval (resume before approval keeps it
+    waiting), approve, resume to a committed item, then --continue reports the plan done.
+    Input errors are refused with the right exit codes."""
+    write_config(
+        project.root / ".ai-coding.yml", config(fake_llm, execution__docker__network="none")
+    )
+    base = ["maintain", "-C", str(project.root), "--no-interactive"]
+    (tmp_path / "broken.json").write_text("{not json", encoding="utf-8")
+    broken = runner.invoke(app, [*base, "--report", str(tmp_path / "broken.json")])
+    assert broken.exit_code == ExitCode.INVALID and "not valid JSON" in broken.output
+    (tmp_path / "shape.json").write_text('[{"body": "no title"}]', encoding="utf-8")
+    shape = runner.invoke(app, [*base, "--issues-file", str(tmp_path / "shape.json")])
+    assert shape.exit_code == ExitCode.INVALID and "JSON list of" in shape.output
+
+    issues = tmp_path / "issues.json"
+    later = {"id": "#8", "title": "Dark mode", "body": "Some day."}
+    issues.write_text(json.dumps([*ISSUES, later]), encoding="utf-8")
+    deferred = [{"source": "#8", "reason": "later"}]
+    fake_llm.scripts["maintenance"] = [{**PLAN, "items": PLAN["items"][:1], "deferred": deferred}]
+    waiting = runner.invoke(app, [*base, "--issues-file", str(issues)])
+    assert waiting.exit_code == ExitCode.PENDING, waiting.output
+    assert "deferred #8: later" in waiting.output
+    run_id = json.loads(
+        runner.invoke(app, ["run", "list", "-C", str(project.root), "--json"]).output
+    )[0]["id"]
+
+    no_item = runner.invoke(app, [*base, "--continue", run_id])
+    assert no_item.exit_code == ExitCode.NOT_FOUND and "no completed maintenance item" in (
+        no_item.output
+    )
+    still = runner.invoke(app, [*base, "--resume", run_id])
+    assert still.exit_code == ExitCode.PENDING, still.output  # nobody approved yet
+    assert runner.invoke(app, ["run", "approve", run_id, "-C", str(project.root)]).exit_code == 0
+    fake_llm.scripts["developer"] = [GOOD]
+    done = runner.invoke(app, [*base, "--resume", run_id])
+    assert done.exit_code == 0, done.output
+    assert "committed on" in done.output and "next: ai-coding maintain" not in done.output
+    finished = runner.invoke(app, [*base, "--continue", run_id])
+    assert finished.exit_code == ExitCode.USAGE and "every item of the plan is done" in (
+        finished.output
+    )
