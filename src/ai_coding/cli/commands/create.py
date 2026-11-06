@@ -11,7 +11,6 @@ the terminal; otherwise the run waits and the same choices are made with
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 import uuid
 from pathlib import Path
@@ -21,18 +20,16 @@ import typer
 import yaml
 from rich.markup import escape
 
-from ai_coding.cli.commands.github import make_host, resolve_repo
-from ai_coding.cli.commands.run import _finish, _resolve
+from ai_coding.cli.commands.run import finish_run, resolve_run
 from ai_coding.cli.common import close_all, guard, open_orchestrator
 from ai_coding.cli.console import error, info
 from ai_coding.cli.exit_codes import ExitCode
+from ai_coding.cli.workflow import github_runtime
 from ai_coding.config.loader import STATE_CONFIG, ConfigLoadError, find_config, parse_yaml
 from ai_coding.config.models import AICodingConfig
 from ai_coding.config.validator import validate_file
 from ai_coding.domain.enums import ApprovalOperation, ApprovalStatus, Mode, RunState
 from ai_coding.git import LocalGitRepository
-from ai_coding.integrations.github.auth import TokenAuth, auth_from_env
-from ai_coding.integrations.github.client import DEFAULT_API_URL
 from ai_coding.orchestrator import Orchestrator, RunOptions, RunStatus, TaskPlanner
 from ai_coding.workflows.create import DEFAULT_BRANCH, CreateRequest, build_create
 
@@ -91,19 +88,6 @@ def _prepare_repository(dest: Path, base: str) -> LocalGitRepository:
         error(f"base branch '{base}' does not exist in {dest}")
         raise typer.Exit(ExitCode.USAGE)
     return repo
-
-
-def _pull_request(repo: str | None, root: Path, title: str) -> Any:
-    host = make_host(resolve_repo(repo, root))
-    auth = auth_from_env()
-
-    def token() -> str | None:
-        if isinstance(auth, TokenAuth):
-            return auth.token
-        return auth.authorization(host.client._exchange).removeprefix("Bearer ")
-
-    api_host = os.environ.get("GITHUB_API_URL", DEFAULT_API_URL).split("://", 1)[-1].split("/")[0]
-    return (host, token, api_host, title)
 
 
 def _read_answers(path: Path | None) -> dict[str, str]:
@@ -250,7 +234,7 @@ def create(
         error("describe the project: IDEA argument or --idea-file")
         raise typer.Exit(ExitCode.USAGE)
     interactive = sys.stdin.isatty() if interactive is None else interactive
-    pull = _pull_request(repo, dest, pr_title) if pr and not dry_run else None
+    pull = (*github_runtime(repo, dest), pr_title) if pr and not dry_run else None
     request = CreateRequest(
         idea=(text or "").strip(),
         constraints=tuple(constraint or ()),
@@ -273,11 +257,11 @@ def create(
     session = _Session(orch, dest, interactive)
     previous: dict[str, Any] | None = None
     if resume:
-        run_id = _resolve(orch, resume)
+        run_id = resolve_run(orch, resume)
         status = guard(lambda: asyncio.run(orch.resume(run_id)))
     else:
         if revise:
-            prev_id = _resolve(orch, revise)
+            prev_id = resolve_run(orch, revise)
             previous = orch.task_output(prev_id, "create.requirements")
             if previous is None:
                 error(f"run {revise} has no requirements version to revise")
@@ -304,7 +288,7 @@ def create(
         run_id, status = _start(orch, request, pull, require_approval)
     if status.state is RunState.COMPLETED:
         _report_completion(orch, run_id)
-    _finish(status, as_json=False)
+    finish_run(status, as_json=False)
 
 
 def _report_completion(orch: Orchestrator, run_id: uuid.UUID) -> None:

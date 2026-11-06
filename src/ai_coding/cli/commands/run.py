@@ -76,7 +76,7 @@ def _print_status(status: RunStatus, as_json: bool) -> None:
         info(f"artifact {artifact['name']}: {artifact['uri']}")
 
 
-def _finish(status: RunStatus, as_json: bool) -> None:
+def finish_run(status: RunStatus, as_json: bool) -> None:
     _print_status(status, as_json)
     raise typer.Exit(_STATE_EXIT.get(status.state, ExitCode.OK))
 
@@ -138,7 +138,7 @@ def discover(
         )
     )
     status = _guard(lambda: asyncio.run(orch.execute(run_id)))
-    _finish(status, as_json)
+    finish_run(status, as_json)
 
 
 @app.command("list")
@@ -158,7 +158,7 @@ def list_runs(
     stdout.print(table)
 
 
-def _resolve(orch: Orchestrator, run_id: str) -> uuid.UUID:
+def resolve_run(orch: Orchestrator, run_id: str) -> uuid.UUID:
     return _guard(lambda: orch.resolve_run_id(run_id))
 
 
@@ -213,7 +213,7 @@ RunIdArg = Annotated[str, typer.Argument(help="Run id or unique prefix.")]
 def status(run_id: RunIdArg, project: ProjectOpt = Path(), as_json: JsonOpt = False) -> None:
     """Show state, tasks, approvals and artifacts of a run."""
     orch = _orchestrator(project)
-    rid = _resolve(orch, run_id)
+    rid = resolve_run(orch, run_id)
     _print_status(_guard(lambda: orch.status(rid)), as_json)
 
 
@@ -221,7 +221,7 @@ def status(run_id: RunIdArg, project: ProjectOpt = Path(), as_json: JsonOpt = Fa
 def events(run_id: RunIdArg, project: ProjectOpt = Path(), as_json: JsonOpt = False) -> None:
     """Show the state transition journal of a run."""
     orch = _orchestrator(project)
-    rid = _resolve(orch, run_id)
+    rid = resolve_run(orch, run_id)
     rows = _guard(lambda: orch.events(rid))
     if as_json:
         typer.echo(json.dumps(rows, indent=2))
@@ -244,7 +244,7 @@ def audit(
 ) -> None:
     """Export the audit trail of a run as JSON (AC-10)."""
     orch = _orchestrator(project)
-    rid = _resolve(orch, run_id)
+    rid = resolve_run(orch, run_id)
     text = json.dumps(_guard(lambda: orch.audit_trail(rid)), indent=2, ensure_ascii=False)
     if output is None:
         typer.echo(text)
@@ -265,7 +265,7 @@ def resume(
 ) -> None:
     """Continue a run from its last confirmed checkpoint (after crash, pause or approval)."""
     orch = _orchestrator(project)
-    rid = _resolve(orch, run_id)
+    rid = resolve_run(orch, run_id)
     if (
         force
         and not yes
@@ -276,7 +276,7 @@ def resume(
     ):
         raise typer.Exit(ExitCode.ABORTED)
     _ensure_resumable(orch, rid)
-    _finish(_guard(lambda: asyncio.run(orch.resume(rid, force=force))), as_json)
+    finish_run(_guard(lambda: asyncio.run(orch.resume(rid, force=force))), as_json)
 
 
 @app.command("cancel")
@@ -290,7 +290,7 @@ def cancel(
 ) -> None:
     """Cancel a run (cooperatively if a worker is executing it)."""
     orch = _orchestrator(project)
-    rid = _resolve(orch, run_id)
+    rid = resolve_run(orch, run_id)
     current = _guard(lambda: orch.status(rid))
     if dry_run:
         info(f"would cancel run {rid} in state {current.state.value}")
@@ -304,7 +304,7 @@ def _decide(
     run_id: str, project: Path, *, approve: bool, approval: str | None, note: str | None
 ) -> tuple[Orchestrator, uuid.UUID, list[Any]]:
     orch = _orchestrator(project)
-    rid = _resolve(orch, run_id)
+    rid = resolve_run(orch, run_id)
     approval_id: uuid.UUID | None = None
     if approval:
         ref = approval.lower()
@@ -338,7 +338,7 @@ def approve(
         info(f"[green]approved[/] {a.operation} ({short_id(a.id)})")
     if resume_run:
         _ensure_resumable(orch, rid)
-        _finish(_guard(lambda: asyncio.run(orch.resume(rid))), as_json)
+        finish_run(_guard(lambda: asyncio.run(orch.resume(rid))), as_json)
 
 
 @app.command("reject")

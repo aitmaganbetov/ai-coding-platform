@@ -12,7 +12,7 @@ from rich.markup import escape
 from rich.table import Table
 
 from ai_coding.agents import CATALOG, plan_chain, spec_for
-from ai_coding.cli.commands.run import _finish
+from ai_coding.cli.commands.run import finish_run
 from ai_coding.cli.common import close_all, guard, load_project, open_orchestrator
 from ai_coding.cli.console import error, stdout
 from ai_coding.cli.exit_codes import ExitCode
@@ -117,7 +117,7 @@ def run_agent_cmd(
     run_id = guard(lambda: orch.create_run(TaskPlanner().build(steps), goal=f"agent {agent}"))
     status = guard(lambda: asyncio.run(orch.execute(run_id)))
     if status.state is not RunState.COMPLETED:
-        _finish(status, as_json=False)
+        finish_run(status, as_json=False)
     out = orch.task_output(run_id, steps[0].key) or {}
     text = json.dumps(out.get("result", {}), indent=2, ensure_ascii=False)
     if output:

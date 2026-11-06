@@ -3,42 +3,25 @@
 
 from __future__ import annotations
 
-import asyncio
 import sys
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
 import typer
 from rich.markup import escape
 
 from ai_coding.cli.approvals import settle
-from ai_coding.cli.commands.pr import _github_runtime
-from ai_coding.cli.commands.run import _finish, _resolve
+from ai_coding.cli.commands.run import finish_run
 from ai_coding.cli.common import close_all, guard, load_project, open_orchestrator
 from ai_coding.cli.console import error, info
 from ai_coding.cli.exit_codes import ExitCode
+from ai_coding.cli.workflow import github_runtime, report_change, show_preview, start_or_resume
 from ai_coding.domain.enums import Mode, RunState
-from ai_coding.orchestrator import Orchestrator, RunOptions, TaskPlanner
+from ai_coding.orchestrator import RunOptions
 from ai_coding.workflows.develop import DevelopRequest, build_develop
 from ai_coding.workflows.implement import ImplementSettings
 
 ProjectOpt = Annotated[Path, typer.Option("--project", "-C", help="Project directory.")]
-
-
-def report_change(orch: Orchestrator, run_id: Any, step: str) -> None:
-    """Summary of a finished implementation step."""
-    out = orch.task_output(run_id, step) or {}
-    tests = out.get("tests") or {}
-    info(f"\n[green]committed[/] on [bold]{escape(str(out.get('branch')))}[/] "
-         f"({str(out.get('commit'))[:12]}) after {out.get('iterations')} iteration(s)")  # fmt: skip
-    info(f"tests: {escape(str(tests.get('status')))} — {escape(str(tests.get('reason')))}")
-    review = out.get("review")
-    if review:
-        info(f"AI review (advisory): {escape(review['verdict'])}, "
-             f"{len(review['findings'])} finding(s)")  # fmt: skip
-    pr = orch.task_output(run_id, "github.pr")
-    if pr:
-        info(f"pull request: {pr.get('url')}")
 
 
 def develop(
@@ -84,7 +67,7 @@ def develop(
     interactive = sys.stdin.isatty() if interactive is None else interactive
     target = base or config.project.default_branch
     needs_github = pr or issue is not None
-    runtime = _github_runtime(repo, root) if needs_github and not dry_run else None
+    runtime = github_runtime(repo, root) if needs_github and not dry_run else None
     title, body = "", ""
     if issue is not None and runtime is not None:
         found = guard(lambda: runtime[0].get_issue(issue))
@@ -104,23 +87,16 @@ def develop(
     orch = open_orchestrator(root, config, registry)
     options = RunOptions(require_approval=require_approval)
     if dry_run:
-        for p in orch.preview(TaskPlanner().build(steps), options):
-            verdict = p.approval.verdict.value if p.approval else "allow"
-            info(escape(f"{p.key}: {p.handler or p.route_error} [{verdict}]"))
+        show_preview(orch, steps, options)
         info(
             escape(f"work branch: {request.work_branch} (from {target}); dry run: nothing changed")
         )
         return
-    if resume:
-        run_id = _resolve(orch, resume)
-        status = guard(lambda: asyncio.run(orch.resume(run_id)))
-    else:
-        plan = TaskPlanner().build(steps)
-        goal = f"develop: {request.title}"[:200]
-        run_id = guard(lambda: orch.create_run(plan, goal=goal, options=options))
-        status = guard(lambda: asyncio.run(orch.execute(run_id)))
+    run_id, status = start_or_resume(
+        orch, steps, resume=resume, goal=f"develop: {request.title}", options=options
+    )
     hint = f"ai-coding develop --resume {run_id} -C {root}" + (" --pr" if pr else "")
     status = settle(orch, run_id, status, interactive=interactive, project=root, resume_hint=hint)
     if status.state is RunState.COMPLETED:
         report_change(orch, run_id, "develop.implement")
-    _finish(status, as_json=False)
+    finish_run(status, as_json=False)

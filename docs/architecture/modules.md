@@ -40,6 +40,8 @@ ai-coding-platform/
 │   ├── templates/     ✅ шаблон .ai-coding.yml
 │   ├── cli/           ✅ init, config validate|schema; ✅ S2 run discover|list|status|events|audit|
 │   │                       resume|cancel|approve|reject
+│   │                       common.py (проект, оркестратор, ошибки), workflow.py (GitHub, dry-run, запуск/resume,
+│   │                       итог изменения — общее для develop/modernize/maintain/create/pr)
 │   ├── persistence/   ✅ S2 SQLAlchemy-модели (15 сущностей ТЗ + run_events, effects), Alembic,
 │   │                       append-only аудит, артефакты по SHA-256; ✅ S8 PostgreSQL, S3/MinIO, серверные таблицы
 │   ├── orchestrator/  ✅ S2 planner, registry, router, engine (фасад и workflow executor), run_queries,
