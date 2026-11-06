@@ -23,11 +23,13 @@ SECRET = "ghp_" + "a" * 36
 def world(tmp_path: Path) -> Iterator[dict[str, Any]]:
     repo = tmp_path / "repo"
     repo.mkdir()
+    other_repo = tmp_path / "other-repo"
+    other_repo.mkdir()
     srv = Server(
         ServerSettings(
             data_dir=tmp_path / "data",
             database_url=f"sqlite:///{tmp_path / 'db.sqlite'}",
-            allowed_roots=(repo.resolve(),),
+            allowed_roots=(repo.resolve(), other_repo.resolve()),
             rate_limit_per_minute=100_000,
         )
     )
@@ -37,7 +39,7 @@ def world(tmp_path: Path) -> Iterator[dict[str, Any]]:
     owner = srv.login("owner", PASSWORD)
     assert owner is not None
     project = srv.create_project(owner, "project", path=str(repo))
-    other = srv.create_project(owner, "other", path=str(repo))
+    other = srv.create_project(owner, "other", path=str(other_repo))
     srv.set_member(owner, project, "auditor", Role.AUDITOR)
     with srv.session() as s:
         run = Run(project_id=project, mode="AUDIT", state="COMPLETED", requested_by="owner")
