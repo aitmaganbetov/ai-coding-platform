@@ -21,6 +21,8 @@ x-server: &server
     AI_CODING_SERVER_WORKERS: ${AI_CODING_SERVER_WORKERS:-10}
     # Signs the API's requests to the workspace service (browser terminals, ADR-0036).
     AI_CODING_SERVER_WORKSPACE_SECRET: ${AI_CODING_SERVER_WORKSPACE_SECRET:?set AI_CODING_SERVER_WORKSPACE_SECRET in deploy/.env (openssl rand -hex 32)}
+    # AI Security Center (docs/security-center.md): off unless deploy/.env says on.
+    AI_CODING_SERVER_SECURITY_CENTER: ${AI_CODING_SERVER_SECURITY_CENTER:-off}
   security_opt: [no-new-privileges:true]
   cap_drop: [ALL]
   read_only: true
