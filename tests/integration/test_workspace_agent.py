@@ -359,8 +359,13 @@ def test_codex_follows_the_mode(daemon: Daemon) -> None:
     assert platform["args"][-2:] == ["mcp", "--read-only"]
     assert turn["params"]["approvalPolicy"] == "untrusted"  # not "never", despite "full"
 
+    # Planning in "full": what only reads is not asked (ls -la), a change is.
     sid = new_chat(c, "codex", mode="full", workflow="modernize")
     c.send(op="send", session=sid, text="propose the steps")
+    assert c.next(kind("tool_result"))["ok"] is True
+    c.next(kind("turn", state="done"))
+    assert not [e for e in c.seen if e["t"] == "approval"]
+    c.send(op="send", session=sid, text="remove the build")
     c.send(op="approve", session=sid, id=c.next(kind("approval"))["id"], decision="deny")
     c.next(kind("turn", state="done"))
     assert daemon.calls("codex")[-1]["params"]["approvalPolicy"] == "untrusted"
@@ -370,6 +375,14 @@ def test_codex_follows_the_mode(daemon: Daemon) -> None:
     c.next(kind("turn", state="done"))
     assert daemon.calls("codex")[-1]["params"]["approvalPolicy"] == "never"
     assert "MODE: MODERNIZE" in daemon.calls("codex")[3]["params"]["developerInstructions"]
+
+    # Planning in "ask": the user wants every command asked, reads included.
+    sid = new_chat(c, "codex", mode="ask", workflow="develop")
+    c.send(op="send", session=sid, text="look around")
+    asked = c.next(kind("approval"))
+    assert asked["title"] == "$ ls -la"
+    c.send(op="approve", session=sid, id=asked["id"], decision="deny")
+    c.next(kind("turn", state="done"))
 
 
 def load_agent() -> Any:
@@ -389,7 +402,8 @@ READS = ["cat src/a.py", "sed -n '1,120p' src/a.py", "grep -rn 'def ' src | head
          "rg -n TODO --glob '*.py'", "find . -name '*.py' -not -path './.git/*' | wc -l",
          "git log --oneline -20", "git diff HEAD~1 -- src", "ls -la && cat README.md",
          "find . -type f 2>/dev/null | head", "find src -name '*.py' | xargs grep -n eval",
-         "bash -lc 'cat a.txt'", "sed -n '/def x/,/^$/p' f.py", "git branch -a",
+         "bash -lc 'cat a.txt'", "/usr/bin/bash -lc 'git status --short && cat Makefile'",
+         "sed -n '/def x/,/^$/p' f.py", "git branch -a",
          "cd web && ls src", "wc -l < f.txt", "grep x f 2>&1 | head"]  # fmt: skip
 WRITES = ["rm -rf build", "cat a > b", "echo x >> f", "sed -i 's/a/b/' f", "find . -delete",
           "find . -exec rm {} ;", "git commit -m x", "git diff --output=x", "rg --pre ./x foo",
@@ -397,7 +411,8 @@ WRITES = ["rm -rf build", "cat a > b", "echo x >> f", "sed -i 's/a/b/' f", "find
           "cat $(rm b)", "python -c 'print(1)'", "npm test", "tee f", "curl http://x",
           "find . | xargs rm", "awk '{print}' f", "PATH=/tmp cat x", "cat a &",
           "git -c core.pager=sh log", "git branch -D x", "sed 's/a/b/w out' f",
-          "bash -lc 'rm x'", "sed -n -e 1p -e 'w x' f", "git push",
+          "bash -lc 'rm x'", "/usr/bin/bash -lc 'cat a > b'", "sed -n -e 1p -e 'w x' f",
+          "git push",
           "cat 'unterminated"]  # fmt: skip
 
 

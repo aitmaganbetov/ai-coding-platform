@@ -658,11 +658,17 @@ def all_runs(
 def all_findings(
     caller: Caller, server: Srv, *, limit: Annotated[int, Query(ge=1)] = 500,
     severity: Filter = None, status: Filter = None, source: Filter = None,
-    project_id: Filter = None, run_id: Filter = None,
+    project_id: Filter = None, run_id: Filter = None, current: bool = False,
 ) -> list[dict[str, Any]]:  # fmt: skip
-    """Findings of every project the caller may view, newest first (at most 2000)."""
+    """Findings of every project the caller may view, newest first (at most 2000).
+
+    ``current``: only those of each project's latest audit whose Quality Gates ran (each
+    audit records its findings anew). Findings its gates accepted through the baseline
+    have the status ``baselined``.
+    """
     return server.all_findings(caller, limit=limit, severity=severity, status=status,
-                               source=source, project_id=project_id, run_id=run_id)  # fmt: skip
+                               source=source, project_id=project_id, run_id=run_id,
+                               current=current)  # fmt: skip
 
 
 @insights.get("/projects/{project_id}/agent-executions", tags=["runs"])

@@ -207,7 +207,7 @@ function SystemTile({ me }: { me: Me }) {
 export default function Dashboard({ me }: { me: Me }) {
   const projects = useProjects();
   const runs = useRuns();
-  const findings = useFindings();
+  const findings = useFindings({ current: true }); // each project's latest audit, not every audit's copy
   const events = useEvents(14);
   const { projectId } = useUi();
   const [auditing, setAuditing] = useState(false);

@@ -27,6 +27,7 @@ from ai_coding.persistence.models import (
     AgentExecution,
     Finding,
     ModelUsage,
+    Run,
     RunJob,
     Task,
 )
@@ -199,6 +200,69 @@ def test_findings_of_every_visible_project(world: dict[str, Any]) -> None:
     assert titles(severity="nonsense", run_id="garbage") == []
     assert len(_get(world, "dev", "/findings", limit=1)) == 1
     assert _status(world, "", "/findings") == 401
+
+
+def test_current_findings_are_the_latest_audits(tmp_path: Path) -> None:
+    """Each audit records its findings anew. ``current`` keeps those of each project's latest
+    audit whose Quality Gates ran (not every audit's copy, nor an audit still scanning); a
+    finding its gates accepted through the baseline is ``baselined`` in that audit."""
+    root = tmp_path / "repos" / "alpha"
+    root.mkdir(parents=True)
+    (root / "main.py").write_text("print(1)\n", encoding="utf-8")
+    srv = Server(ServerSettings(data_dir=tmp_path / "data",
+                                database_url=f"sqlite:///{tmp_path / 's.db'}",
+                                allowed_roots=(root.parent.resolve(),),
+                                rate_limit_per_minute=100_000))  # fmt: skip
+    try:
+        srv.migrate()
+        srv.create_user("dev", PASSWORD)
+        dev = srv.login("dev", PASSWORD)
+        assert dev is not None
+        alpha = srv.create_project(dev, "alpha", path=str(root.resolve()))
+        first, second, scanning = (srv.create_run(dev, alpha, "discover", {}) for _ in range(3))
+        now = utcnow()
+        with srv.session() as s:
+            for age, run in enumerate((scanning, second, first)):
+                found = s.get(Run, run)
+                assert found is not None
+                found.created_at = now - timedelta(hours=age)
+            for run, gates, suppressed in ((first, "SUCCEEDED", []), (second, "SUCCEEDED", ["a"]),
+                                           (scanning, "PENDING", [])):  # fmt: skip
+                s.add(Task(run_id=run, key="quality.gates", name="Quality gates",
+                           phase="verification", capability="quality.gates", status=gates,
+                           output={"verdict": "FAIL", "suppressed": suppressed}))  # fmt: skip
+            for run, keys in ((first, "ab"), (second, "ac"), (scanning, "d")):
+                for key in keys:
+                    s.add(Finding(project_id=alpha, run_id=run, source="trivy", severity="high",
+                                  title=f"vuln {key}", status="open", fingerprint=key))  # fmt: skip
+        with TestClient(create_app(srv)) as client:
+            login = {"username": "dev", "password": PASSWORD}
+            token = client.post("/api/v1/auth/login", json=login).json()["token"]
+
+            def findings(**params: Any) -> list[tuple[str, str, str]]:
+                r = client.get("/api/v1/findings", params=params,
+                               headers={"Authorization": f"Bearer {token}"})  # fmt: skip
+                assert r.status_code == 200, r.text
+                order = {str(first): 1, str(second): 2, str(scanning): 3}
+                return sorted(
+                    (f["title"], f["status"], f"run{order[f['run_id']]}") for f in r.json()
+                )
+
+            assert findings(current="true") == [("vuln a", "baselined", "run2"),
+                                                ("vuln c", "open", "run2")]  # fmt: skip
+            assert findings() == [("vuln a", "baselined", "run2"), ("vuln a", "open", "run1"),
+                                  ("vuln b", "open", "run1"), ("vuln c", "open", "run2"),
+                                  ("vuln d", "open", "run3")]  # fmt: skip
+            assert findings(current="true", status="open") == [("vuln c", "open", "run2")]
+            assert findings(status="baselined") == [("vuln a", "baselined", "run2")]
+            assert findings(run_id=str(first)) == [("vuln a", "open", "run1"),
+                                                   ("vuln b", "open", "run1")]  # fmt: skip
+            # A project without a finished audit has no current findings.
+            with srv.session() as s:
+                s.query(Task).filter(Task.key == "quality.gates").delete()
+            assert findings(current="true") == []
+    finally:
+        srv.close()
 
 
 def test_agent_executions(world: dict[str, Any]) -> None:

@@ -286,6 +286,78 @@ describe("agents", () => {
     expect(screen.getByText("Выберите проект")).toBeTruthy();
   });
 
+  it("opens an agent from its card: every task it ran, with status, run, time, tokens and errors", async () => {
+    useUi.setState({ projectId: "p1" });
+    const history = [
+      exec("agent.developer", "running", "r2", null, { id: "e3", task_key: "implement", started_at: "2026-11-06T12:00:00Z" }),
+      exec("agent.developer", "failed", "r1", "2026-11-06T11:01:00Z", { id: "e2", task_key: "implement", attempt: 2, started_at: "2026-11-06T11:00:00Z", error: "tests failed: 2 of 40\ntraceback…", duration_seconds: 75 }),
+      exec("agent.developer", "succeeded", "r1", "2026-11-06T10:00:30Z", { id: "e1", task_key: "plan.patch", started_at: "2026-11-06T10:00:00Z", duration_seconds: 30, input_tokens: 4000, output_tokens: 1000, cost_usd: 0.05 }),
+      exec("agent.reviewer", "succeeded", "r1", "2026-11-06T10:02:00Z"),
+      exec("builtin.audit.snapshot", "succeeded", "r3", "2026-11-06T09:00:05Z", { id: "b1", task_key: "audit.snapshot", models: [], input_tokens: 0, output_tokens: 0, cost_usd: 0 }),
+    ];
+    serve({
+      "GET /projects/p1": { ...PROJECTS[0], members: [], kinds: [] },
+      "GET /agents": [agent("developer"), agent("reviewer"), agent("security")],
+      "GET /projects/p1/agent-executions?limit=100": history,
+      "GET /projects/p1/agent-executions?limit=500": history,
+      "GET /runs?limit=100&project_id=p1": [run("r2", "RUNNING", "develop", "p1", "develop: Add tax"), run("r1", "FAILED", "develop", "p1", "develop: Export CSV")],
+    });
+    const grid = show(<Agents />);
+    const card = await screen.findByRole("article", { name: "Агент developer" });
+    expect(within(card).getByRole("link", { name: "developer" }).getAttribute("href")).toBe("#/agents?agent=developer");
+    expect(screen.getByRole("link", { name: "builtin.audit.snapshot" }).getAttribute("href")).toBe("#/agents?agent=builtin.audit.snapshot");
+    grid.unmount();
+
+    // What the router renders for #/agents?agent=developer.
+    show(<Agents query={{ agent: "developer" }} />);
+    const table = await screen.findByRole("region", { name: "Задачи агента" });
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows.map((r) => r.querySelector("code")?.textContent)).toEqual(["implement", "implement", "plan.patch"]); // newest first
+    expect(within(rows[0] as HTMLElement).getByText("выполняется")).toBeTruthy();
+    expect(within(rows[0] as HTMLElement).getByText("идёт")).toBeTruthy();
+    expect(within(rows[0] as HTMLElement).getByText("develop: Add tax")).toBeTruthy();
+    const failed = rows[1] as HTMLElement;
+    expect(within(failed).getByText("ошибка")).toBeTruthy();
+    expect(within(failed).getByText("tests failed: 2 of 40").getAttribute("title")).toContain("traceback");
+    expect(within(failed).getByText("1 мин 15 с")).toBeTruthy();
+    expect(within(failed).getByRole("cell", { name: "2" })).toBeTruthy(); // the second attempt
+    expect(within(failed).getByRole("link").getAttribute("href")).toBe("#/runs/r1");
+    expect(within(rows[2] as HTMLElement).getByText(/^5\s000$/)).toBeTruthy(); // tokens
+    expect(within(rows[2] as HTMLElement).getByText("$0.0500")).toBeTruthy();
+    const stats = screen.getByLabelText("Итоги агента");
+    const stat = (label: string) => within(stats).getByText(label).previousSibling?.textContent;
+    expect([stat("запусков"), stat("успешно"), stat("с ошибкой"), stat("в работе"), stat("среднее время")]).toEqual(["3", "1", "1", "1", "53 с"]);
+    expect(screen.queryByText("agent.reviewer.step")).toBeNull(); // only this agent's tasks
+
+    fireEvent.change(screen.getByLabelText("Статус"), { target: { value: "failed" } });
+    expect(within(table).getAllByRole("row")).toHaveLength(2);
+    fireEvent.click(within(table).getAllByRole("row")[1] as HTMLElement);
+    expect(window.location.hash).toBe("#/runs/r1");
+    expect(screen.getByRole("link", { name: /Все агенты/ }).getAttribute("href")).toBe("#/agents");
+  });
+
+  it("explains an agent that has not run in the project, and opens built-in steps too", async () => {
+    useUi.setState({ projectId: "p1" });
+    serve({
+      "GET /projects/p1": { ...PROJECTS[0], members: [], kinds: [] },
+      "GET /agents": [agent("security")],
+      "GET /projects/p1/agent-executions?limit=500": [exec("builtin.audit.snapshot", "succeeded", "r3", "2026-11-06T09:00:05Z")],
+      "GET /runs?limit=100&project_id=p1": [],
+    });
+    const first = show(<Agents query={{ agent: "security" }} />);
+    expect(await screen.findByText("В этом проекте ещё не запускался")).toBeTruthy();
+    expect(screen.getByText(/передать задачу платформе/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Задачи" }).getAttribute("href")).toBe("#/tasks");
+    first.unmount();
+
+    show(<Agents query={{ agent: "builtin.audit.snapshot" }} />);
+    expect(await screen.findByText(/Встроенный обработчик оркестратора/)).toBeTruthy();
+    const rows = within(await screen.findByRole("region", { name: "Задачи агента" })).getAllByRole("row");
+    expect(rows).toHaveLength(2);
+    expect(within(rows[1] as HTMLElement).getByText("успешно")).toBeTruthy();
+    expect(within(rows[1] as HTMLElement).getByRole("link").getAttribute("href")).toBe("#/runs/r3"); // its run
+  });
+
   it("is waiting while its run waits for a person", () => {
     const list = [exec("agent.maintenance", "running", "r5", null)];
     expect(agentStatus(list, () => "AWAITING_APPROVAL")).toBe("waiting");

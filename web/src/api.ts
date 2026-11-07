@@ -538,8 +538,12 @@ export const api = {
   // NEXUS views: data across projects (only those the caller may see) and insights.
   allRuns: (filter: { limit?: number; state?: string; kind?: string; project_id?: string } = {}) =>
     request<GlobalRun[]>("GET", `/runs${query(filter)}`),
-  allFindings: (filter: { limit?: number; severity?: string; status?: string; source?: string; project_id?: string; run_id?: string } = {}) =>
-    request<FindingRow[]>("GET", `/findings${query(filter)}`),
+  // current: only each project's latest audit (every audit records its findings anew).
+  allFindings: ({
+    current,
+    ...filter
+  }: { limit?: number; severity?: string; status?: string; source?: string; project_id?: string; run_id?: string; current?: boolean } = {}) =>
+    request<FindingRow[]>("GET", `/findings${query({ ...filter, current: current ? "true" : undefined })}`),
   events: (limit = 50) => request<AuditRow[]>("GET", `/audit-events${query({ limit })}`),
   agents: () => request<AgentInfo[]>("GET", "/agents"),
   agentExecutions: (projectId: string, limit = 100) =>

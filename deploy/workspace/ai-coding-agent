@@ -202,8 +202,8 @@ def read_only_command(command: str) -> bool:
         tokens = list(lexer)
     except ValueError:
         return False
-    if len(tokens) == 3 and tokens[0] in SHELLS and tokens[1] in ("-c", "-lc"):
-        return read_only_command(tokens[2])  # Codex runs commands as `bash -lc '...'`
+    if len(tokens) == 3 and os.path.basename(tokens[0]) in SHELLS and tokens[1] in ("-c", "-lc"):
+        return read_only_command(tokens[2])  # Codex: `/usr/bin/bash -lc '...'`
     commands: list[list[str]] = [[]]
     index = 0
     while index < len(tokens):
@@ -1015,6 +1015,14 @@ class Codex:
                 what = f"«$ {clip(params.get('command'), 200)}»" if params.get("command") else "правка"
                 session.emit({"t": "notice",
                               "text": f"Режим «Аудит» только читает: {what} не выполнено."})  # fmt: skip
+            return
+        if (session.planning and session.meta.get("mode") in ("edits", "full")
+                and method.startswith("item/commandExecution")
+                and read_only_command(str(params.get("command") or ""))):  # fmt: skip
+            # Until the plan is approved Codex runs "untrusted" and asks even to read. The
+            # user chose edits without questions: what only reads goes through, as in
+            # Claude Code's plan mode; changes still wait for the approved plan.
+            self.write({"id": rid, "result": {"decision": "accept"}})
             return
         approval_id = f"codex-{rid}"
         if method.startswith("item/commandExecution"):

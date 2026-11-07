@@ -386,7 +386,7 @@ describe("project explorer and onboarding", () => {
         { id: "r1", project_id: "p1", project_name: "alpha", state: "FAILED", mode: "audit", goal: "audit",
           kind: "audit", requested_by: "alice", created_at: "2026-11-05T11:00:00", finished_at: null },
       ],
-      "GET /findings?limit=1000": [
+      "GET /findings?limit=1000&current=true": [
         { id: "f1", project_id: "p1", project_name: "alpha", source: "ruff", rule_id: "E1", severity: "low",
           file_path: "a.py", line: 1, title: "x", status: "open" },
         { id: "f2", project_id: "p1", project_name: "alpha", source: "ruff", rule_id: "E2", severity: "low",

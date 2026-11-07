@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -18,6 +19,8 @@ from ai_coding.executors import (
     LocalExecutor,
     Mount,
 )
+from ai_coding.executors import docker as docker_executor
+from ai_coding.executors.process import run_process
 
 PY = Path(sys.executable).name
 posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
@@ -105,6 +108,43 @@ async def test_local_timeout_kills_process_tree(tmp_path: Path) -> None:
     assert time.monotonic() - started < 10
     time.sleep(3.5)
     assert not marker.exists(), "grandchild survived the timeout"
+
+
+@posix_only
+async def test_a_failing_timeout_cleanup_still_kills_the_process(tmp_path: Path) -> None:
+    """The executor's cleanup after a timeout (``docker kill``) may fail: the command's own
+    process is killed and its output drained all the same."""
+    marker = tmp_path / "alive"
+    script = f"import time\ntime.sleep(1.5)\nopen({str(marker)!r}, 'w').close()\n"
+
+    def cleanup() -> None:
+        raise RuntimeError("cleanup failed")
+
+    with pytest.raises(RuntimeError, match="cleanup failed"):
+        await run_process([sys.executable, "-c", script], cwd=tmp_path, env=dict(os.environ),
+                          timeout=0.3, max_output_bytes=1000, on_timeout=cleanup)  # fmt: skip
+    time.sleep(2)
+    assert not marker.exists(), "the command survived its timeout"
+
+
+@posix_only
+async def test_docker_timeout_when_the_daemon_does_not_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A scan that runs out of time while the Docker daemon is overloaded (``docker kill``
+    hangs too) ends as a timeout that says so, not as the cleanup's TimeoutExpired."""
+    fake = tmp_path / "docker"
+    fake.write_text(f"#!{sys.executable}\nimport sys, time\ntime.sleep(30)\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setattr(docker_executor, "KILL_TIMEOUT", 0.5)
+    executor = DockerSandboxExecutor(docker=str(fake), require_digest=False)
+    started = time.monotonic()
+    result = await executor.run(CommandSpec(argv=("semgrep", "scan"), cwd=tmp_path,
+                                            image="scanner:test", timeout_seconds=1.0))  # fmt: skip
+    assert result.timed_out and not result.ok
+    assert "did not stop container ai-coding-" in result.stderr
+    assert "TimeoutExpired" in result.stderr
+    assert time.monotonic() - started < 10
 
 
 async def test_local_rejects_sandbox_only_options(tmp_path: Path) -> None:

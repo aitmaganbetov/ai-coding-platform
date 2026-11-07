@@ -25,7 +25,7 @@ from ai_coding.api.accounts import AccountService
 from ai_coding.api.core import Principal, iso_or_none
 from ai_coding.api.rbac import Permission, allowed, capped
 from ai_coding.api.runs import RunService, finding_dict, usage_dict, usage_sums
-from ai_coding.domain.enums import Role
+from ai_coding.domain.enums import Role, TaskStatus
 from ai_coding.persistence.models import (
     AgentExecution,
     Finding,
@@ -49,6 +49,11 @@ ERROR_CHARS = 500
 WORKER_SEEN = timedelta(minutes=10)
 # Analysers whose offline vulnerability databases ``ai-coding tools pull`` prepares.
 ANALYSERS = ("trivy", "osv-scanner")
+# The audit step that evaluates the findings of a run's scans against the Quality Gates and
+# the baseline: once it succeeded, the run's findings are a complete picture of the project.
+GATES_STEP = "quality.gates"
+# Findings whose stored status these filters compare with the status a run's gates give.
+GATED_STATUSES = ("open", "baselined")
 
 
 def _uuid_or_none(value: str | None) -> uuid.UUID | None:
@@ -181,24 +186,71 @@ class InsightService(AccountService, RunService):
         source: str | None = None,
         project_id: str | None = None,
         run_id: str | None = None,
+        current: bool = False,
     ) -> list[dict[str, Any]]:
-        """Findings of every project the caller may view, newest first."""
+        """Findings of every project the caller may view, newest first.
+
+        Each audit records its findings anew: ``current`` keeps those of each project's
+        latest audit whose Quality Gates ran, the project's state, instead of every audit's
+        copy. A finding the run's gates accepted through the baseline is ``baselined``.
+        """
         with self.session() as s:
             names = self._scope(s, principal, Permission.FINDINGS_VIEW, project_id)
             if not names:
                 return []
             query = select(Finding).where(Finding.project_id.in_(names))
-            for column, value in ((Finding.severity, severity), (Finding.status, status),
-                                  (Finding.source, source)):  # fmt: skip
+            if current:
+                query = query.where(Finding.run_id.in_(self._latest_audits(s, list(names))))
+            gated = status in GATED_STATUSES
+            for column, value in ((Finding.severity, severity), (Finding.source, source),
+                                  (Finding.status, "open" if gated else status)):  # fmt: skip
                 if value:
                     query = query.where(column == value)
             if run_id:
                 query = query.where(Finding.run_id == _uuid_or_none(run_id))
-            rows = s.scalars(
+            rows = list(s.scalars(
                 query.order_by(Finding.created_at.desc(), Finding.id.desc())
                 .limit(min(limit, MAX_FINDINGS))
-            )  # fmt: skip
-            return [{**finding_dict(f), "project_name": names[f.project_id]} for f in rows]
+            ))  # fmt: skip
+            accepted = self._baselined(s, {f.run_id for f in rows if f.run_id is not None})
+            found = []
+            for f in rows:
+                item = {**finding_dict(f), "project_name": names[f.project_id]}
+                if f.status == "open" and f.run_id and f.fingerprint in accepted.get(f.run_id, ()):
+                    item["status"] = "baselined"
+                if not gated or item["status"] == status:
+                    found.append(item)
+            return found
+
+    @staticmethod
+    def _latest_audits(s: Session, project_ids: list[uuid.UUID]) -> list[uuid.UUID]:
+        """Per project, the newest run whose Quality Gates step succeeded."""
+        latest: dict[uuid.UUID, uuid.UUID] = {}
+        for project, run in s.execute(
+            select(Run.project_id, Run.id)
+            .join(Task, Task.run_id == Run.id)
+            .where(Run.project_id.in_(project_ids), Task.key == GATES_STEP,
+                   Task.status == TaskStatus.SUCCEEDED.value)
+            .order_by(Run.created_at.desc(), Run.id.desc())
+        ):  # fmt: skip
+            latest.setdefault(project, run)
+        return list(latest.values())
+
+    @staticmethod
+    def _baselined(s: Session, run_ids: set[uuid.UUID]) -> dict[uuid.UUID, set[str]]:
+        """Per run, the fingerprints its Quality Gates accepted through the baseline."""
+        if not run_ids:
+            return {}
+        accepted: dict[uuid.UUID, set[str]] = {}
+        for run, output in s.execute(
+            select(Task.run_id, Task.output)
+            .where(Task.run_id.in_(run_ids), Task.key == GATES_STEP,
+                   Task.status == TaskStatus.SUCCEEDED.value)
+        ):  # fmt: skip
+            suppressed = (output or {}).get("suppressed") if isinstance(output, dict) else None
+            if isinstance(suppressed, list):
+                accepted[run] = {str(f) for f in suppressed}
+        return accepted
 
     # --------------------------------------------------------- per project --
     def agent_executions(
