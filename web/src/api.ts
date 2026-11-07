@@ -223,6 +223,8 @@ export interface RunDetail {
   dependencies?: { task: string; depends_on: string }[];
   gates?: Gate[] | null;
   usage?: { input_tokens: number; output_tokens: number; cost_usd: number };
+  /** Per finished step: branch, base, commit, url, iterations, verdict, summary (if any). */
+  results?: Record<string, Record<string, string | number>>;
 }
 
 export interface ArtifactInfo {
@@ -448,6 +450,17 @@ export async function download(path: string, filename: string): Promise<void> {
   link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+/** A run artifact's content as text (implementation.json, change.diff…). */
+export async function artifactText(runId: string, artifactId: string): Promise<string> {
+  const token = getToken();
+  const response = await fetch(`/api/v1/runs/${runId}/artifacts/${artifactId}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    credentials: "omit",
+  });
+  if (!response.ok) throw new ApiError(response.status, `HTTP ${response.status}`);
+  return response.text();
 }
 
 export function errorText(err: unknown): string {

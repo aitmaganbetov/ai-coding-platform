@@ -332,6 +332,26 @@ def test_run_detail_has_graph_gates_and_usage(world: dict[str, Any]) -> None:
     assert other["usage"] == {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
 
 
+def test_run_detail_reports_what_the_steps_produced(world: dict[str, Any]) -> None:
+    """``results``: per succeeded step, where the change is and the agents' verdict, only
+    the listed scalar fields, clipped; a step not finished reports nothing."""
+    with world["server"].session() as s:
+        s.add(Task(run_id=world["gamma_run"], key="develop.implement", name="Implement",
+                   phase="execution", capability="develop.implement", status="SUCCEEDED",
+                   output={"branch": "ai/add-tax", "base": "main", "commit": "abc123",
+                           "iterations": 2, "summary": "x" * 5000, "plan": {"steps": [1]},
+                           "changes": [{"path": "tax.py"}], "pr_body": "secret-ish body",
+                           "tests": True}))  # fmt: skip
+        s.add(Task(run_id=world["gamma_run"], key="github.pr", name="Pull request",
+                   phase="execution", capability="github.pr", status="PENDING",
+                   output={"url": "https://github.com/o/r/pull/1"}))  # fmt: skip
+    results = _get(world, "outsider", f"/runs/{world['gamma_run']}")["results"]
+    implement = results["develop.implement"]
+    assert implement == {"branch": "ai/add-tax", "base": "main", "commit": "abc123",
+                         "iterations": 2, "summary": "x" * 2000}  # fmt: skip
+    assert "github.pr" not in results  # not finished
+
+
 def test_project_config_summary(world: dict[str, Any]) -> None:
     root = world["server"].settings.allowed_roots[0] / "beta"
     path = root / STATE_CONFIG

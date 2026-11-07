@@ -7,7 +7,7 @@ import { queryClient } from "../data/queries";
 import { RunPage } from "../RunPage";
 import { useUi } from "../shell/store";
 import { TooltipProvider } from "../ui";
-import Agents, { agentStatus } from "./Agents";
+import Agents, { agentStatus, executionsOf } from "./Agents";
 import Tasks, { parseIssues } from "./Tasks";
 
 // React Flow needs a real layout engine: the graph is checked by its inputs here.
@@ -267,7 +267,7 @@ describe("agents", () => {
       "GET /runs?limit=100&project_id=p1": [run("r1", "RUNNING", "develop", "p1", "develop: Add tax"), run("r0", "FAILED", "develop", "p1", "older")],
       "GET /runs/r1": { ...DETAIL, tasks: [{ key: "agent.developer.step", phase: "execution", status: "RUNNING", attempts: 1, error: null }], dependencies: [] },
     });
-    show(<Agents />);
+    show(<Agents query={{ view: "grid" }} />);
     const developer = await screen.findByRole("article", { name: "Агент developer" });
     expect(within(developer).getByText("В работе")).toBeTruthy();
     expect(within(screen.getByRole("article", { name: "Агент reviewer" })).getByText("Ошибка")).toBeTruthy();
@@ -302,7 +302,7 @@ describe("agents", () => {
       "GET /projects/p1/agent-executions?limit=500": history,
       "GET /runs?limit=100&project_id=p1": [run("r2", "RUNNING", "develop", "p1", "develop: Add tax"), run("r1", "FAILED", "develop", "p1", "develop: Export CSV")],
     });
-    const grid = show(<Agents />);
+    const grid = show(<Agents query={{ view: "grid" }} />);
     const card = await screen.findByRole("article", { name: "Агент developer" });
     expect(within(card).getByRole("link", { name: "developer" }).getAttribute("href")).toBe("#/agents?agent=developer");
     expect(screen.getByRole("link", { name: "builtin.audit.snapshot" }).getAttribute("href")).toBe("#/agents?agent=builtin.audit.snapshot");
@@ -346,8 +346,8 @@ describe("agents", () => {
     });
     const first = show(<Agents query={{ agent: "security" }} />);
     expect(await screen.findByText("В этом проекте ещё не запускался")).toBeTruthy();
-    expect(screen.getByText(/передать задачу платформе/)).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Задачи" }).getAttribute("href")).toBe("#/tasks");
+    expect(screen.getByText("Аудит с ИИ-триажем находок.")).toBeTruthy(); // where it works: not the workspace
+    expect(screen.queryByRole("link", { name: "Открыть рабочую зону" })).toBeNull();
     first.unmount();
 
     show(<Agents query={{ agent: "builtin.audit.snapshot" }} />);
@@ -356,6 +356,46 @@ describe("agents", () => {
     expect(rows).toHaveLength(2);
     expect(within(rows[1] as HTMLElement).getByText("успешно")).toBeTruthy();
     expect(within(rows[1] as HTMLElement).getByRole("link").getAttribute("href")).toBe("#/runs/r3"); // its run
+  });
+
+  it("counts the work of a step that runs agents for those agents, and says where each one works", async () => {
+    const list = [exec("builtin.develop.implement", "running", "r1", null), exec("agent.security.triage", "succeeded", "r2", "2026-11-06T10:00:09Z")];
+    expect(executionsOf("developer", list).map((e) => e.run_id)).toEqual(["r1"]);
+    expect(executionsOf("reviewer", list).map((e) => e.run_id)).toEqual(["r1"]);
+    expect(executionsOf("security", list).map((e) => e.run_id)).toEqual(["r2"]);
+    expect(executionsOf("qa", list)).toEqual([]);
+
+    useUi.setState({ projectId: "p1" });
+    serve({
+      "GET /projects/p1": { ...PROJECTS[0], members: [], kinds: [] },
+      "GET /agents": [agent("developer"), agent("qa")],
+      "GET /projects/p1/agent-executions?limit=100": list,
+      "GET /runs?limit=100&project_id=p1": [run("r1", "RUNNING", "develop", "p1", "develop: Add tax")],
+    });
+    show(<Agents query={{ view: "grid" }} />);
+    const developer = await screen.findByRole("article", { name: "Агент developer" });
+    expect(within(developer).getByText("В работе")).toBeTruthy(); // inside builtin.develop.implement
+    expect(within(developer).getByText(/Рабочая зона: «Разработка» и «Исправления»/)).toBeTruthy();
+    expect(within(screen.getByRole("article", { name: "Агент qa" })).getByText(/Пока не подключён/)).toBeTruthy();
+  });
+
+  it("opens the workspace by default and offers it to an agent that has not run", async () => {
+    useUi.setState({ projectId: "p1" });
+    serve({
+      "GET /projects/p1": { ...PROJECTS[0], members: [], kinds: [] },
+      "GET /projects/p1/ai": { effective: { enabled: false, provider: "none" }, key: { set: false }, valid: true, error: null },
+      "GET /agents": [agent("developer")],
+      "GET /projects/p1/agent-executions?limit=100": [],
+      "GET /projects/p1/agent-executions?limit=500": [],
+      "GET /runs?limit=100&project_id=p1": [],
+    });
+    const first = show(<Agents />);
+    expect(await screen.findByRole("button", { name: /Запустить агентов/ })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: /Рабочая зона/ }).getAttribute("aria-checked")).toBe("true");
+    first.unmount();
+    show(<Agents query={{ agent: "developer" }} />);
+    expect(await screen.findByText(/Дайте агентам задачу в рабочей зоне/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Открыть рабочую зону" }).getAttribute("href")).toBe("#/agents?view=workspace");
   });
 
   it("is waiting while its run waits for a person", () => {

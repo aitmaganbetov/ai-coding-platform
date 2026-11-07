@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Bot, Cpu, GitFork, LayoutGrid, ListChecks, Wrench } from "lucide-react";
+import { ArrowLeft, Bot, Cpu, GitFork, LayoutGrid, ListChecks, Wand2, Wrench } from "lucide-react";
 import { lazy, Suspense, useMemo, useState } from "react";
 import { type AgentExecution, type AgentInfo, api, type GlobalRun } from "../api";
 import { useAgentExecutions, useAgents, useProject, useRun, useRuns } from "../data/queries";
@@ -27,14 +27,16 @@ import {
   StateBadge,
   type Tone,
 } from "../ui";
+import AgentWorkspace, { agentsOfHandler } from "./AgentWorkspace";
 import type { StepAnnotation } from "./RunGraph";
 import "./tasks.css";
 
-// Agent Control Center: the twelve agents of the orchestrator (ТЗ §6) with what they are
-// doing in the current project, and the workflow of a run — which step each agent took
-// and where it failed. A card opens the agent (#/agents?agent=<name>): every task it ran
-// in the project with its status, run, time, tokens, cost and error. Everything is read
-// from the agents' recorded executions.
+// Agent Control Center: the agents' workspace (a task in plain words to the agents, the
+// run followed live: AgentWorkspace), the twelve agents of the orchestrator (ТЗ §6) with
+// what they are doing in the current project, and the workflow of a run — which step each
+// agent took and where it failed. A card opens the agent (#/agents?agent=<name>): every
+// task it ran in the project with its status, run, time, tokens, cost and error.
+// Everything is read from the agents' recorded executions.
 
 const RunGraph = lazy(() => import("./RunGraph"));
 
@@ -58,12 +60,29 @@ const EXEC_STATUS: Record<string, { label: string; tone: Tone }> = {
 export const execLabel = (status: string) => EXEC_STATUS[status]?.label ?? status;
 const DETAIL_LIMIT = 500; // the API's maximum: an agent's whole recent history
 
-/** Executions of a catalogue agent (its handler is ``agent.<name>``). */
+/** Executions of a catalogue agent: its handler (``agent.<name>``, ``agent.<name>.<step>``)
+ * or a step that runs it (Developer and Reviewer work inside ``builtin.develop.implement``). */
 export function executionsOf(name: string, executions: AgentExecution[]): AgentExecution[] {
   return executions
-    .filter((e) => e.agent_name === `agent.${name}` || e.agent_name === name)
+    .filter((e) => e.agent_name === name || agentsOfHandler(e.agent_name).includes(name))
     .sort((a, b) => b.started_at.localeCompare(a.started_at));
 }
+
+// Where each agent works on the platform: what starts it, or that nothing does yet.
+export const AGENT_WHERE: Record<string, { text: string; workspace: boolean }> = {
+  requirements: { text: "Создание проекта: только CLI (ai-coding create)", workspace: false },
+  architect: { text: "Создание проекта: только CLI (ai-coding create)", workspace: false },
+  planner: { text: "Создание и модернизация: только CLI", workspace: false },
+  bootstrap: { text: "Создание проекта: только CLI, без LLM", workspace: false },
+  developer: { text: "Рабочая зона: «Разработка» и «Исправления»", workspace: true },
+  reviewer: { text: "Рабочая зона: проверяет каждое изменение Developer", workspace: true },
+  database: { text: "Рабочая зона: «Разработка», если задача меняет миграции", workspace: true },
+  maintenance: { text: "Рабочая зона: «Исправления» (план → ваше согласие)", workspace: true },
+  security: { text: "Аудит с ИИ-триажем находок", workspace: false },
+  qa: { text: "Пока не подключён к сценариям платформы", workspace: false },
+  performance: { text: "Пока не подключён к сценариям платформы", workspace: false },
+  devops: { text: "Пока не подключён к сценариям платформы", workspace: false },
+};
 
 /** What an agent does now, from its latest execution and the state of that run. */
 export function agentStatus(executions: AgentExecution[], runState: (runId: string) => string | undefined): AgentStatus {
@@ -118,6 +137,11 @@ function AgentCard({ agent, executions, runState }: { agent: AgentInfo; executio
       <p className="agent-io">
         <span className="text-muted">Вход:</span> {agent.inputs}
       </p>
+      {AGENT_WHERE[agent.name] && (
+        <p className="agent-io">
+          <span className="text-muted">Где работает:</span> {AGENT_WHERE[agent.name]?.text}
+        </p>
+      )}
       {latest ? (
         <dl className="kv agent-kv">
           <dt>Задача</dt>
@@ -275,6 +299,7 @@ function AgentDetail({ name, projectId, runs }: { name: string; projectId: strin
   });
   const [status, setStatus] = useState("");
   const info = agents.data?.find((a) => a.name === name || `agent.${a.name}` === name);
+  const where = info ? AGENT_WHERE[info.name] : undefined;
   const all = useMemo(() => {
     const list = history.data ?? [];
     return info ? executionsOf(info.name, list) : list.filter((e) => e.agent_name === name).sort((a, b) => b.started_at.localeCompare(a.started_at));
@@ -363,12 +388,18 @@ function AgentDetail({ name, projectId, runs }: { name: string; projectId: strin
         {() =>
           all.length === 0 ? (
             <EmptyState icon={<ListChecks size={20} />} title="В этом проекте ещё не запускался">
-              Агенты оркестратора работают в run'ах проекта с его ИИ-провайдером: создайте задачу в «Задачах» или попросите агента в чате передать задачу платформе.
-              <div className="agent-detail-actions">
-                <LinkButton href={href("tasks")} size="sm">
-                  Задачи
-                </LinkButton>
-              </div>
+              {where?.workspace
+                ? `${where.text}. Дайте агентам задачу в рабочей зоне — он включится в её ходе.`
+                : where
+                  ? `${where.text}.`
+                  : "Агенты оркестратора работают в run'ах проекта с его ИИ-провайдером."}
+              {where?.workspace && (
+                <div className="agent-detail-actions">
+                  <LinkButton href={href("agents", undefined, { view: "workspace" })} size="sm" variant="primary">
+                    Открыть рабочую зону
+                  </LinkButton>
+                </div>
+              )}
             </EmptyState>
           ) : (
             <div className="stack">
@@ -421,7 +452,8 @@ export default function Agents({ query = {} }: { query?: Record<string, string> 
   const project = useProject(projectId);
   const executions = useAgentExecutions(projectId);
   const runs = useRuns(projectId ? { project_id: projectId } : {});
-  const [view, setView] = useState<"grid" | "flow">("grid");
+  type View = "workspace" | "grid" | "flow";
+  const [view, setView] = useState<View>(query.view === "grid" || query.view === "flow" ? query.view : "workspace");
   const opened = query.agent;
   if (opened && projectId)
     return (
@@ -458,6 +490,7 @@ export default function Agents({ query = {} }: { query?: Record<string, string> 
             value={view}
             onChange={setView}
             options={[
+              { value: "workspace", label: <><Wand2 size={13} aria-hidden /> Рабочая зона</> },
               { value: "grid", label: <><LayoutGrid size={13} aria-hidden /> Сетка</> },
               { value: "flow", label: <><GitFork size={13} aria-hidden /> Поток работы</> },
             ]}
@@ -468,6 +501,8 @@ export default function Agents({ query = {} }: { query?: Record<string, string> 
         <EmptyState icon={<Bot size={20} />} title="Выберите проект">
           Состояние агентов показывается по проекту — выберите его в переключателе слева вверху.
         </EmptyState>
+      ) : view === "workspace" ? (
+        <AgentWorkspace projectId={projectId} initialRun={query.run} />
       ) : (
         <QueryState query={executions} skeleton={<Skeleton lines={6} />}>
           {(list) =>
