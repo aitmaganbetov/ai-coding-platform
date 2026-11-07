@@ -7,10 +7,11 @@ import { href } from "../shell/routes";
 import { useUi } from "../shell/store";
 import { Card, EmptyState, GateBadge, PageHeader, QueryState, relativeTime, Select, shortId, Skeleton, StateBadge } from "../ui";
 import "./quality.css";
+import { TestRuns } from "./TestRuns";
 
-// Testing & Quality Gates: what the audits' gates decided, per project and over time.
-// Per-test results (JUnit) are not exposed by the API yet: this page says so instead of
-// inventing suites.
+// Testing & Quality Gates: what the audits' gates decided, per project and over time,
+// and the per-test results of the project's runs (JUnit reports, ADR-0044: «Тестовые
+// прогоны»). A run without a report says why instead of inventing suites.
 
 export const GATES = ["build", "tests", "static", "security", "coverage", "review"] as const;
 const GATE_LABEL: Record<string, string> = {
@@ -163,8 +164,8 @@ function History_({ runs }: { runs: GlobalRun[] }) {
             </ul>
           )}
           <p className="text-muted note">
-            Подробности по отдельным тестам (наборы, длительность, упавшие тесты) API пока не отдаёт: видно решение gate и его причину. Тесты и mypy
-            ставят зависимости проекта, поэтому без доступа песочницы к PyPI или npm (allowlist в .ai-coding.yml) они пропускаются.
+            Наборы, отдельные тесты, длительности и регрессии — в «Тестовых прогонах» ниже. Тесты и mypy ставят зависимости проекта, поэтому без доступа
+            песочницы к PyPI или npm (allowlist в .ai-coding.yml) они пропускаются.
           </p>
         </Card>
       </div>
@@ -186,7 +187,7 @@ export default function Testing() {
       <PageHeader
         icon={<FlaskConical size={18} />}
         title="Тесты и Quality Gates"
-        subtitle="Решения gates сборки, тестов, статического анализа, безопасности, покрытия и ревью — по последним аудитам и в истории."
+        subtitle="Решения gates сборки, тестов, статического анализа, безопасности, покрытия и ревью — по последним аудитам и в истории; результаты отдельных тестов каждого прогона."
         actions={
           <Select
             label="Проект"
@@ -203,11 +204,14 @@ export default function Testing() {
           </QueryState>
         </Card>
         {project ? (
-          <QueryState query={audits} skeleton={<Skeleton lines={5} />}>
-            {() => <History_ runs={projectAudits} />}
-          </QueryState>
+          <>
+            <QueryState query={audits} skeleton={<Skeleton lines={5} />}>
+              {() => <History_ runs={projectAudits} />}
+            </QueryState>
+            <TestRuns projectId={project} />
+          </>
         ) : (
-          <EmptyState title="Выберите проект">История gates показывается по одному проекту.</EmptyState>
+          <EmptyState title="Выберите проект">История gates и тестовые прогоны показываются по одному проекту.</EmptyState>
         )}
       </div>
     </div>

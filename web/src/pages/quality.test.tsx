@@ -7,9 +7,6 @@ import { queryClient } from "../data/queries";
 import { useUi } from "../shell/store";
 import { TooltipProvider } from "../ui";
 import AuditCenter, { categoryOf, compareAudits, fixDraft } from "./AuditCenter";
-import Infrastructure, { PULL_COMMAND } from "./Infrastructure";
-import Models from "./Models";
-import Testing from "./Testing";
 
 // Recharts measures its container; jsdom has no layout: give charts a fixed size.
 vi.mock("recharts", async (importOriginal) => {
@@ -21,15 +18,15 @@ vi.mock("recharts", async (importOriginal) => {
   };
 });
 
-type Handler = (path: string) => unknown;
+type Handler = (path: string, init?: RequestInit) => unknown;
 function serve(handler: Handler) {
   const calls: string[] = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (url: string) => {
+    vi.fn(async (url: string, init?: RequestInit) => {
       const path = url.replace("/api/v1", "");
-      calls.push(path);
-      const body = handler(path);
+      calls.push(`${init?.method ?? "GET"} ${path}`);
+      const body = handler(path, init);
       if (body === undefined) return new Response(JSON.stringify({ error: { message: `no route ${path}` } }), { status: 404 });
       return new Response(JSON.stringify(body), { status: 200 });
     }),
@@ -149,120 +146,142 @@ describe("audit center", () => {
   });
 });
 
-describe("testing", () => {
-  it("shows the gate history of the project's audits", async () => {
-    useUi.setState({ projectId: "p1" });
-    const runs = [
-      { id: "r2", project_id: "p1", project_name: "alpha", state: "COMPLETED", mode: "audit", kind: "audit", goal: "audit", requested_by: "a", created_at: "2026-11-05T10:00:00Z", finished_at: "2026-11-05T10:05:00Z" },
-      { id: "r1", project_id: "p1", project_name: "alpha", state: "COMPLETED", mode: "audit", kind: "audit", goal: "audit", requested_by: "a", created_at: "2026-11-04T10:00:00Z", finished_at: "2026-11-04T10:05:00Z" },
+// Two audits of alpha. Every audit records its findings anew: the API's "current" findings
+// are those of the latest one (r2), with the ones its gates accepted through the baseline.
+const RUNS = [
+  { id: "r2", project_id: "p1", project_name: "alpha", state: "COMPLETED", mode: "audit", kind: "audit", goal: "audit", requested_by: "dev", created_at: "2026-11-06T10:00:00Z", finished_at: "2026-11-06T10:05:00Z" },
+  { id: "r1", project_id: "p1", project_name: "alpha", state: "COMPLETED", mode: "audit", kind: "audit", goal: "audit", requested_by: "dev", created_at: "2026-11-05T10:00:00Z", finished_at: "2026-11-05T10:05:00Z" },
+];
+const IN_LATEST = [
+  finding({ id: "c1", source: "semgrep", severity: "high", title: "SQL injection", file_path: "app/db.py", line: 9, fingerprint: "sqli" }),
+  finding({ id: "c2", source: "osv-scanner", severity: "high", title: "requests 2.0 CVE", file_path: "requirements.txt", fingerprint: "cve" }),
+  finding({ id: "c3", source: "ruff", severity: "low", title: "Unused import", file_path: "app/db.py", line: 1, fingerprint: "f401" }),
+  finding({ id: "c4", source: "playwright", severity: "medium", title: "Button without a name", fingerprint: "a11y" }),
+  finding({ id: "c5", source: "agent.database", severity: "medium", title: "Missing index on orders", fingerprint: "idx" }),
+  finding({ id: "c6", source: "architect", severity: "low", title: "Cycle between modules", fingerprint: "cycle" }),
+  finding({ id: "c7", source: "custom-check", severity: "info", title: "Something else", fingerprint: "other" }),
+  finding({ id: "c8", source: "trivy", severity: "high", title: "Planted CVE in a fixture", file_path: "tests/fixtures/composer.lock", fingerprint: "planted", status: "baselined" }),
+];
+const IN_FIRST = [
+  finding({ id: "h1", run_id: "r1", source: "osv-scanner", severity: "high", title: "requests 2.0 CVE", file_path: "requirements.txt", fingerprint: "cve", created_at: "2026-11-05T10:01:00Z" }),
+  finding({ id: "h2", run_id: "r1", source: "gitleaks", severity: "critical", title: "Leaked key", file_path: "config.py", fingerprint: "leak", created_at: "2026-11-05T10:01:00Z" }),
+];
+
+function auditServer() {
+  return serve((path) => {
+    if (path === "/projects") return PROJECTS;
+    if (path.startsWith("/runs")) return RUNS;
+    if (path === "/projects/p1/runs") return { id: "r3" };
+    if (!path.startsWith("/findings")) return undefined;
+    const q = new URLSearchParams(path.split("?")[1] ?? "");
+    if (q.get("run_id") === "r1") return IN_FIRST;
+    if (q.get("run_id") === "r2") return IN_LATEST;
+    return q.get("current") === "true" ? IN_LATEST : [...IN_LATEST, ...IN_FIRST];
+  });
+}
+
+const tab = (name: RegExp) => within(screen.getByRole("tablist", { name: "Категории аудита" })).getByRole("tab", { name });
+
+describe("audit center tabs", () => {
+  it("counts the latest audit in the overview, not every audit's copy; the trend shows every audit", async () => {
+    const calls = auditServer();
+    show(<AuditCenter query={{ project: "p1" }} />);
+    await screen.findByText("SQL injection");
+    expect(calls).toContain("GET /findings?limit=1000&project_id=p1&current=true");
+    const stat = (label: string) => screen.getByText(label, { selector: ".stat-label" }).previousSibling?.textContent;
+    // r1's copy of the CVE is not counted again; the baselined one is not open.
+    expect([stat("critical"), stat("high"), stat("medium"), stat("low"), stat("info")]).toEqual(["0", "2", "2", "2", "1"]);
+    expect(screen.getByText(/По последнему аудиту каждого проекта · ещё 1 принято через baseline/)).toBeTruthy();
+    const categories = screen.getByText("По категориям").closest(".panel") as HTMLElement;
+    const cell = (name: string) => within(categories).getByRole("button", { name: new RegExp(name) }).querySelector(".cat-count")?.textContent;
+    expect([cell("Качество кода"), cell("Безопасность"), cell("Зависимости"), cell("База данных"), cell("Производительность"), cell("Архитектура"), cell("Доступность")]).toEqual(["1", "1", "1", "1", "0", "1", "1"]); // open ones: not the baselined
+    expect(within(categories).getByText("Прочее")).toBeTruthy();
+    const files = screen.getByText("Файлы с наибольшим числом находок").closest(".panel") as HTMLElement;
+    expect(within(files).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["app/db.py2", "requirements.txt1"]);
+    const bars = within(screen.getByRole("list", { name: "Число находок по аудитам" })).getAllByRole("listitem");
+    expect(bars.map((b) => [b.getAttribute("href"), b.textContent])).toEqual([["#/runs/r1", "2"], ["#/runs/r2", "8"]]);
+    expect(screen.getByRole("heading", { name: "Находки последнего аудита · 8" })).toBeTruthy();
+    expect(screen.queryByText("Leaked key")).toBeNull(); // fixed since r1
+
+    // A category of the overview opens its tab.
+    fireEvent.click(within(categories).getByRole("button", { name: /Безопасность/ }));
+    expect(tab(/Безопасность/).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("lists each category's findings in its tab, or says where they come from", async () => {
+    auditServer();
+    show(<AuditCenter query={{ project: "p1" }} />);
+    await screen.findByText("SQL injection");
+    const expected: [RegExp, string[]][] = [
+      [/Качество кода/, ["Unused import"]],
+      [/Безопасность/, ["SQL injection"]],
+      [/Зависимости/, ["Planted CVE in a fixture", "requests 2.0 CVE"]],
+      [/База данных/, ["Missing index on orders"]],
+      [/Архитектура/, ["Cycle between modules"]],
+      [/Доступность/, ["Button without a name"]],
     ];
-    const detail = (id: string, security: string) => ({
-      id,
-      state: "COMPLETED",
-      mode: "audit",
-      goal: "audit",
-      error: null,
-      kind: "audit",
-      project_id: "p1",
-      tasks: [],
-      approvals: [],
-      jobs: [],
-      gates: [
-        { gate: "build", result: "PASS", blocking: true, reason: null },
-        { gate: "security", result: security, blocking: true, reason: security === "FAIL" ? "2 high findings" : null, evidence: ["semgrep: app/run.py:4"] },
-      ],
-    });
-    serve((path) => {
-      if (path === "/projects") return PROJECTS;
-      if (path.startsWith("/runs?")) return runs;
-      if (path === "/runs/r2") return detail("r2", "FAIL");
-      if (path === "/runs/r1") return detail("r1", "PASS");
-      return undefined;
-    });
-    show(<Testing />);
-    expect(await screen.findByText("2 high findings")).toBeTruthy();
-    const history = screen.getByRole("region", { name: "История Quality Gates" });
-    await waitFor(() => expect(within(history).getAllByText("FAIL")).toHaveLength(1));
-    expect(within(history).getAllByText("PASS").length).toBeGreaterThanOrEqual(3);
-    expect(screen.getByText("semgrep: app/run.py:4")).toBeTruthy();
-    expect(screen.getByText(/API пока не отдаёт/)).toBeTruthy();
-  });
-});
-
-describe("models", () => {
-  it("shows the provider and private mode, and never asks for a key", async () => {
-    useUi.setState({ projectId: "p1" });
-    serve((path) => {
-      if (path === "/projects/p1")
-        return {
-          ...PROJECTS[0],
-          members: [],
-          kinds: [],
-          config: {
-            stacks: ["python"],
-            mode: "develop",
-            execution: { backend: "docker", network: "none" },
-            ai: { enabled: true, provider: "ollama", model: "qwen2.5-coder" },
-            security: { network: "local-only", egress_allowlist: [] },
-            budgets: { max_tokens_per_run: 500000, max_cost_usd_per_run: 5, max_duration_minutes: 120 },
-            quality_gates: {},
-          },
-        };
-      if (path.startsWith("/projects/p1/usage"))
-        return {
-          totals: { calls: 3, input_tokens: 1200, output_tokens: 300, cost_usd: 0 },
-          by_model: [{ provider: "ollama", model: "qwen2.5-coder", calls: 3, input_tokens: 1200, output_tokens: 300, cost_usd: 0 }],
-          daily: [{ date: "2026-11-05", input_tokens: 1200, output_tokens: 300, cost_usd: 0 }],
-        };
-      if (path.startsWith("/projects/p1/agent-executions"))
-        return [
-          { id: "e1", run_id: "r1", task_key: "develop.implement", agent_name: "developer", attempt: 1, status: "SUCCEEDED", confidence: 0.8, error: null, started_at: "2026-11-05T10:00:00Z", finished_at: "2026-11-05T10:01:00Z", duration_seconds: 60, input_tokens: 1200, output_tokens: 300, cost_usd: 0, models: ["ollama/qwen2.5-coder"] },
-        ];
-      return undefined;
-    });
-    show(<Models />);
-    expect(await screen.findByText("настроен в .ai-coding.yml")).toBeTruthy();
-    expect(screen.getAllByText("запрещён политикой local-only")).toHaveLength(2); // the cloud providers
-    expect(screen.getByText(/Private Mode: политика проекта/)).toBeTruthy();
-    expect(await screen.findByText("developer")).toBeTruthy();
-    expect(screen.getAllByText("ollama/qwen2.5-coder").length).toBeGreaterThan(0);
-    expect(document.querySelectorAll('input[type="password"], textarea').length).toBe(0);
-    expect(screen.queryByLabelText(/ключ/i)).toBeNull();
+    for (const [name, titles] of expected) {
+      fireEvent.click(tab(name));
+      expect(tab(name).querySelector(".tab-count")?.textContent).toBe(String(titles.length));
+      const table = screen.getByRole("region", { name: "Находки" });
+      const shown = within(table).getAllByRole("row").slice(1).map((r) => r.querySelector(".cell-main")?.textContent);
+      expect(shown.sort()).toEqual([...titles].sort());
+    }
+    fireEvent.click(tab(/Производительность/));
+    expect(screen.getByText("Производительность: находок нет")).toBeTruthy();
+    expect(screen.getByText(/Их даёт k6/)).toBeTruthy();
+    // The baselined finding stays visible, with its status.
+    fireEvent.click(tab(/Зависимости/));
+    const planted = screen.getByText("Planted CVE in a fixture").closest("tr") as HTMLElement;
+    expect(within(planted).getByText("baselined")).toBeTruthy();
   });
 
-  it("asks for a project first", () => {
-    serve(() => undefined);
-    show(<Models />);
-    expect(screen.getByText("Выберите проект")).toBeTruthy();
-  });
-});
-
-describe("infrastructure", () => {
-  const SYSTEM = {
-    version: "2.1.0",
-    database: "postgresql",
-    workspaces: "on",
-    queue: { queued: 1 },
-    runs: { COMPLETED: 3 },
-    workers: [],
-    analysers: { trivy: false, "osv-scanner": true },
-    time: "2026-11-06T10:00:00Z",
-  };
-
-  it("tells an administrator how to prepare the analysers", async () => {
-    serve((path) => (path === "/system" ? SYSTEM : path === "/readyz" ? { status: "ok" } : undefined));
-    show(<Infrastructure me={{ username: "root", is_admin: true }} />);
-    expect(await screen.findByText(PULL_COMMAND)).toBeTruthy();
-    expect(screen.getByText("Нет активных worker'ов")).toBeTruthy();
-    expect(screen.getByText("trivy: нет офлайн-базы")).toBeTruthy();
-    expect(await screen.findByText("API и база данных доступны")).toBeTruthy();
+  it("filters by status, tool and text; all projects show the project's name", async () => {
+    auditServer();
+    show(<AuditCenter query={{}} />);
+    await screen.findByText("SQL injection");
+    expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toContain("Проект");
+    const select = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    select("Статус", "baselined");
+    expect(screen.getByRole("heading", { name: "Находки последнего аудита · 1" })).toBeTruthy();
+    expect(screen.getByText("Planted CVE in a fixture")).toBeTruthy();
+    select("Статус", "");
+    select("Инструмент", "ruff");
+    expect(screen.getByRole("heading", { name: "Находки последнего аудита · 1" })).toBeTruthy();
+    expect(screen.getByText("Unused import")).toBeTruthy();
+    select("Инструмент", "");
+    fireEvent.change(screen.getByLabelText("Поиск по файлу, правилу и тексту"), { target: { value: "app/db.py" } });
+    expect(screen.getByRole("heading", { name: "Находки последнего аудита · 2" })).toBeTruthy();
+    expect(tab(/Безопасность/).querySelector(".tab-count")?.textContent).toBe("1"); // the counters follow
+    expect(tab(/Зависимости/).querySelector(".tab-count")?.textContent).toBe("0");
   });
 
-  it("shows a member the server's health only", async () => {
-    const calls = serve((path) => (path === "/readyz" ? { status: "ok" } : undefined));
-    show(<Infrastructure me={{ username: "alice", is_admin: false }} />);
-    expect(await screen.findByText(/видят администраторы сервера/)).toBeTruthy();
-    expect(calls).not.toContain("/system");
-    expect(screen.queryByText(PULL_COMMAND)).toBeNull();
+  it("reports: the project's audits, and what changed between two of them", async () => {
+    auditServer();
+    show(<AuditCenter query={{ project: "p1", category: "reports" }} />);
+    const audits = await screen.findByRole("region", { name: "Аудиты" });
+    expect(within(audits).getAllByRole("row")).toHaveLength(3); // the header and two audits
+    expect(await screen.findByRole("region", { name: "Исправленные" })).toBeTruthy();
+    const list = (name: string) => within(screen.getByRole("region", { name })).getAllByRole("listitem").map((li) => li.querySelector(".truncate")?.textContent);
+    expect(list("Исправленные")).toEqual(["Leaked key"]);
+    expect(list("Сохранившиеся")).toEqual(["requests 2.0 CVE"]);
+    expect(list("Новые")).toHaveLength(7);
+    fireEvent.change(screen.getByLabelText("Аудит A (раньше)"), { target: { value: "r2" } });
+    expect(screen.getByText("Выберите два разных аудита.")).toBeTruthy();
+    fireEvent.click(within(audits).getAllByRole("row")[2] as HTMLElement);
+    expect(window.location.hash).toBe("#/runs/r1");
+  });
+
+  it("asks for a project before reports and a full audit; starts the audit of the chosen one", async () => {
+    const calls = auditServer();
+    show(<AuditCenter query={{ category: "reports" }} />);
+    expect(await screen.findByText("Выберите проект")).toBeTruthy();
+    expect((screen.getByRole("button", { name: /Полный аудит/ }) as HTMLButtonElement).disabled).toBe(true);
+    await screen.findByRole("option", { name: "alpha" });
+    fireEvent.change(screen.getByLabelText("Проект"), { target: { value: "p1" } });
+    const start = screen.getByRole("button", { name: "Полный аудит «alpha»" });
+    fireEvent.click(start);
+    await waitFor(() => expect(window.location.hash).toBe("#/runs/r3")); // the new run's page
+    expect(calls).toContain("POST /projects/p1/runs");
   });
 });

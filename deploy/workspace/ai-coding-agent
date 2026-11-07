@@ -17,10 +17,12 @@ JSON lines in ``~/.ai-coding/chats/<project>/`` and replays it to each client th
 connects (``ai-coding-agent connect``: stdio <-> the daemon's Unix socket). Users sign
 in to their own accounts in the official CLIs; this program never reads credentials.
 
-Client -> daemon (one JSON object per line): ``hello``, ``new`` {agent, mode},
-``open`` {session}, ``send`` {session, text, mode}, ``approve`` {session, id, decision},
-``interrupt`` {session}, ``login`` {agent}, ``status``.
-Daemon -> client: events ``{"t": ..., "session": ...}`` (see ``Session.emit``).
+Client -> daemon (one JSON object per line): ``hello``, ``new`` {agent, mode, ref},
+``open`` {session}, ``close`` {session}, ``delete`` {session}, ``send`` {session, text,
+mode}, ``approve`` {session, id, decision}, ``interrupt`` {session}, ``login`` {agent},
+``usage`` {agent, refresh}, ``status``.
+Daemon -> client: events ``{"t": ..., "session": ...}`` (see ``Session.emit``). A client
+follows every chat it opened (the panel's tabs) until it closes it.
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ import sys
 import threading
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -145,6 +148,16 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
 READ_ONLY_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 PLATFORM_READ_TOOLS = ("info", "audit", "run_status", "run_report")  # change no file
 LOGIN_HINTS = ("/login", "not logged in", "invalid api key", "authentication", "oauth token")
+# What this daemon offers beyond the first protocol: the panel adapts to an older image.
+FEATURES = ("tabs", "delete", "usage")
+# The plan's limits (5-hour window, week), read from the official CLIs: Claude Code's own
+# /usage, Codex's account/rateLimits/read. A reading is served from memory for USAGE_TTL
+# (or until a window resets) and never repeated sooner than USAGE_INTERVAL.
+USAGE_TTL = 300.0
+USAGE_INTERVAL = float(os.environ.get("AI_CODING_USAGE_INTERVAL", "30"))
+USAGE_TIMEOUT = 60
+CLAUDE_USAGE = ["claude", "-p", "--output-format", "stream-json", "--verbose",
+                "--no-session-persistence", "--strict-mcp-config", "/usage"]  # fmt: skip
 
 
 def clip(text: Any, limit: int = OUTPUT_LIMIT) -> str:
@@ -189,8 +202,8 @@ def read_only_command(command: str) -> bool:
         tokens = list(lexer)
     except ValueError:
         return False
-    if len(tokens) == 3 and tokens[0] in SHELLS and tokens[1] in ("-c", "-lc"):
-        return read_only_command(tokens[2])  # Codex runs commands as `bash -lc '...'`
+    if len(tokens) == 3 and os.path.basename(tokens[0]) in SHELLS and tokens[1] in ("-c", "-lc"):
+        return read_only_command(tokens[2])  # Codex: `/usr/bin/bash -lc '...'`
     commands: list[list[str]] = [[]]
     index = 0
     while index < len(tokens):
@@ -315,6 +328,103 @@ def needs_login(text: str) -> bool:
     return any(hint in lower for hint in LOGIN_HINTS)
 
 
+# ------------------------------------------------------------------ limits --
+# A limit of the plan, for the panel: {"window": "session" (the 5-hour window) | "week" |
+# the server's own kind, "minutes", "scope" (a model the window is for), "percent" used,
+# "resets_at" (Unix seconds), "severity"}.
+def window_of(minutes: Any) -> str:
+    if minutes == 10080:
+        return "week"
+    return "session" if isinstance(minutes, int) and 0 < minutes <= 1440 else "other"
+
+
+class UsageError(Exception):
+    pass
+
+
+def number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def epoch(value: Any) -> float | None:
+    if number(value):
+        return float(value)
+    if isinstance(value, str) and value:
+        with contextlib.suppress(ValueError):
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    return None
+
+
+def claude_limits(report: Any) -> list[dict[str, Any]] | None:
+    """The rows of Claude Code's ``usage_report`` (its /usage, claude.ai subscriptions)."""
+    rate = report.get("rate_limits") if isinstance(report, dict) else None
+    rows = rate.get("limits") if isinstance(rate, dict) else None
+    if not isinstance(rows, list):
+        return None
+    limits = []
+    for row in rows:
+        if not isinstance(row, dict) or not number(row.get("percent")):
+            continue
+        kind, group = str(row.get("kind") or ""), str(row.get("group") or "")
+        weekly = group == "weekly" or kind.startswith("weekly")
+        window = "session" if "session" in (kind, group) else "week" if weekly else kind
+        scope = row.get("scope") if isinstance(row.get("scope"), dict) else {}
+        names = [part.get("display_name") for part in (scope.get("model"), scope.get("surface"))
+                 if isinstance(part, dict)]  # fmt: skip
+        limits.append({"window": window, "minutes": {"session": 300, "week": 10080}.get(window),
+                       "scope": next((str(n) for n in names if n), None),
+                       "percent": row["percent"], "resets_at": epoch(row.get("resets_at")),
+                       "severity": row.get("severity")})  # fmt: skip
+    return limits
+
+
+def codex_limits(snapshot: Any) -> dict[str, Any]:
+    """Codex's rate-limit snapshot (``account/rateLimits/read`` and its updates)."""
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    limits = []
+    for key in ("primary", "secondary"):
+        window = snapshot.get(key)
+        if not isinstance(window, dict) or not number(window.get("usedPercent")):
+            continue
+        minutes = window.get("windowDurationMins")
+        limits.append({"window": window_of(minutes), "minutes": minutes, "scope": None,
+                       "percent": window["usedPercent"], "resets_at": epoch(window.get("resetsAt")),
+                       "severity": None})  # fmt: skip
+    return {"limits": limits, "plan": snapshot.get("planType"),
+            "reached": snapshot.get("rateLimitReachedType")}  # fmt: skip
+
+
+async def claude_usage() -> dict[str, Any]:
+    """Claude Code's /usage, run as a local command: no model call, no session kept."""
+    proc = await asyncio.create_subprocess_exec(
+        *CLAUDE_USAGE, cwd=str(Path.home()), stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        limit=LINE_LIMIT)  # fmt: skip
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), USAGE_TIMEOUT)
+    except TimeoutError:
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        await proc.wait()
+        raise UsageError("Claude Code did not answer /usage in time") from None
+    report: Any = None
+    text, failed = "", proc.returncode != 0
+    for line in out.decode(errors="replace").splitlines():
+        with contextlib.suppress(ValueError):
+            event = json.loads(line)
+            if not isinstance(event, dict):
+                continue
+            if "usage_report" in event:
+                report = event["usage_report"]
+            if event.get("type") == "result":
+                text, failed = str(event.get("result") or ""), bool(event.get("is_error"))
+    if failed:
+        raise UsageError(clip(text or err.decode(errors="replace").strip(), 500) or "/usage failed")
+    # No rows: not a claude.ai subscription (Console, API key: no plan limits) or an older
+    # CLI. Its own text says what applies.
+    return {"limits": claude_limits(report) or [], "text": clip(text, 2000)}
+
+
 # ------------------------------------------------------------- descriptions --
 def platform_title(tool: str, data: dict[str, Any]) -> str:
     run = str(data.get("run_id") or "")[:8]
@@ -407,6 +517,7 @@ class Session:
         self.turn: str | None = None  # Codex turn id, for interrupts
         self.claude: Claude | None = None
         self.snapshot: set[str] | None = None  # AUDIT: the workspace before the turn
+        self.deleted = False  # a deleted chat records nothing more
 
     @property
     def id(self) -> str:
@@ -417,6 +528,8 @@ class Session:
         return CHATS / f"{self.id}.jsonl"
 
     def save(self) -> None:
+        if self.deleted:
+            return
         self.meta["updated"] = time.time()
         CHATS.mkdir(parents=True, exist_ok=True)
         tmp = CHATS / f".{self.id}.json.tmp"
@@ -424,6 +537,8 @@ class Session:
         tmp.replace(CHATS / f"{self.id}.json")
 
     def emit(self, event: dict[str, Any], *, durable: bool = True) -> None:
+        if self.deleted:
+            return
         event = {**event, "session": self.id, "ts": round(time.time(), 3)}
         if durable:
             CHATS.mkdir(parents=True, exist_ok=True)
@@ -449,6 +564,7 @@ class Session:
             self.emit({"t": "approval_done", "id": approval_id, "decision": "expired"})
         self.emit({"t": "turn", "state": state, **extra})
         self.save()
+        self.hub.usage_moved(str(self.meta.get("agent")))
         if self.snapshot is not None:
             before, self.snapshot = self.snapshot, None
             asyncio.get_running_loop().create_task(self.check_untouched(before))
@@ -557,6 +673,18 @@ class Claude:
             self.interrupted = True
             self.control({"subtype": "interrupt"})
 
+    async def stop(self) -> None:
+        proc, self.proc = self.proc, None
+        if proc is None or proc.returncode is not None:
+            return
+        with contextlib.suppress(ProcessLookupError):
+            proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), 10)
+        except TimeoutError:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+
     async def read_stderr(self, proc: asyncio.subprocess.Process) -> None:
         assert proc.stderr is not None
         while chunk := await proc.stderr.read(4096):
@@ -609,6 +737,8 @@ class Claude:
             self.s.save()
         elif kind == "system" and ev.get("permissionMode"):
             self.actual = ev["permissionMode"]  # e.g. plan -> default once a plan is approved
+        elif kind == "rate_limit_event":  # a window's use moved: read the limits again
+            self.s.hub.usage_moved("claude")
         elif kind == "result":
             text = str(ev.get("result") or "")
             if self.interrupted:
@@ -784,6 +914,9 @@ class Codex:
         return self.threads.get(str(params.get("threadId")))
 
     def notification(self, method: str, params: dict[str, Any]) -> None:
+        if method == "account/rateLimits/updated":
+            self.hub.usage_read("codex", codex_limits(params.get("rateLimits", params)))
+            return
         if method == "account/login/completed":
             self.hub.broadcast({"t": "login_done", "agent": "codex",
                                 "success": bool(params.get("success")),
@@ -883,6 +1016,14 @@ class Codex:
                 session.emit({"t": "notice",
                               "text": f"Режим «Аудит» только читает: {what} не выполнено."})  # fmt: skip
             return
+        if (session.planning and session.meta.get("mode") in ("edits", "full")
+                and method.startswith("item/commandExecution")
+                and read_only_command(str(params.get("command") or ""))):  # fmt: skip
+            # Until the plan is approved Codex runs "untrusted" and asks even to read. The
+            # user chose edits without questions: what only reads goes through, as in
+            # Claude Code's plan mode; changes still wait for the approved plan.
+            self.write({"id": rid, "result": {"decision": "accept"}})
+            return
         approval_id = f"codex-{rid}"
         if method.startswith("item/commandExecution"):
             title = f"$ {params.get('command') or ''}"
@@ -948,6 +1089,11 @@ class Codex:
             await self.request("turn/interrupt", {"threadId": session.meta["native"],
                                                   "turnId": session.turn})  # fmt: skip
 
+    async def rate_limits(self) -> dict[str, Any]:
+        await self.start()
+        result = await self.request("account/rateLimits/read")
+        return codex_limits((result or {}).get("rateLimits"))
+
     async def login(self) -> dict[str, Any]:
         await self.start()
         result = await self.request("account/login/start", {"type": "chatgptDeviceCode"})
@@ -984,6 +1130,8 @@ class Hub:
         self.sessions: dict[str, Session] = {}
         self.clients: set[Client] = set()
         self.codex = Codex(self)
+        self.usages: dict[str, dict[str, Any]] = {}  # agent -> its last "usage" event
+        self.usage_tasks: dict[str, asyncio.Task[None]] = {}
 
     # ------------------------------------------------------------ sessions --
     def metas(self) -> list[dict[str, Any]]:
@@ -1029,7 +1177,8 @@ class Hub:
         try:
             data = json.loads(out)
             result["claude"] = {"logged_in": bool(data.get("loggedIn")),
-                                "method": data.get("authMethod")}  # fmt: skip
+                                "method": data.get("authMethod"),
+                                "plan": data.get("subscriptionType")}  # fmt: skip
         except ValueError:
             result["claude"] = {"logged_in": False, "method": None, "available": code != 127}
         code, out = await run("codex", "login", "status")
@@ -1068,14 +1217,12 @@ class Hub:
             client.close()
 
     def subscribe(self, client: Client, session: Session) -> None:
-        for other in self.sessions.values():
-            other.clients.discard(client)
-        session.clients.add(client)
+        session.clients.add(client)  # until it closes the chat (op "close") or goes away
 
     async def op(self, client: Client, req: dict[str, Any]) -> None:
         op = req.get("op")
         if op == "hello":
-            client.send({"t": "hello", "sessions": self.metas()})
+            client.send({"t": "hello", "sessions": self.metas(), "features": list(FEATURES)})
             asyncio.create_task(self.auth_to(client))
         elif op == "status":
             client.send({"t": "status", "busy": any(s.busy for s in self.sessions.values()),
@@ -1091,12 +1238,26 @@ class Hub:
             session.save()
             self.sessions[session.id] = session
             self.subscribe(client, session)
-            client.send({"t": "opened", "meta": meta, "history": []})
+            ref = req.get("ref")  # the panel's tab that asked for it
+            client.send({"t": "opened", "meta": meta, "history": [], "now": round(time.time(), 3),
+                         **({"ref": ref[:64]} if isinstance(ref, str) else {})})  # fmt: skip
         elif op == "open":
             session = self.session(req.get("session"))
             self.subscribe(client, session)
+            # "now": the panel times a running action by this clock (the events' "ts").
             client.send({"t": "opened", "meta": session.meta, "history": session.history(),
-                         "busy": session.busy})  # fmt: skip
+                         "busy": session.busy, "now": round(time.time(), 3)})  # fmt: skip
+        elif op == "close":  # the tab is closed: the agent goes on, this client stops following
+            session = self.sessions.get(str(req.get("session")))
+            if session is not None:
+                session.clients.discard(client)
+        elif op == "delete":
+            await self.delete(self.session(req.get("session")))
+        elif op == "usage":
+            agent = req.get("agent")
+            if agent not in AGENTS:
+                raise ValueError("unknown agent")
+            self.usage_to(client, agent, refresh=bool(req.get("refresh")))
         elif op == "send":
             await self.send(self.session(req.get("session")), req)
         elif op == "approve":
@@ -1123,6 +1284,62 @@ class Hub:
     async def auth_to(self, client: Client) -> None:
         client.send({"t": "auth", "agents": await self.auth()})
 
+    async def delete(self, session: Session) -> None:
+        """Delete a chat: its record, its log, its agent process. The CLI's own session
+        files stay (they are the CLI's history, as in its own interface)."""
+        if session.busy:
+            raise ValueError("Агент ещё работает в этом чате: остановите его, затем удалите чат.")
+        session.deleted = True
+        self.sessions.pop(session.id, None)
+        native = session.meta.get("native")
+        if native:
+            self.codex.threads.pop(str(native), None)
+        for path in (CHATS / f"{session.id}.json", session.log):
+            path.unlink(missing_ok=True)
+        self.broadcast({"t": "deleted", "session": session.id})
+        if session.claude is not None:
+            await session.claude.stop()
+
+    # -------------------------------------------------------------- limits --
+    def usage_to(self, client: Client, agent: str, *, refresh: bool) -> None:
+        """The plan's limits to a client: from memory while they are fresh, else read
+        again (the reading goes to every client)."""
+        cached = self.usages.get(agent)
+        if cached is not None:
+            age = time.time() - float(cached["at"])
+            resets = [row.get("resets_at") for row in cached.get("limits") or []]
+            stale = cached.get("error") or any(at and at <= time.time() for at in resets)
+            if age < USAGE_INTERVAL or (not refresh and not stale and age < USAGE_TTL):
+                client.send(cached)
+                return
+        self.read_usage(agent)
+
+    def usage_moved(self, agent: str) -> None:
+        """A turn ended or a window moved: read the limits again for the open panels,
+        if one shows them, at most once per USAGE_INTERVAL."""
+        cached = self.usages.get(agent)
+        if cached is None or not self.clients:
+            return
+        if time.time() - float(cached["at"]) >= USAGE_INTERVAL:
+            self.read_usage(agent)
+
+    def read_usage(self, agent: str) -> None:
+        task = self.usage_tasks.get(agent)
+        if task is None or task.done():
+            self.usage_tasks[agent] = asyncio.create_task(self.fetch_usage(agent))
+
+    async def fetch_usage(self, agent: str) -> None:
+        try:
+            data = await claude_usage() if agent == "claude" else await self.codex.rate_limits()
+        except Exception as exc:  # noqa: BLE001 - the panel is told, the daemon goes on
+            data = {"limits": [], "error": str(exc) or type(exc).__name__}
+        self.usage_read(agent, data)
+
+    def usage_read(self, agent: str, data: dict[str, Any]) -> None:
+        usage = {"t": "usage", "agent": agent, "at": round(time.time(), 3), **data}
+        self.usages[agent] = usage
+        self.broadcast(usage)
+
     async def send(self, session: Session, req: dict[str, Any]) -> None:
         text = str(req.get("text") or "").strip()
         mode = req.get("mode") or session.meta.get("mode", "ask")
@@ -1132,6 +1349,8 @@ class Hub:
             raise ValueError("unknown mode")
         if session.busy:
             raise ValueError("the agent is still working: wait or stop it")
+        if session.deleted:
+            raise KeyError("no such chat")
         session.busy = True
         if req.get("approve_plan") and workflow(session.meta):
             session.approve_plan()

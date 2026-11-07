@@ -6,6 +6,14 @@ import { create } from "zustand";
 
 export type ThemeChoice = "system" | "obsidian" | "arctic" | "oled";
 
+/** An open workspace (a tab above the main area): a project in one of its two views. */
+export interface OpenWorkspace {
+  id: string;
+  layout: "ai" | "code";
+  name: string;
+}
+const MAX_WORKSPACES = 8;
+
 export interface UiState {
   theme: ThemeChoice;
   accent: string | null;
@@ -15,6 +23,8 @@ export interface UiState {
   projectId: string | null;
   copilotOpen: boolean;
   paletteOpen: boolean;
+  workspaces: OpenWorkspace[];
+  fullscreen: boolean;
   setTheme: (theme: ThemeChoice) => void;
   setAccent: (accent: string | null) => void;
   toggleSidebar: () => void;
@@ -23,10 +33,14 @@ export interface UiState {
   setProject: (id: string | null) => void;
   setCopilot: (open: boolean) => void;
   setPalette: (open: boolean) => void;
+  /** A workspace was opened (or used again): first in the tabs, at most 8 kept. */
+  openWorkspace: (ws: OpenWorkspace) => void;
+  closeWorkspace: (id: string, layout: OpenWorkspace["layout"]) => void;
+  setFullscreen: (on: boolean) => void;
 }
 
 const KEY = "nexus-ui";
-const PERSISTED = ["theme", "accent", "sidebarCollapsed", "favourites", "projectId", "copilotOpen"] as const;
+const PERSISTED = ["theme", "accent", "sidebarCollapsed", "favourites", "projectId", "copilotOpen", "workspaces"] as const;
 
 function load(): Partial<UiState> {
   try {
@@ -39,6 +53,13 @@ function load(): Partial<UiState> {
     if (Array.isArray(data.favourites)) out.favourites = data.favourites.filter((f): f is string => typeof f === "string");
     if (typeof data.projectId === "string") out.projectId = data.projectId;
     if (typeof data.copilotOpen === "boolean") out.copilotOpen = data.copilotOpen;
+    if (Array.isArray(data.workspaces))
+      out.workspaces = data.workspaces
+        .filter((w): w is OpenWorkspace => {
+          const ws = w as Partial<OpenWorkspace> | null;
+          return Boolean(ws) && typeof ws?.id === "string" && (ws?.layout === "ai" || ws?.layout === "code") && typeof ws?.name === "string";
+        })
+        .slice(0, MAX_WORKSPACES);
     return out;
   } catch {
     return {};
@@ -63,6 +84,8 @@ export const useUi = create<UiState>((set) => ({
   projectId: null,
   copilotOpen: false,
   paletteOpen: false,
+  workspaces: [],
+  fullscreen: false,
   ...load(),
   setTheme: (theme) => set({ theme }),
   setAccent: (accent) => set({ accent }),
@@ -73,6 +96,13 @@ export const useUi = create<UiState>((set) => ({
   setProject: (projectId) => set({ projectId }),
   setCopilot: (copilotOpen) => set({ copilotOpen }),
   setPalette: (paletteOpen) => set({ paletteOpen }),
+  openWorkspace: (ws) =>
+    set((s) => {
+      const rest = s.workspaces.filter((w) => !(w.id === ws.id && w.layout === ws.layout));
+      return { workspaces: [ws, ...rest].slice(0, MAX_WORKSPACES) };
+    }),
+  closeWorkspace: (id, layout) => set((s) => ({ workspaces: s.workspaces.filter((w) => !(w.id === id && w.layout === layout)) })),
+  setFullscreen: (fullscreen) => set({ fullscreen }),
 }));
 
 useUi.subscribe(save);

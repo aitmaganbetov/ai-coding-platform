@@ -66,7 +66,52 @@ export interface WorkspaceDiff {
   truncated: boolean;
 }
 
-export type ReviewAction = "accept" | "reject" | "unstage" | "accept_file" | "reject_file";
+export type ReviewAction =
+  | "accept"
+  | "reject"
+  | "unstage"
+  | "accept_file"
+  | "reject_file"
+  | "accept_path"
+  | "reject_path"
+  | "unstage_path";
+
+/** A developer's machine reporting its local `ai-coding` runs (ADR-0047): summaries only. */
+export interface LocalMachine {
+  machine: string;
+  user: string;
+  reports: number;
+  project_id: string;
+  project: string | null;
+  mode: string;
+  state: string;
+  verdict: "PASS" | "FAIL" | null;
+  cli_version: string;
+  reported_at: string | null;
+}
+
+export interface LocalRunsOverview {
+  machines: LocalMachine[];
+  reports_24h: number;
+  projects: number;
+  last_report: string | null;
+}
+
+/** A secret of a project: write-only — only its hint (last characters) comes back. */
+export interface SecretInfo {
+  name: string;
+  hint: string;
+  updated_by: string;
+  updated_at: string;
+}
+
+/** A section of a project's settings made in the Web UI (ai, github…), with its version. */
+export interface SettingsSection<T> {
+  data: T;
+  version: number;
+  updated_by: string | null;
+  updated_at: string | null;
+}
 
 /** A run of any project the caller may view (GET /runs). */
 export interface GlobalRun extends RunSummary {
@@ -123,7 +168,16 @@ export interface SystemInfo {
   workspaces: string;
   queue: Record<string, number>;
   runs: Record<string, number>;
-  workers: { id: string; active_jobs: number; last_seen: string | null }[];
+  /** Workers by heartbeat (idle ones too) and job leases; online: a fresh heartbeat or a live lease. */
+  workers: {
+    id: string;
+    online: boolean;
+    active_jobs: number;
+    last_seen: string | null;
+    host: string | null;
+    started: string | null;
+    concurrency: number | null;
+  }[];
   analysers: Record<string, boolean>;
   time: string;
 }
@@ -169,6 +223,8 @@ export interface RunDetail {
   dependencies?: { task: string; depends_on: string }[];
   gates?: Gate[] | null;
   usage?: { input_tokens: number; output_tokens: number; cost_usd: number };
+  /** Per finished step: branch, base, commit, url, iterations, verdict, summary (if any). */
+  results?: Record<string, Record<string, string | number>>;
 }
 
 export interface ArtifactInfo {
@@ -453,6 +509,11 @@ export function setToken(token: string | null): void {
   else sessionStorage.removeItem(TOKEN_KEY);
 }
 
+/** The typed request of this client, for the clients of other sections (src/data/*). */
+export function apiRequest<T>(method: string, path: string, body?: unknown): Promise<T> {
+  return request<T>(method, path, body);
+}
+
 function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   if (body === undefined) return send<T>(method, path);
   return send<T>(method, path, JSON.stringify(body), "application/json");
@@ -502,6 +563,17 @@ export async function download(path: string, filename: string): Promise<void> {
   link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+/** A run artifact's content as text (implementation.json, change.diff…). */
+export async function artifactText(runId: string, artifactId: string): Promise<string> {
+  const token = getToken();
+  const response = await fetch(`/api/v1/runs/${runId}/artifacts/${artifactId}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    credentials: "omit",
+  });
+  if (!response.ok) throw new ApiError(response.status, `HTTP ${response.status}`);
+  return response.text();
 }
 
 export function errorText(err: unknown): string {
@@ -592,14 +664,25 @@ export const api = {
   // NEXUS views: data across projects (only those the caller may see) and insights.
   allRuns: (filter: { limit?: number; state?: string; kind?: string; project_id?: string } = {}) =>
     request<GlobalRun[]>("GET", `/runs${query(filter)}`),
-  allFindings: (filter: { limit?: number; severity?: string; status?: string; source?: string; project_id?: string; run_id?: string } = {}) =>
-    request<FindingRow[]>("GET", `/findings${query(filter)}`),
+  // current: only each project's latest audit (every audit records its findings anew).
+  allFindings: ({
+    current,
+    ...filter
+  }: { limit?: number; severity?: string; status?: string; source?: string; project_id?: string; run_id?: string; current?: boolean } = {}) =>
+    request<FindingRow[]>("GET", `/findings${query({ ...filter, current: current ? "true" : undefined })}`),
   events: (limit = 50) => request<AuditRow[]>("GET", `/audit-events${query({ limit })}`),
   agents: () => request<AgentInfo[]>("GET", "/agents"),
   agentExecutions: (projectId: string, limit = 100) =>
     request<AgentExecution[]>("GET", `/projects/${projectId}/agent-executions${query({ limit })}`),
   usage: (projectId: string, days = 30) => request<Usage>("GET", `/projects/${projectId}/usage${query({ days })}`),
   system: () => request<SystemInfo>("GET", "/system"),
+  localRunsOverview: () => request<LocalRunsOverview>("GET", "/local-runs/overview"),
+  secrets: (projectId: string) =>
+    request<{ available: boolean; secrets: SecretInfo[] }>("GET", `/projects/${projectId}/secrets`),
+  setSecret: (projectId: string, name: string, value: string) =>
+    request<SecretInfo>("PUT", `/projects/${projectId}/secrets/${encodeURIComponent(name)}`, { value }),
+  deleteSecret: (projectId: string, name: string) =>
+    request<void>("DELETE", `/projects/${projectId}/secrets/${encodeURIComponent(name)}`),
   // AI Security Center: only mounted when the server enables it (404 otherwise).
   securityCenter: (projectId: string, runId: string, filter: SecurityQuery = {}) =>
     request<SecurityOverview>("GET", `/projects/${enc(projectId)}/security-center/runs/${enc(runId)}${query({ ...filter })}`),

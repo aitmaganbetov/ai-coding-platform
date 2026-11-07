@@ -5,6 +5,7 @@ import {
   Gauge,
   ListChecks,
   Lock,
+  PlugZap,
   Play,
   ScrollText,
   ShieldAlert,
@@ -26,7 +27,8 @@ import {
   type RunSummary,
 } from "./api";
 import { queryClient, useProject } from "./data/queries";
-import { href } from "./shell/routes";
+import { GitHubIntegration } from "./pages/GitHub";
+import { href, parseRoute } from "./shell/routes";
 import {
   Badge,
   Button,
@@ -49,7 +51,14 @@ const CAN_RUN = new Set(["owner", "maintainer", "developer"]);
 const CAN_AUDIT = new Set(["owner", "maintainer", "auditor"]);
 const CAN_VIEW_FILES = new Set(["owner", "maintainer", "developer", "auditor"]);
 
-type Tab = "overview" | "runs" | "findings" | "members" | "journal" | "danger";
+type Tab = "overview" | "runs" | "findings" | "members" | "integrations" | "journal" | "danger";
+const TABS: Tab[] = ["overview", "runs", "findings", "members", "integrations", "journal", "danger"];
+
+/** A tab asked for in the address (#/projects/<id>?tab=integrations). */
+function tabOfAddress(): Tab {
+  const asked = parseRoute(window.location.hash).query?.tab;
+  return TABS.find((t) => t === asked) ?? "overview";
+}
 
 export function ProjectPage({ id, me }: { id: string; me: Me }) {
   const project = useProject(id);
@@ -57,7 +66,12 @@ export function ProjectPage({ id, me }: { id: string; me: Me }) {
   const runs = useQuery({ queryKey: ["project-runs", id], queryFn: () => api.runs(id), enabled: project.isSuccess });
   const findings = useQuery({ queryKey: ["project-findings", id], queryFn: () => api.findings(id), enabled: project.isSuccess });
   const audit = useQuery({ queryKey: ["project-audit", id], queryFn: () => api.audit(id), enabled: CAN_AUDIT.has(role) });
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>(tabOfAddress);
+  useEffect(() => {
+    const follow = () => setTab(tabOfAddress());
+    window.addEventListener("hashchange", follow);
+    return () => window.removeEventListener("hashchange", follow);
+  }, []);
   const [auditing, setAuditing] = useState(false);
 
   const reload = () => {
@@ -94,6 +108,7 @@ export function ProjectPage({ id, me }: { id: string; me: Me }) {
     { id: "runs", label: "Задачи", icon: <ListChecks size={14} />, count: runList.length },
     { id: "findings", label: "Находки", icon: <ShieldCheck size={14} />, count: open.length },
     { id: "members", label: "Участники", icon: <UsersIcon size={14} />, count: p.members.length },
+    { id: "integrations", label: "Интеграции", icon: <PlugZap size={14} /> },
     ...(audit.data ? [{ id: "journal", label: "Журнал", icon: <ScrollText size={14} /> }] : []),
     ...(role === "owner" ? [{ id: "danger", label: "Опасная зона", icon: <ShieldAlert size={14} /> }] : []),
   ];
@@ -138,6 +153,7 @@ export function ProjectPage({ id, me }: { id: string; me: Me }) {
       )}
       {tab === "findings" && (findings.error ? <ErrorState error={findings.error} /> : <FindingTable findings={findingList} />)}
       {tab === "members" && <Members project={p} me={me} onChange={reload} />}
+      {tab === "integrations" && <GitHubIntegration projectId={id} />}
       {tab === "journal" && audit.data && <AuditTable rows={audit.data} />}
       {tab === "danger" && role === "owner" && <Management project={p} />}
     </div>

@@ -50,6 +50,11 @@ def docker_available(docker: str = "docker") -> bool:
     return proc.returncode == 0 and bool(proc.stdout.strip())
 
 
+# How long ``docker kill`` may take when a command runs out of time. An overloaded or hung
+# daemon (e.g. during image builds) may not answer: the step still ends as a timeout.
+KILL_TIMEOUT = 30.0
+
+
 class DockerSandboxExecutor:
     """Runs commands inside a locked-down, throw-away container."""
 
@@ -186,15 +191,20 @@ class DockerSandboxExecutor:
         self, docker: str, name: str, spec: CommandSpec, egress: tuple[str, str] | None
     ) -> ExecutionResult:
         argv = [docker, *self.build_argv(spec, name, egress=egress)]
+        unkilled: list[str] = []
 
         def kill() -> None:
-            subprocess.run(  # noqa: S603 - fixed argv
-                [docker, "kill", name],
-                capture_output=True,
-                timeout=30,
-                check=False,
-                env=_docker_env(),
-            )
+            try:
+                subprocess.run(  # noqa: S603 - fixed argv
+                    [docker, "kill", name],
+                    capture_output=True,
+                    timeout=KILL_TIMEOUT,
+                    check=False,
+                    env=_docker_env(),
+                )
+            except (subprocess.TimeoutExpired, OSError) as exc:
+                # The daemon did not answer: the run is still a timeout, not this error.
+                unkilled.append(type(exc).__name__)
 
         outcome = await run_process(
             argv,
@@ -218,12 +228,18 @@ class DockerSandboxExecutor:
                 f"image {spec.image or self._cfg.image} is not present locally; "
                 "run `ai-coding tools pull` (requires network access)"
             )
+        stderr = outcome.stderr
+        if unkilled:
+            stderr += (
+                f"\nthe Docker daemon did not stop container {name} within "
+                f"{KILL_TIMEOUT:g} s ({unkilled[0]}): it may still be running\n"
+            )
         return ExecutionResult(
             backend=self.backend,
             argv=tuple(argv),
             exit_code=outcome.exit_code,
             stdout=outcome.stdout,
-            stderr=outcome.stderr,
+            stderr=stderr,
             duration_seconds=outcome.duration_seconds,
             timed_out=outcome.timed_out,
             stdout_truncated=outcome.stdout_truncated,

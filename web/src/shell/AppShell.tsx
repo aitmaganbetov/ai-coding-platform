@@ -5,6 +5,7 @@ import { CommandBar } from "./CommandBar";
 import { CommandPalette } from "./CommandPalette";
 import type { Route } from "./routes";
 import { Sidebar } from "./Sidebar";
+import { WorkspaceTabs } from "./WorkspaceTabs";
 import { resolveTheme, useUi } from "./store";
 
 const Copilot = lazy(() => import("./Copilot").then((m) => ({ default: m.Copilot })));
@@ -36,19 +37,35 @@ export function useThemeEffect(): void {
 
 export function AppShell({ route, me, onLogout, children }: { route: Route; me: Me; onLogout: () => void; children: ReactNode }) {
   useThemeEffect();
-  const { copilotOpen, sidebarCollapsed, setMobileNav } = useUi();
+  const { copilotOpen, sidebarCollapsed, setMobileNav, fullscreen, setFullscreen } = useUi();
   const embedsChat = route.view === "ai" || route.view === "code";
   const wide = ["ai", "code"].includes(route.view);
+  const full = fullscreen && wide; // the editor alone: only the workspaces have it
   useEffect(() => setMobileNav(false), [route, setMobileNav]);
+  useEffect(() => {
+    if (!full) return undefined;
+    // Esc leaves full screen, unless it belongs to the editor (its search, its tooltips).
+    const onKey = (event: KeyboardEvent) => {
+      const inEditor = (event.target as HTMLElement | null)?.closest?.(".cm-editor, .palette, [role='dialog']");
+      if (event.key === "Escape" && !inEditor && !event.defaultPrevented) setFullscreen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [full, setFullscreen]);
   return (
     <TooltipProvider delayDuration={350}>
       <a href="#main" className="skip-link">
         К содержимому
       </a>
-      <div className={["shell", sidebarCollapsed && "sidebar-collapsed", copilotOpen && !embedsChat && "with-copilot"].filter(Boolean).join(" ")}>
+      <div
+        className={["shell", sidebarCollapsed && "sidebar-collapsed", copilotOpen && !embedsChat && "with-copilot", full && "fullscreen"]
+          .filter(Boolean)
+          .join(" ")}
+      >
         <Sidebar route={route} me={me} />
         <CommandBar route={route} me={me} onLogout={onLogout} />
         <main id="main" className={wide ? "shell-main wide" : "shell-main"} tabIndex={-1}>
+          {!full && <WorkspaceTabs route={route} />}
           {children}
         </main>
         {copilotOpen && !embedsChat && (

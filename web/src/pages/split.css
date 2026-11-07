@@ -1,0 +1,187 @@
+/* Editor tabs and Split View (ADR-0045). */
+
+.ed-area {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ed-area.two {
+  display: grid;
+  grid-template-columns: minmax(0, var(--ed-left, 50%)) 8px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+.ed-switch {
+  display: none;
+}
+.ed-group {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+}
+.ed-group.focused {
+  border-color: var(--accent-border);
+}
+.ed-bar {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  border-bottom: 1px solid var(--border-primary);
+  background: var(--bg-tertiary);
+}
+.ed-tabs {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.ed-tab {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  max-width: 220px;
+  border-right: 1px solid var(--border-primary);
+  color: var(--text-secondary);
+}
+.ed-tab.active {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  box-shadow: inset 0 2px 0 var(--accent-primary);
+}
+.ed-tab button[role="tab"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 7px 4px 7px 12px;
+  border: none;
+  background: none;
+  color: inherit;
+  font: var(--text-xs) var(--font-mono);
+  cursor: pointer;
+}
+.ed-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ed-dirty {
+  color: var(--warning);
+  font-size: 9px;
+}
+.ed-close {
+  display: inline-flex;
+  padding: 3px;
+  margin-right: 4px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0.55;
+}
+.ed-tab:hover .ed-close,
+.ed-tab.active .ed-close,
+.ed-close:focus-visible {
+  opacity: 1;
+}
+.ed-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.ed-actions {
+  display: flex;
+  align-items: center;
+  flex: none;
+  padding: 0 4px;
+  gap: 2px;
+}
+.ed-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ed-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ed-pane[hidden] {
+  display: none;
+}
+.ed-pane .editor-pane {
+  border: none;
+  border-radius: 0;
+}
+.ed-body > .editor-empty {
+  margin: var(--space-2);
+}
+.ed-divider {
+  position: relative;
+  cursor: col-resize;
+  touch-action: none;
+}
+.ed-divider::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background var(--dur-fast) var(--ease);
+}
+.ed-divider:hover::after,
+.ed-divider:focus-visible::after {
+  background: var(--accent-primary);
+}
+
+/* Narrow screens: one group at a time, switched above the editor. */
+@media (max-width: 900px) {
+  .ed-area.two {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .ed-area.two .ed-switch {
+    display: flex;
+    margin-bottom: var(--space-2);
+  }
+  .ed-switch .segmented-ctl {
+    width: 100%;
+  }
+  .ed-switch .segmented-ctl button {
+    flex: 1;
+    justify-content: center;
+  }
+  .ed-area.two .ed-divider,
+  .ed-area.two .ed-group:not(.focused) {
+    display: none;
+  }
+  .ed-tab {
+    max-width: 160px;
+  }
+}
+
+/* Full screen: the editor alone (the App Shell hides the sidebar and the command bar). */
+.workspace.ws-full .ws-left,
+.workspace.ws-full .ws-right,
+.workspace.ws-full .ws-resizer,
+.workspace.ws-full .ws-panes,
+.workspace.ws-full .ws-note {
+  display: none;
+}
+.workspace.ws-full .ws-grid,
+.workspace.ws-full .ws-grid.with-right {
+  grid-template-columns: minmax(0, 1fr);
+}

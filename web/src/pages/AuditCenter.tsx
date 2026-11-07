@@ -44,8 +44,10 @@ import {
 import "./quality.css";
 
 // Audit Center: the findings of the platform's analysers (and agents), by category, with
-// evidence, history and a way to hand a fix to the chat. Nothing here is computed beyond
-// grouping the findings the API returns.
+// evidence, history and a way to hand a fix to the chat. Every audit records its findings
+// anew: the overview and the categories show each project's latest audit (the API's
+// "current" findings), the trend and a finding's history every audit. Nothing here is
+// computed beyond grouping the findings the API returns.
 
 export type Category =
   | "security"
@@ -252,8 +254,19 @@ function categoryLabel(category: Category): string {
 }
 
 // --------------------------------------------------------------- overview --
-function Overview({ rows, audits, onCategory }: { rows: FindingRow[]; audits: GlobalRun[]; onCategory: (c: string) => void }) {
+function Overview({
+  rows,
+  history,
+  audits,
+  onCategory,
+}: {
+  rows: FindingRow[]; // the latest audit of each project
+  history: FindingRow[]; // every audit's findings
+  audits: GlobalRun[];
+  onCategory: (c: string) => void;
+}) {
   const open = rows.filter((f) => f.status === "open");
+  const baselined = rows.filter((f) => f.status === "baselined").length;
   const byCategory = (Object.keys(CATEGORY_INFO) as Exclude<Category, "other">[]).map((c) => ({ c, n: open.filter((f) => categoryOf(f.source) === c).length }));
   const other = open.filter((f) => categoryOf(f.source) === "other").length;
   const files = new Map<string, number>();
@@ -262,7 +275,7 @@ function Overview({ rows, audits, onCategory }: { rows: FindingRow[]; audits: Gl
   const trend = audits
     .slice(0, 10)
     .reverse()
-    .map((r) => ({ run: r, n: rows.filter((f) => f.run_id === r.id).length }));
+    .map((r) => ({ run: r, n: history.filter((f) => f.run_id === r.id).length }));
   const max = Math.max(1, ...trend.map((t) => t.n));
   return (
     <div className="bento">
@@ -272,6 +285,9 @@ function Overview({ rows, audits, onCategory }: { rows: FindingRow[]; audits: Gl
             <Stat key={s} label={s} value={open.filter((f) => f.severity.toLowerCase() === s).length} tone={s === "critical" || s === "high" ? "danger" : s === "medium" ? "warning" : undefined} />
           ))}
         </div>
+        <p className="note text-muted">
+          По последнему аудиту каждого проекта{baselined > 0 ? ` · ещё ${baselined} принято через baseline` : ""}.
+        </p>
       </Card>
       <Card span={2} title="По категориям" icon={<LayoutGrid size={15} />}>
         <div className="cat-grid">
@@ -430,7 +446,9 @@ export default function AuditCenter({ query }: { query: Record<string, string> }
     if (query.severity !== undefined) setSeverity(query.severity);
   }, [query.category, query.severity]);
 
-  const findings = useFindings(project ? { project_id: project } : {});
+  const scope = project ? { project_id: project } : {};
+  const findings = useFindings({ ...scope, current: true }); // each project's latest audit
+  const history = useFindings(scope); // every audit: the trend, a finding's history
   const audits = useRuns(project ? { kind: "audit", project_id: project } : { kind: "audit" });
   const all = findings.data ?? [];
   const filtered = useMemo(() => {
@@ -508,8 +526,8 @@ export default function AuditCenter({ query }: { query: Record<string, string> }
           {() =>
             tab === "overview" ? (
               <div className="stack">
-                <Overview rows={filtered} audits={audits.data ?? []} onCategory={setTab} />
-                <h3 className="section-title">Все находки · {filtered.length}</h3>
+                <Overview rows={filtered} history={history.data ?? []} audits={audits.data ?? []} onCategory={setTab} />
+                <h3 className="section-title">Находки последнего аудита · {filtered.length}</h3>
                 <FindingsTable
                   rows={filtered}
                   showProject={!project}
@@ -532,7 +550,7 @@ export default function AuditCenter({ query }: { query: Record<string, string> }
           }
         </QueryState>
       )}
-      <FindingDialog finding={open} all={all} onClose={() => setOpen(null)} />
+      <FindingDialog finding={open} all={history.data ?? all} onClose={() => setOpen(null)} />
     </div>
   );
 }

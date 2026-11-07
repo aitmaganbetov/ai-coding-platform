@@ -19,6 +19,8 @@
 | ``AI_CODING_SERVER_WORKSPACE_SECRET`` | signs tickets between the API and the service |
 | ``AI_CODING_SERVER_WORKSPACE_IMAGE`` | ``ai-coding-workspace:local`` (Claude Code, Codex) |
 | ``AI_CODING_SERVER_WORKSPACE_EGRESS`` | hosts the terminals may reach (``*``: any) |
+| ``AI_CODING_SERVER_SECRET_KEY`` | encrypts projects' secrets at rest (32 bytes, base64 or hex); |
+|   | unset: secrets (tokens, API keys) cannot be stored |
 | ``AI_CODING_SERVER_SECURITY_CENTER`` | ``off``: the AI Security Center API and page do |
 |   | not exist; ``on`` enables them (read-only, docs/security-center.md) |
 """
@@ -88,6 +90,8 @@ class ServerSettings:
     project_creators: str = "all"  # "all": every user creates projects; "admins": only them
     workspaces: str = "local"  # "local", "off" or the workspace service's URL
     workspace_secret: str | None = None
+    # Encrypts the projects' secrets at rest (AES-256-GCM): 32 bytes, base64 or hex.
+    secret_key: str | None = None
     workspace_image: str = "ai-coding-workspace:local"
     workspace_egress: tuple[str, ...] = DEFAULT_WORKSPACE_EGRESS  # ("*",): unrestricted
     workspace_runtime: str | None = None  # e.g. "runsc" (gVisor)
@@ -145,6 +149,7 @@ class ServerSettings:
             project_creators=_choice(env, "PROJECT_CREATORS", "all", ("all", "admins")),
             workspaces=_workspaces(env.get(PREFIX + "WORKSPACES", "")),
             workspace_secret=env.get(PREFIX + "WORKSPACE_SECRET") or None,
+            secret_key=env.get(PREFIX + "SECRET_KEY") or None,
             workspace_image=env.get(PREFIX + "WORKSPACE_IMAGE") or "ai-coding-workspace:local",
             workspace_egress=_hosts(env.get(PREFIX + "WORKSPACE_EGRESS")),
             workspace_runtime=env.get(PREFIX + "WORKSPACE_RUNTIME") or None,

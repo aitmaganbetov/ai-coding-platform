@@ -208,7 +208,10 @@ async def run_tests(runner: SandboxTestRunner, root: Path, ctx: StepContext) -> 
     if present is not None and not await asyncio.to_thread(present, plan.image):
         return TestRun(TestStatus.SKIPPED, f"sandbox image {plan.image.split('@')[0]} is not "
                        "present (run `ai-coding tools pull`)", plan.describe())  # fmt: skip
-    return await runner.run(root, plan)
+    result = await runner.run(root, plan)
+    if result.junit:  # per-test results (ADR-0044); text/*: secrets are redacted on save
+        ctx.save_artifact(f"junit-{ctx.task_key}.xml", result.junit, "text/xml")
+    return result
 
 
 def tests_acceptable(run: TestRun, strict: bool) -> bool:

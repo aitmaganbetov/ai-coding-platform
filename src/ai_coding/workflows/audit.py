@@ -50,6 +50,7 @@ from ai_coding.orchestrator.registry import HandlerRegistry, StepContext, StepRe
 from ai_coding.persistence.types import utcnow
 from ai_coding.quality import QualityGateEngine, load_baseline
 from ai_coding.quality.baseline import BaselineError
+from ai_coding.quality.junit import from_tool_output, to_junit_xml
 from ai_coding.quality.suppressions import scan_suppressions
 from ai_coding.reports import AuditReport, render_markdown
 from ai_coding.tools import ToolRun, ToolRunner, default_tool_registry
@@ -135,6 +136,13 @@ class ToolScanHandler(_Handler):
                 f"{spec.name}-output.json", tool_run.raw_output.encode("utf-8"), "application/json"
             )
             evidence.append(ref.uri)
+            # Test tools: their per-test results as a JUnit report too (ADR-0044).
+            suites = from_tool_output(spec.name, tool_run.raw_output, ctx.tree)
+            if suites:
+                junit = ctx.save_artifact(
+                    f"junit-{spec.name}.xml", to_junit_xml(suites), "text/xml"
+                )
+                evidence.append(junit.uri)
         return StepResult(output=tool_run.to_dict(), evidence_refs=evidence)
 
     async def _scan(self, ctx: StepContext) -> ToolRun:

@@ -22,6 +22,7 @@ from datetime import timedelta
 
 from sqlalchemy import and_, or_, select, update
 
+from ai_coding.api import presence
 from ai_coding.api.kinds import build_kind
 from ai_coding.api.metrics import Metrics
 from ai_coding.api.services import Server
@@ -147,19 +148,44 @@ class Worker:
     async def run(self, stop: asyncio.Event) -> None:
         """Lease and execute jobs until ``stop`` is set; then wait for running jobs.
 
+        Meanwhile the worker announces itself, idle or busy (:mod:`ai_coding.api.presence`).
         With ``AI_CODING_SERVER_RETENTION_DAYS`` set, retention is applied hourly.
         """
-        next_purge = 0.0
-        while not stop.is_set():
-            loop_time = asyncio.get_running_loop().time()
-            if self.server.settings.retention_days and loop_time >= next_purge:
-                next_purge = loop_time + PURGE_INTERVAL
-                await self._purge()
-            started = await self._fill()
-            if not started:
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(stop.wait(), timeout=self.poll)
-        await self.drain()
+        announce = asyncio.create_task(self._announce())
+        try:
+            next_purge = 0.0
+            while not stop.is_set():
+                loop_time = asyncio.get_running_loop().time()
+                if self.server.settings.retention_days and loop_time >= next_purge:
+                    next_purge = loop_time + PURGE_INTERVAL
+                    await self._purge()
+                started = await self._fill()
+                if not started:
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(stop.wait(), timeout=self.poll)
+            await self.drain()
+        finally:
+            announce.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await announce
+            await asyncio.to_thread(presence.leave, self.server.settings.data_dir, self.owner)
+
+    async def _announce(self) -> None:
+        """The worker's heartbeat. A failure (say, an unwritable data directory) is logged
+        once and never stops the worker: it only looks absent on the infrastructure page."""
+        data, started, failing = self.server.settings.data_dir, utcnow(), False
+        await asyncio.to_thread(presence.forget_stale, data)
+        while True:
+            try:
+                await asyncio.to_thread(presence.beat, data, self.owner, started=started,
+                                        concurrency=self.concurrency, active=len(self._tasks),
+                                        now=utcnow())  # fmt: skip
+                failing = False
+            except OSError as exc:
+                if not failing:
+                    _log.warning("worker heartbeat failed", error=str(exc))
+                failing = True
+            await asyncio.sleep(presence.BEAT_SECONDS)
 
     async def run_until_idle(self, timeout: float = 60.0) -> int:
         """Process jobs until the queue is empty and nothing runs (tests, one-shot use)."""

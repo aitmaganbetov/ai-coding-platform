@@ -16,6 +16,7 @@ import yaml
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from ai_coding.api import presence
 from ai_coding.api.app import create_app
 from ai_coding.api.services import Server
 from ai_coding.api.settings import ServerSettings
@@ -26,6 +27,7 @@ from ai_coding.persistence.models import (
     AgentExecution,
     Finding,
     ModelUsage,
+    Run,
     RunJob,
     Task,
 )
@@ -200,6 +202,69 @@ def test_findings_of_every_visible_project(world: dict[str, Any]) -> None:
     assert _status(world, "", "/findings") == 401
 
 
+def test_current_findings_are_the_latest_audits(tmp_path: Path) -> None:
+    """Each audit records its findings anew. ``current`` keeps those of each project's latest
+    audit whose Quality Gates ran (not every audit's copy, nor an audit still scanning); a
+    finding its gates accepted through the baseline is ``baselined`` in that audit."""
+    root = tmp_path / "repos" / "alpha"
+    root.mkdir(parents=True)
+    (root / "main.py").write_text("print(1)\n", encoding="utf-8")
+    srv = Server(ServerSettings(data_dir=tmp_path / "data",
+                                database_url=f"sqlite:///{tmp_path / 's.db'}",
+                                allowed_roots=(root.parent.resolve(),),
+                                rate_limit_per_minute=100_000))  # fmt: skip
+    try:
+        srv.migrate()
+        srv.create_user("dev", PASSWORD)
+        dev = srv.login("dev", PASSWORD)
+        assert dev is not None
+        alpha = srv.create_project(dev, "alpha", path=str(root.resolve()))
+        first, second, scanning = (srv.create_run(dev, alpha, "discover", {}) for _ in range(3))
+        now = utcnow()
+        with srv.session() as s:
+            for age, run in enumerate((scanning, second, first)):
+                found = s.get(Run, run)
+                assert found is not None
+                found.created_at = now - timedelta(hours=age)
+            for run, gates, suppressed in ((first, "SUCCEEDED", []), (second, "SUCCEEDED", ["a"]),
+                                           (scanning, "PENDING", [])):  # fmt: skip
+                s.add(Task(run_id=run, key="quality.gates", name="Quality gates",
+                           phase="verification", capability="quality.gates", status=gates,
+                           output={"verdict": "FAIL", "suppressed": suppressed}))  # fmt: skip
+            for run, keys in ((first, "ab"), (second, "ac"), (scanning, "d")):
+                for key in keys:
+                    s.add(Finding(project_id=alpha, run_id=run, source="trivy", severity="high",
+                                  title=f"vuln {key}", status="open", fingerprint=key))  # fmt: skip
+        with TestClient(create_app(srv)) as client:
+            login = {"username": "dev", "password": PASSWORD}
+            token = client.post("/api/v1/auth/login", json=login).json()["token"]
+
+            def findings(**params: Any) -> list[tuple[str, str, str]]:
+                r = client.get("/api/v1/findings", params=params,
+                               headers={"Authorization": f"Bearer {token}"})  # fmt: skip
+                assert r.status_code == 200, r.text
+                order = {str(first): 1, str(second): 2, str(scanning): 3}
+                return sorted(
+                    (f["title"], f["status"], f"run{order[f['run_id']]}") for f in r.json()
+                )
+
+            assert findings(current="true") == [("vuln a", "baselined", "run2"),
+                                                ("vuln c", "open", "run2")]  # fmt: skip
+            assert findings() == [("vuln a", "baselined", "run2"), ("vuln a", "open", "run1"),
+                                  ("vuln b", "open", "run1"), ("vuln c", "open", "run2"),
+                                  ("vuln d", "open", "run3")]  # fmt: skip
+            assert findings(current="true", status="open") == [("vuln c", "open", "run2")]
+            assert findings(status="baselined") == [("vuln a", "baselined", "run2")]
+            assert findings(run_id=str(first)) == [("vuln a", "open", "run1"),
+                                                   ("vuln b", "open", "run1")]  # fmt: skip
+            # A project without a finished audit has no current findings.
+            with srv.session() as s:
+                s.query(Task).filter(Task.key == "quality.gates").delete()
+            assert findings(current="true") == []
+    finally:
+        srv.close()
+
+
 def test_agent_executions(world: dict[str, Any]) -> None:
     alpha = world["alpha"]
     rows = _get(world, "dev", f"/projects/{alpha}/agent-executions")
@@ -267,6 +332,26 @@ def test_run_detail_has_graph_gates_and_usage(world: dict[str, Any]) -> None:
     assert other["usage"] == {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
 
 
+def test_run_detail_reports_what_the_steps_produced(world: dict[str, Any]) -> None:
+    """``results``: per succeeded step, where the change is and the agents' verdict, only
+    the listed scalar fields, clipped; a step not finished reports nothing."""
+    with world["server"].session() as s:
+        s.add(Task(run_id=world["gamma_run"], key="develop.implement", name="Implement",
+                   phase="execution", capability="develop.implement", status="SUCCEEDED",
+                   output={"branch": "ai/add-tax", "base": "main", "commit": "abc123",
+                           "iterations": 2, "summary": "x" * 5000, "plan": {"steps": [1]},
+                           "changes": [{"path": "tax.py"}], "pr_body": "secret-ish body",
+                           "tests": True}))  # fmt: skip
+        s.add(Task(run_id=world["gamma_run"], key="github.pr", name="Pull request",
+                   phase="execution", capability="github.pr", status="PENDING",
+                   output={"url": "https://github.com/o/r/pull/1"}))  # fmt: skip
+    results = _get(world, "outsider", f"/runs/{world['gamma_run']}")["results"]
+    implement = results["develop.implement"]
+    assert implement == {"branch": "ai/add-tax", "base": "main", "commit": "abc123",
+                         "iterations": 2, "summary": "x" * 2000}  # fmt: skip
+    assert "github.pr" not in results  # not finished
+
+
 def test_project_config_summary(world: dict[str, Any]) -> None:
     root = world["server"].settings.allowed_roots[0] / "beta"
     path = root / STATE_CONFIG
@@ -330,6 +415,12 @@ def test_system_status_for_admins_only(
                                ("host:3:gone", now - timedelta(minutes=30))):  # fmt: skip
             s.add(RunJob(run_id=run_id, kind="resume", state="leased", lease_owner=owner,
                          lease_expires_at=expires, available_at=now))  # fmt: skip
+    # Heartbeats: the busy worker's, an idle worker's (no lease), one gone two minutes ago.
+    data = world["server"].settings.data_dir
+    started = now - timedelta(hours=1)
+    for owner, seen in (("host:1:live", now), ("host:4:idle", now - timedelta(seconds=10)),
+                        ("host:5:gone", now - timedelta(minutes=2))):  # fmt: skip
+        presence.beat(data, owner, started=started, concurrency=3, active=0, now=seen)
     try:
         status = _get(world, "admin", "/system")
         assert set(status) == {"version", "database", "workspaces", "queue", "runs", "workers",
@@ -337,10 +428,14 @@ def test_system_status_for_admins_only(
         assert status["database"] == "sqlite" and status["workspaces"] == "on"
         assert status["queue"]["leased"] == 4 and status["queue"]["done"] >= 3
         assert sum(status["runs"].values()) == 3
-        assert [w["id"] for w in status["workers"]] == ["host:1:live", "host:2:stalled"]
-        live, stalled = status["workers"]
+        assert [w["id"] for w in status["workers"]] == ["host:1:live", "host:2:stalled",
+                                                        "host:4:idle"]  # fmt: skip
+        live, stalled, idle = status["workers"]
         assert live["active_jobs"] == 2 and stalled["active_jobs"] == 0
         assert live["last_seen"] <= status["time"] and stalled["last_seen"] < status["time"]
+        assert (live["online"], stalled["online"], idle["online"]) == (True, False, True)
+        assert idle["active_jobs"] == 0 and idle["concurrency"] == 3 and idle["host"]
+        assert idle["started"] == started.isoformat() and stalled["host"] is None
         assert status["analysers"] == {"trivy": True, "osv-scanner": False}
         for who in ("dev", "aud", "outsider"):
             r = world["client"].get("/api/v1/system", headers=world[who])
@@ -350,6 +445,8 @@ def test_system_status_for_admins_only(
         with world["server"].session() as s:
             for job in s.scalars(select(RunJob).where(RunJob.state == "leased")):
                 s.delete(job)
+        for owner in ("host:1:live", "host:4:idle", "host:5:gone"):
+            presence.leave(data, owner)
     with TestClient(create_app(world["server"], broker=None)) as client:
         off = client.get("/api/v1/system", headers=world["admin"]).json()
         assert off["workspaces"] == "off"

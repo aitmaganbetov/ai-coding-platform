@@ -161,15 +161,19 @@ async def _supervise(
         await proc.wait()
     except TimeoutError:
         timed_out = True
-        if on_timeout is not None:
-            on_timeout()
-        kill()
-        (out, out_trunc), (err, err_trunc) = await readers
-        await proc.wait()
+        try:
+            if on_timeout is not None:
+                on_timeout()
+        finally:  # the executor's own cleanup failing never keeps the process alive
+            kill()
+            (out, out_trunc), (err, err_trunc) = await readers
+            await proc.wait()
     except asyncio.CancelledError:
-        if on_timeout is not None:
-            on_timeout()
-        kill()
+        try:
+            if on_timeout is not None:
+                on_timeout()
+        finally:
+            kill()
         raise
     return ProcessOutcome(
         exit_code=proc.returncode if proc.returncode is not None else -1,

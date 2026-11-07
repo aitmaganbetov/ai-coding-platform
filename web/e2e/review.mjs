@@ -84,6 +84,8 @@ if (!after.content.includes("LINE 2 accepted") || !after.content.includes("line 
   problems.push(`unexpected file content:\n${after.content}`);
 const { data: status } = await call("GET", `${p}/workspace/git`);
 if (status.files.length) problems.push(`workspace not clean: ${JSON.stringify(status.files)}`);
+// Leave the workspace page first: it would still poll the container being stopped.
+await page.goto(`${base}/#/dashboard`);
 await call("POST", `${p}/workspace/restart`, {}); // stop the test's container
 
 await browser.close();

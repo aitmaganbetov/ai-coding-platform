@@ -43,7 +43,7 @@ def test_all_tz_entities_exist(db: Database) -> None:
 def test_migration_matches_models(db: Database) -> None:
     with db.engine.connect() as conn:
         assert compare_metadata(MigrationContext.configure(conn), Base.metadata) == []
-    assert current_revision(db) == head_revision() == "0003_rate_limits"
+    assert current_revision(db) == head_revision() == "0005_local_runs"
 
 
 def test_upgrade_is_idempotent_and_downgrade_works(db: Database) -> None:
@@ -52,7 +52,7 @@ def test_upgrade_is_idempotent_and_downgrade_works(db: Database) -> None:
     assert current_revision(db) is None
     assert "runs" not in inspect(db.engine).get_table_names()
     upgrade_to_head(db)
-    assert current_revision(db) == "0003_rate_limits"
+    assert current_revision(db) == "0005_local_runs"
 
 
 def test_sqlite_pragmas(db: Database) -> None:
@@ -166,5 +166,5 @@ def test_session_rolls_back_on_error(db: Database) -> None:
 def test_in_memory_database() -> None:
     mem = Database("sqlite://")
     upgrade_to_head(mem)
-    assert current_revision(mem) == "0003_rate_limits"
+    assert current_revision(mem) == "0005_local_runs"
     mem.dispose()

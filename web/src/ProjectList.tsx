@@ -160,7 +160,7 @@ function ProjectCard({ row }: { row: Row }) {
 export function ProjectList({ me }: { me: Me }) {
   const projects = useProjects();
   const runs = useRuns();
-  const findings = useFindings();
+  const findings = useFindings({ current: true }); // each project's latest audit
   const [creating, setCreating] = useState(false);
   const [search, setSearch] = useState("");
   const [role, setRole] = useState("");

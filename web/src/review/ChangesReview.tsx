@@ -185,7 +185,23 @@ function FileCard({
           Удалить
         </Button>
       </>
-    ) : file.binary || file.hunks.length === 0 ? null : layer === "pending" ? (
+    ) : file.binary || file.hunks.length === 0 ? (
+      // No hunks to apply (binary, mode only): the whole file.
+      layer === "pending" ? (
+        <>
+          <Button size="sm" icon={<CheckCheck size={13} />} disabled={disabled} onClick={() => onAct(`${key}:all`, { action: "accept_path", path: file.path })}>
+            Принять файл
+          </Button>
+          <Button size="sm" variant="ghost" icon={<Undo2 size={13} />} disabled={disabled} onClick={() => onAct(`${key}:all`, { action: "reject_path", path: file.path })}>
+            Отклонить файл
+          </Button>
+        </>
+      ) : (
+        <Button size="sm" variant="ghost" icon={<Undo2 size={13} />} disabled={disabled} onClick={() => onAct(`${key}:all`, { action: "unstage_path", path: file.path })}>
+          Вернуть на проверку
+        </Button>
+      )
+    ) : layer === "pending" ? (
       <>
         <Button size="sm" icon={<CheckCheck size={13} />} disabled={disabled} onClick={() => onAct(`${key}:all`, { action: "accept", patch: filePatch(file) })}>
           Принять файл
@@ -225,7 +241,7 @@ function FileCard({
       </header>
       {open && (
         <div className="rfile-body">
-          {file.binary && <p className="text-muted rfile-note">Двоичный файл: показать изменения построчно нельзя. Его фиксирует «Зафиксировать» в панели Git.</p>}
+          {file.binary && <p className="text-muted rfile-note">Двоичный файл: построчно не показывается — принимается или откатывается целиком.</p>}
           {!file.binary && file.hunks.length === 0 && <p className="text-muted rfile-note">Изменились только свойства файла (режим или имя).</p>}
           {shown.map((hunk, i) => (
             <section key={`${hunk.header}-${i}`} className="hunk" aria-label={`Фрагмент ${i + 1} из ${file.hunks.length}`}>
@@ -293,7 +309,7 @@ export function ChangesReview({
     setBusy(key);
     try {
       await api.review(projectId, body);
-      if (body.action === "reject" || body.action === "reject_file") onChanged?.();
+      if (body.action.startsWith("reject")) onChanged?.();
     } catch (err) {
       toast({ tone: "danger", title: "Изменение не применено", text: `${errorText(err)} Список обновлён — проверьте ещё раз.` });
     } finally {
@@ -305,7 +321,8 @@ export function ChangesReview({
   async function acceptAll(data: WorkspaceDiff) {
     setBusy("all");
     try {
-      for (const file of data.pending) if (!file.binary && file.hunks.length) await api.review(projectId, { action: "accept", patch: filePatch(file) });
+      for (const file of data.pending)
+        await api.review(projectId, file.binary || !file.hunks.length ? { action: "accept_path", path: file.path } : { action: "accept", patch: filePatch(file) });
       for (const file of data.new_files) await api.review(projectId, { action: "accept_file", path: file.path });
       toast({ tone: "success", title: "Все изменения приняты" });
     } catch (err) {

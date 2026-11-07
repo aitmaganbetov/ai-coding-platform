@@ -53,7 +53,7 @@ function Page({ route, me, onLogout }: { route: Route; me: Me; onLogout: () => v
     case "tasks":
       return <Tasks query={route.query ?? {}} />;
     case "agents":
-      return <Agents />;
+      return <Agents query={route.query ?? {}} />;
     case "audit":
       return <AuditCenter query={route.query ?? {}} />;
     case "security":

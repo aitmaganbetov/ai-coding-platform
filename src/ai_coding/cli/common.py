@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 
 import typer
@@ -24,14 +25,24 @@ from ai_coding.orchestrator.errors import (
     RunNotFoundError,
 )
 from ai_coding.persistence import Database, upgrade_to_head
+from ai_coding.persistence.types import utcnow
 
-_OPENED: list[Orchestrator] = []
+# Orchestrators opened by the current command, with when: the runs changed since are
+# reported to the linked server project when the command ends (ADR-0047).
+_OPENED: list[tuple[Orchestrator, datetime]] = []
 
 
 def close_all() -> None:
-    """Release every orchestrator opened by the current command."""
+    """Report the runs the command changed (if linked to a server), then release every
+    orchestrator opened by the current command."""
+    from ai_coding.cli.remote import report_touched  # noqa: PLC0415 - only when one was opened
+
     while _OPENED:
-        _OPENED.pop().close()
+        orch, since = _OPENED.pop()
+        try:
+            report_touched(orch, since)
+        finally:
+            orch.close()
 
 
 def load_project(project: Path) -> tuple[Path, AICodingConfig]:
@@ -56,7 +67,7 @@ def open_orchestrator(
     db = Database.for_project(root)
     upgrade_to_head(db)
     orch = Orchestrator(db=db, config=config, project_root=root, registry=registry)
-    _OPENED.append(orch)
+    _OPENED.append((orch, utcnow()))
     return orch
 
 

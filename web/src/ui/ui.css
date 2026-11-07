@@ -834,3 +834,24 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+/* Write-only secrets (API keys, tokens). */
+.secret-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.secret-input {
+  flex: 1;
+  min-width: 180px;
+  font-family: var(--font-mono);
+}
+.secret-note {
+  font-size: var(--text-xs);
+  margin: 0;
+}
+.field-label {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}

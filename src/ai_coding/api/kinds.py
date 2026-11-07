@@ -7,6 +7,7 @@ Audits on the server always use the Docker sandbox: analysers never run on the h
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,7 @@ from ai_coding.domain.enums import ExecutionBackend, Mode
 from ai_coding.orchestrator import HandlerRegistry, StepSpec
 from ai_coding.orchestrator.handlers import builtin_registry, discovery_plan
 from ai_coding.workflows import AuditOptions, build_audit
+from ai_coding.workflows.deploy import build_deploy
 from ai_coding.workflows.develop import DevelopRequest, build_develop
 from ai_coding.workflows.implement import ImplementSettings
 from ai_coding.workflows.maintain import MaintainRequest, build_maintain
@@ -54,6 +56,14 @@ class MaintainParams(_Params):
     dependencies: list[dict[str, Any]] = Field(default_factory=list, max_length=200)
     telemetry: str | None = Field(default=None, max_length=20_000)
     base: str | None = Field(default=None, max_length=255)
+
+
+class DeployParams(_Params):
+    """Set by the deployments endpoint (ADR-0048); the run checks the deployment is its own."""
+
+    deployment_id: uuid.UUID
+    environment_id: uuid.UUID
+    ref: str = Field(min_length=1, max_length=255, pattern=r"^[A-Za-z0-9._/@^~-]+$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +121,11 @@ def _maintain(root: Path, config: AICodingConfig, p: Mapping[str, Any]) -> tuple
     return build_maintain(request), {**params.model_dump(), "base": request.base}
 
 
+def _deploy(root: Path, config: AICodingConfig, p: Mapping[str, Any]) -> tuple[Built, dict]:  # type: ignore[type-arg]
+    params = DeployParams.model_validate(p)
+    return build_deploy(params.deployment_id), params.model_dump(mode="json")
+
+
 KINDS: dict[str, RunKind] = {
     k.name: k
     for k in (
@@ -145,6 +160,14 @@ KINDS: dict[str, RunKind] = {
             MaintainParams,
             _maintain,
             "Maintenance plan → approval → one verified fix",
+        ),
+        RunKind(
+            "deploy",
+            Mode.MAINTAIN,
+            Permission.DEPLOY,
+            DeployParams,
+            _deploy,
+            "Deployment of a ref to an environment: gates, approval, GitHub Actions or webhook",
         ),
     )
 }

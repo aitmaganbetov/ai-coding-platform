@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from ai_coding.api import presence
 from ai_coding.api.app import create_app
 from ai_coding.api.kinds import KINDS
 from ai_coding.api.services import Principal, Server
@@ -125,6 +126,28 @@ def test_embedded_worker_does_not_block_the_api(
         while server.run_status(admin, run)["state"] != "COMPLETED":
             assert time.monotonic() < deadline
             time.sleep(0.1)
+
+
+async def test_an_idle_worker_announces_itself_and_leaves_when_stopped(server: Server) -> None:
+    """A healthy worker is usually idle and holds no lease: its heartbeat shows it."""
+    data = server.settings.data_dir
+    stale = presence.directory(data) / "dead.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("{}", encoding="utf-8")
+    long_ago = time.time() - presence.FORGET.total_seconds() - 60
+    os.utime(stale, (long_ago, long_ago))
+    worker = Worker(server, concurrency=3, poll_seconds=0.05)
+    stop = asyncio.Event()
+    task = asyncio.create_task(worker.run(stop))
+    deadline = time.monotonic() + 10
+    while not (seen := presence.alive(data, utcnow())) and time.monotonic() < deadline:
+        await asyncio.sleep(0.02)
+    assert [w["id"] for w in seen] == [worker.owner]
+    assert seen[0]["active"] == 0 and seen[0]["concurrency"] == 3
+    assert not stale.exists()  # a worker gone for a day is forgotten
+    stop.set()
+    await asyncio.wait_for(task, timeout=10)
+    assert presence.alive(data, utcnow()) == []
 
 
 async def test_concurrency_limit_is_respected(

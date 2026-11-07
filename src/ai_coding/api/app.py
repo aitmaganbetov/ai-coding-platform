@@ -157,7 +157,10 @@ class CommitIn(_In):
 class ReviewIn(_In):
     """A decision on a change of the workspace (ADR-0040): a hunk's patch, or a new file."""
 
-    action: Literal["accept", "reject", "unstage", "accept_file", "reject_file"]
+    action: Literal[
+        "accept", "reject", "unstage", "accept_file", "reject_file", "accept_path",
+        "reject_path", "unstage_path",
+    ]  # fmt: skip
     patch: str | None = Field(default=None, max_length=1024 * 1024)
     path: str | None = Field(default=None, max_length=4096)
 
@@ -657,11 +660,17 @@ def all_runs(
 def all_findings(
     caller: Caller, server: Srv, *, limit: Annotated[int, Query(ge=1)] = 500,
     severity: Filter = None, status: Filter = None, source: Filter = None,
-    project_id: Filter = None, run_id: Filter = None,
+    project_id: Filter = None, run_id: Filter = None, current: bool = False,
 ) -> list[dict[str, Any]]:  # fmt: skip
-    """Findings of every project the caller may view, newest first (at most 2000)."""
+    """Findings of every project the caller may view, newest first (at most 2000).
+
+    ``current``: only those of each project's latest audit whose Quality Gates ran (each
+    audit records its findings anew). Findings its gates accepted through the baseline
+    have the status ``baselined``.
+    """
     return server.all_findings(caller, limit=limit, severity=severity, status=status,
-                               source=source, project_id=project_id, run_id=run_id)  # fmt: skip
+                               source=source, project_id=project_id, run_id=run_id,
+                               current=current)  # fmt: skip
 
 
 @insights.get("/projects/{project_id}/agent-executions", tags=["runs"])
@@ -1018,7 +1027,22 @@ def create_app(
     app.state.metrics = metrics
     _install_handlers(app)
     app.middleware("http")(_guard)
-    for router in (ops, auth, projects, runs, insights, workspace):
+    # Integrations configured from the Web UI (ADR-0043, ADR-0046, ADR-0048): their modules use this
+    # module's dependencies, hence imported here.
+    from ai_coding.api import (  # noqa: PLC0415
+        ai_routes,
+        deploy_routes,
+        github_routes,
+        settings_routes,
+        test_routes,
+    )
+
+    integrations = (settings_routes.router, deploy_routes.router, github_routes.router,
+                    test_routes.router, ai_routes.router)  # fmt: skip
+    from ai_coding.api import local_runs  # noqa: PLC0415 - CLI reports (ADR-0047), same reason
+
+    for router in (ops, auth, projects, runs, insights, workspace, *integrations,
+                   local_runs.router):  # fmt: skip
         app.include_router(router)
     if security_center_enabled:
         app.include_router(center)

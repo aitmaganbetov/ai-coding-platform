@@ -110,7 +110,9 @@ def _body(method: str, path: str) -> Any:
 def _fill(path: str, ids: dict[str, Any]) -> str:
     values = {"project_id": ids["project"], "run_id": ids["run"], "artifact_id": ids["artifact"],
               "token_id": ids["token_id"], "username": "victim"}  # fmt: skip
-    return re.sub(r"\{(\w+)\}", lambda m: values[m.group(1)], path)
+    # Any other path parameter (a secret's name, an environment…) gets a placeholder: the
+    # access checks come before any lookup.
+    return re.sub(r"\{(\w+)\}", lambda m: values.get(m.group(1), "victim"), path)
 
 
 def _call(client: TestClient, method: str, path: str, ids: dict[str, Any],

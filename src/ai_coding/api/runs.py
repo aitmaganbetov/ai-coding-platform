@@ -338,9 +338,40 @@ def _goal(kind: str, params: dict[str, Any]) -> str:
     return f"{kind}: {title}"[:200] if title else kind
 
 
+# What a finished step reports in a run's ``results`` (the agents' workspace shows them):
+# where the change is (branch, base, commit, pull request) and the agents' verdict. Only
+# these scalar fields, clipped: a step's full output stays in its artifacts.
+RESULT_FIELDS = ("branch", "base", "commit", "sha", "url", "number", "iterations", "verdict",
+                 "summary")  # fmt: skip
+RESULT_CHARS = 2000
+
+
+def _scalar(value: Any) -> bool:
+    return isinstance(value, (str, int, float)) and not isinstance(value, bool)
+
+
+def _results(s: Session, run_id: uuid.UUID) -> dict[str, dict[str, Any]]:
+    """Per succeeded step, the :data:`RESULT_FIELDS` of its output."""
+    results: dict[str, dict[str, Any]] = {}
+    for key, output in s.execute(
+        select(Task.key, Task.output).where(Task.run_id == run_id, Task.status == "SUCCEEDED")
+    ):
+        if not isinstance(output, dict):
+            continue
+        picked = {
+            name: value[:RESULT_CHARS] if isinstance(value, str) else value
+            for name in RESULT_FIELDS
+            if _scalar(value := output.get(name))
+        }
+        if picked:
+            results[key] = picked
+    return results
+
+
 def _run_details(s: Session, run_id: uuid.UUID) -> dict[str, Any]:
     """What the run page draws besides the status: the edges of the task graph, the
-    Quality Gates (``None`` until the gates step has an output) and the LLM usage."""
+    Quality Gates (``None`` until the gates step has an output), the LLM usage and what
+    the finished steps report (:func:`_results`)."""
     task, needed = aliased(Task), aliased(Task)
     edges = s.execute(
         select(task.key, needed.key)
@@ -357,6 +388,7 @@ def _run_details(s: Session, run_id: uuid.UUID) -> dict[str, Any]:
         "dependencies": [{"task": key, "depends_on": dep} for key, dep in edges],
         "gates": gates if isinstance(gates, list) else None,
         "usage": usage_dict(*usage),
+        "results": _results(s, run_id),
     }
 
 

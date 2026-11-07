@@ -19,6 +19,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     MetaData,
     String,
     Text,
@@ -240,6 +241,116 @@ class RateLimitCounter(Base):
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     minute: Mapped[int] = mapped_column(BigInteger, primary_key=True)  # unix time // 60
     count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ProjectSetting(Base):
+    """A section of a project's settings made in the Web UI (``ai``, ``github``…): JSON,
+    validated by the section's owner; never a secret (those are in ``project_secrets``)."""
+
+    __tablename__ = "project_settings"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    section: Mapped[str] = mapped_column(String(40), primary_key=True)
+    data: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    updated_by: Mapped[str] = mapped_column(String(150))
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class ProjectSecret(Base):
+    """A secret of a project (an API key, a token), encrypted with AES-256-GCM under the
+    server's secret key; ``hint`` (the last characters) is all that is ever shown."""
+
+    __tablename__ = "project_secrets"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    key_id: Mapped[str] = mapped_column(String(16))
+    nonce: Mapped[bytes] = mapped_column(LargeBinary)
+    ciphertext: Mapped[bytes] = mapped_column(LargeBinary)
+    hint: Mapped[str] = mapped_column(String(16))
+    updated_by: Mapped[str] = mapped_column(String(150))
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class DeployEnvironment(Base):
+    """Where a project deploys (ADR-0048): Development, Staging, Production…"""
+
+    __tablename__ = "deploy_environments"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_deploy_environments_project_name"),
+    )
+
+    id: Mapped[uuid.UUID] = _pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(64))
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    kind: Mapped[str] = mapped_column(String(20))  # github_actions | webhook
+    production: Mapped[bool] = mapped_column(Boolean, default=False)
+    requires_approval: Mapped[bool] = mapped_column(Boolean, default=False)
+    require_gates: Mapped[bool] = mapped_column(Boolean, default=False)
+    config: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    created_at: Mapped[datetime] = _created()
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class Deployment(Base):
+    """One deployment of a ref to an environment, driven by a ``deploy`` run."""
+
+    __tablename__ = "deployments"
+    __table_args__ = (Index("ix_deployments_environment_created", "environment_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = _pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
+    environment_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("deploy_environments.id", ondelete="CASCADE")
+    )
+    run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("runs.id", ondelete="SET NULL"))
+    ref: Mapped[str] = mapped_column(String(255))
+    commit: Mapped[str | None] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(
+        String(20)
+    )  # queued | awaiting_approval | running | succeeded | failed | cancelled
+    external_url: Mapped[str | None] = mapped_column(Text)
+    detail: Mapped[str | None] = mapped_column(Text)
+    requested_by: Mapped[str] = mapped_column(String(150))
+    created_at: Mapped[datetime] = _created()
+    finished_at: Mapped[datetime | None] = mapped_column()
+
+
+class LocalRun(Base):
+    """A run of the ``ai-coding`` CLI on a developer's machine, reported to the server
+    (ADR-0047). Only its summary: state, gates and finding counts, never code or findings."""
+
+    __tablename__ = "local_runs"
+    __table_args__ = (
+        UniqueConstraint("project_id", "run_id", name="uq_local_runs_project_run"),
+        Index("ix_local_runs_project_reported", "project_id", "reported_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
+    run_id: Mapped[uuid.UUID] = mapped_column()  # the run's id in the CLI's own database
+    reported_by: Mapped[str] = mapped_column(String(150))
+    machine: Mapped[str] = mapped_column(String(255))
+    cli_version: Mapped[str] = mapped_column(String(40))
+    mode: Mapped[str] = mapped_column(String(20))
+    goal: Mapped[str] = mapped_column(String(200), default="")
+    state: Mapped[str] = mapped_column(String(32))
+    verdict: Mapped[str | None] = mapped_column(String(10))  # an audit's PASS | FAIL
+    branch: Mapped[str | None] = mapped_column(String(255))
+    commit: Mapped[str | None] = mapped_column(String(64))
+    gates: Mapped[list[Any]] = mapped_column(default=list)
+    findings: Mapped[dict[str, Any]] = mapped_column(default=dict)  # new ones, by severity
+    tasks: Mapped[dict[str, Any]] = mapped_column(default=dict)  # counts by status
+    error: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column()
+    finished_at: Mapped[datetime | None] = mapped_column()
+    reported_at: Mapped[datetime] = mapped_column(default=utcnow, nullable=False)
 
 
 class RunEvent(Base):
