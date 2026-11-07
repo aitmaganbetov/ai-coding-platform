@@ -41,6 +41,7 @@ from ai_coding.api.idempotency import IdempotencyService
 from ai_coding.api.insights import InsightService
 from ai_coding.api.project_settings import ProjectSettingsService
 from ai_coding.api.runs import RunService
+from ai_coding.api.security_center import SecurityCenterService
 from ai_coding.api.test_results import TestResultService
 from ai_coding.api.workspaces import WorkspaceService
 
@@ -56,6 +57,7 @@ class Server(
     AccountService,
     RunService,
     WorkspaceService,
+    SecurityCenterService,
 ):
     """Facade used by the HTTP layer, the CLI and the workers."""
 

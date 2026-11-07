@@ -263,11 +263,124 @@ export interface AuditRow {
   target: string | null;
 }
 
+/** Opt-in modules the server has switched on (GET /me). Access is still checked per request. */
+export interface Features {
+  security_center?: boolean;
+}
+
 export interface Me {
   username: string;
   is_admin: boolean;
   can_create_projects?: boolean;
   token_id?: string | null;
+  features?: Features;
+}
+
+// --------------------------------------------- AI Security Center (opt-in) --
+// Read-only view of one run (docs/security-center.md). Every string comes from scanners
+// and the scanned project: untrusted, rendered as text only.
+
+export type ToolState = "completed" | "skipped" | "error" | "running" | "not_run";
+export type CoverageState = "completed" | "incomplete" | "skipped" | "error" | "unsupported";
+export type SecurityCategory = "sast" | "sca" | "secrets" | "iac" | "container" | "dast";
+
+export interface CoverageTool {
+  tool: string;
+  state: ToolState;
+  /** A fixed code (timeout, offline_db_missing…); the tool's own error text stays on the server. */
+  reason: string | null;
+}
+
+export interface CoverageCategory {
+  available: boolean;
+  state: CoverageState;
+  tools: CoverageTool[];
+}
+
+export type AgentVerdict = "confirmed" | "false_positive" | "needs_review";
+
+export interface SecurityFinding {
+  id: string;
+  source: string;
+  category: "sast" | "sca" | "secrets" | "iac" | "other";
+  rule_id: string | null;
+  severity: string;
+  title: string;
+  file_path: string | null;
+  line: number | null;
+  fingerprint: string;
+  status: string;
+  created_at: string | null;
+  /** The Security Agent's advisory verdict (null: not assessed). Never changes the gates. */
+  agent_verdict?: AgentVerdict | null;
+}
+
+/** One assessment of the Security Agent; its code evidence is withheld by the server. */
+export interface AgentAssessment {
+  verdict: AgentVerdict;
+  severity: string | null;
+  exploit_scenario: string | null;
+  recommendation: string | null;
+  cwe: string | null;
+}
+
+export interface AgentRisk {
+  file: string | null;
+  line: number | null;
+  severity: string;
+  description: string | null;
+  recommendation: string | null;
+}
+
+export interface SecurityAgentState {
+  state: "not_requested" | "awaiting_approval" | "running" | "completed" | "skipped" | "error" | "not_run";
+  reason: string | null;
+  verdicts?: Record<AgentVerdict, number>;
+  triaged?: number;
+  total?: number | null;
+  models?: string[];
+  summary?: string | null;
+  additional_risks?: AgentRisk[];
+}
+
+export interface SecurityFindingDetail extends SecurityFinding {
+  details: {
+    package?: string;
+    installed_version?: string;
+    fixed_version?: string;
+    ecosystem?: string;
+    aliases?: string[];
+    reference?: string;
+    resolution?: string;
+    cwe?: string[];
+  };
+  withheld: string[];
+  agent?: AgentAssessment | null;
+}
+
+export interface SecurityOverview {
+  schema_version: string;
+  project_id: string;
+  run_id: string;
+  run: { state: string; finished: boolean; mode: string; kind: string | null; created_at: string; finished_at: string | null };
+  coverage: Record<SecurityCategory, CoverageCategory>;
+  security_gate: { result: string; blocking: boolean } | null;
+  security_agent?: SecurityAgentState;
+  launch?: { kind: string; tools: string[] };
+  summary: { total: number; by_severity: Record<string, number>; by_source: Record<string, number>; by_status: Record<string, number> };
+  findings: SecurityFinding[];
+  page: { limit: number; offset: number; total: number; filters: { severity: string | null; source: string | null; status: string | null } };
+  capabilities: { dast: string; container: string };
+  compliance: { state: string; attestation: boolean };
+  ai_fix: { state: string; requires_human_review: boolean };
+}
+
+export interface SecurityQuery {
+  limit?: number;
+  offset?: number;
+  severity?: string;
+  source?: string;
+  status?: string;
 }
 
 export interface UserRow {
@@ -570,7 +683,14 @@ export const api = {
     request<SecretInfo>("PUT", `/projects/${projectId}/secrets/${encodeURIComponent(name)}`, { value }),
   deleteSecret: (projectId: string, name: string) =>
     request<void>("DELETE", `/projects/${projectId}/secrets/${encodeURIComponent(name)}`),
+  // AI Security Center: only mounted when the server enables it (404 otherwise).
+  securityCenter: (projectId: string, runId: string, filter: SecurityQuery = {}) =>
+    request<SecurityOverview>("GET", `/projects/${enc(projectId)}/security-center/runs/${enc(runId)}${query({ ...filter })}`),
+  securityFinding: (projectId: string, runId: string, findingId: string) =>
+    request<SecurityFindingDetail>("GET", `/projects/${enc(projectId)}/security-center/runs/${enc(runId)}/findings/${enc(findingId)}`),
 };
+
+const enc = encodeURIComponent;
 
 /** Readiness of the server and its database (outside /api/v1, no token). */
 export async function readiness(): Promise<boolean> {

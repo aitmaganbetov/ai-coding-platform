@@ -165,6 +165,7 @@ layers = [
   "ai_coding.api",
   "ai_coding.workflows",
   "ai_coding.orchestrator",
+  "ai_coding.security_center",
   "ai_coding.reports",
   "ai_coding.quality",
   "ai_coding.tools | ai_coding.integrations | ai_coding.agents",

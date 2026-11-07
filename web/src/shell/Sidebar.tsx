@@ -2,7 +2,7 @@ import { Check, ChevronsUpDown, FolderPlus, PanelLeftClose, PanelLeftOpen, Star 
 import type { Me } from "../api";
 import { useProjects } from "../data/queries";
 import { cx, DropdownMenu, MenuItem, MenuLabel, MenuSeparator, Tooltip } from "../ui";
-import { GROUPS, href, NAV, type NavItem, type Route } from "./routes";
+import { GROUPS, href, type NavItem, type Route, visibleNav } from "./routes";
 import { useUi } from "./store";
 
 export function Logo({ compact }: { compact?: boolean }) {
@@ -100,7 +100,7 @@ function NavLinkItem({ item, active, compact, favourite, onFavourite }: { item: 
 export function Sidebar({ route, me }: { route: Route; me: Me }) {
   const { sidebarCollapsed, toggleSidebar, favourites, toggleFavourite, mobileNavOpen, setMobileNav } = useUi();
   const compact = sidebarCollapsed && !mobileNavOpen; // the mobile drawer always shows labels
-  const items = NAV.filter((i) => !i.adminOnly || me.is_admin);
+  const items = visibleNav(me);
   const favs = items.filter((i) => favourites.includes(i.id));
   const isActive = (item: NavItem) => item.views.includes(route.view);
   return (

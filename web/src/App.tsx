@@ -21,6 +21,7 @@ const Launcher = lazy(() => import("./pages/Launcher"));
 const Tasks = lazy(() => import("./pages/Tasks"));
 const Agents = lazy(() => import("./pages/Agents"));
 const AuditCenter = lazy(() => import("./pages/AuditCenter"));
+const SecurityCenter = lazy(() => import("./pages/SecurityCenter"));
 const Testing = lazy(() => import("./pages/Testing"));
 const Deployments = lazy(() => import("./pages/Deployments"));
 const Models = lazy(() => import("./pages/Models"));
@@ -55,6 +56,9 @@ function Page({ route, me, onLogout }: { route: Route; me: Me; onLogout: () => v
       return <Agents query={route.query ?? {}} />;
     case "audit":
       return <AuditCenter query={route.query ?? {}} />;
+    case "security":
+      // The page itself refuses to load anything when the server has the module off.
+      return <SecurityCenter me={me} query={route.query ?? {}} />;
     case "testing":
       return <Testing />;
     case "deployments":

@@ -10,9 +10,11 @@ import {
   Rocket,
   Server,
   Settings,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
+import type { Features, Me } from "../api";
 
 // Hash routing of NEXUS. Old addresses keep working (#/projects, #/runs/<id>, #/users,
 // #/account, #/projects/<id>/code): links in chats, reports and bookmarks point at them.
@@ -30,6 +32,7 @@ export type View =
   | "studio"
   | "code"
   | "audit"
+  | "security"
   | "testing"
   | "deployments"
   | "models"
@@ -73,6 +76,7 @@ export function parseRoute(hash: string): Route {
     case "tasks":
     case "studio":
     case "audit":
+    case "security":
     case "testing":
     case "deployments":
     case "models":
@@ -99,6 +103,7 @@ export function href(view: View, id?: string, query?: Record<string, string | un
     studio: "#/studio",
     code: `#/projects/${id ?? ""}/code`,
     audit: "#/audit",
+    security: "#/security",
     testing: "#/testing",
     deployments: "#/deployments",
     models: "#/models",
@@ -118,6 +123,8 @@ export interface NavItem {
   href: string;
   views: View[];
   adminOnly?: boolean;
+  /** Shown only when the server enables this opt-in module (GET /me → features). */
+  feature?: keyof Features;
   group: "work" | "quality" | "platform";
 }
 
@@ -129,6 +136,7 @@ export const NAV: NavItem[] = [
   { id: "agents", label: "Агенты", icon: Bot, href: href("agents"), views: ["agents"], group: "work" },
   { id: "studio", label: "Code Studio", icon: Code2, href: href("studio"), views: ["studio", "code"], group: "work" },
   { id: "audit", label: "Audit Center", icon: ShieldCheck, href: href("audit"), views: ["audit"], group: "quality" },
+  { id: "security", label: "Security Center", icon: ShieldAlert, href: href("security"), views: ["security"], feature: "security_center", group: "quality" },
   { id: "testing", label: "Тесты и Gates", icon: FlaskConical, href: href("testing"), views: ["testing"], group: "quality" },
   { id: "deployments", label: "Деплой", icon: Rocket, href: href("deployments"), views: ["deployments"], group: "platform" },
   { id: "models", label: "Модели", icon: BrainCircuit, href: href("models"), views: ["models"], group: "platform" },
@@ -141,6 +149,16 @@ export const GROUPS: Record<NavItem["group"], string> = {
   quality: "Качество",
   platform: "Платформа",
 };
+
+/** Whether the server has switched an opt-in module on for this session. */
+export function featureOn(me: Me, feature: keyof Features): boolean {
+  return me.features?.[feature] === true;
+}
+
+/** The sections this user may open: administrators' pages and enabled modules only. */
+export function visibleNav(me: Me): NavItem[] {
+  return NAV.filter((i) => (!i.adminOnly || me.is_admin) && (!i.feature || featureOn(me, i.feature)));
+}
 
 export function navFor(view: View): NavItem | undefined {
   return NAV.find((item) => item.views.includes(view));

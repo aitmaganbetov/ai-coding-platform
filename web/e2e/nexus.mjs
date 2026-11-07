@@ -18,6 +18,7 @@ const SECTIONS = [
   ["agents", "#/agents"],
   ["studio", "#/studio"],
   ["audit", "#/audit"],
+  ["security", "#/security"], // opt-in: "module off" unless the server enables it
   ["testing", "#/testing"],
   ["deployments", "#/deployments"],
   ["models", "#/models"],

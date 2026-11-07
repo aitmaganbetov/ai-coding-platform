@@ -1,0 +1,38 @@
+name: Security Center foundation
+
+on:
+  pull_request:
+    paths:
+      - "src/ai_coding/api/**"
+      - "src/ai_coding/security_center/**"
+      - "tests/**/test_security_center.py"
+      - "pyproject.toml"
+      - ".github/workflows/security-center.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  foundation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen
+      - name: Security Center and existing API isolation regressions
+        run: >-
+          uv run pytest -q
+          tests/unit/test_security_center.py
+          tests/integration/test_security_center.py
+          tests/unit/test_server_services.py
+          tests/integration/test_api_insights.py
+          tests/security/test_api_access.py
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy
+      - run: uv run lint-imports

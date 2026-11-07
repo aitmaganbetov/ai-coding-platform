@@ -260,6 +260,7 @@ ai-coding server serve --with-worker --ui web/dist
 | `AI_CODING_SERVER_WORKSPACE_RUNTIME` | пусто | OCI runtime контейнеров терминала, например `runsc` (gVisor) |
 | `AI_CODING_SERVER_WORKSPACE_MEMORY_MB` / `_CPUS` | `4096` / `2` | Лимиты контейнера терминала |
 | `AI_CODING_SERVER_WORKSPACE_IDLE_MINUTES` | `60` | Через сколько минут без подключённого терминала контейнер удаляется |
+| `AI_CODING_SERVER_SECURITY_CENTER` | `off` | AI Security Center (только чтение): `on` — API и раздел Web UI, `off` — их нет. Другое значение останавливает запуск. См. [security-center.md](security-center.md) |
 | `AI_CODING_SERVER_RATE_LIMIT` | `120` | Запросов в минуту на пользователя или токен |
 | `AI_CODING_SERVER_LOGIN_RATE_LIMIT` | `10` | Попыток входа в минуту с одного адреса |
 | `AI_CODING_SERVER_TRUSTED_PROXIES` | пусто | Адреса или имена proxy, которым доверяется `X-Forwarded-For`/`-Proto` |

@@ -21,6 +21,8 @@
 | ``AI_CODING_SERVER_WORKSPACE_EGRESS`` | hosts the terminals may reach (``*``: any) |
 | ``AI_CODING_SERVER_SECRET_KEY`` | encrypts projects' secrets at rest (32 bytes, base64 or hex); |
 |   | unset: secrets (tokens, API keys) cannot be stored |
+| ``AI_CODING_SERVER_SECURITY_CENTER`` | ``off``: the AI Security Center API and page do |
+|   | not exist; ``on`` enables them (read-only, docs/security-center.md) |
 """
 
 from __future__ import annotations
@@ -96,6 +98,7 @@ class ServerSettings:
     workspace_memory_mb: int = 4096
     workspace_cpus: int = 2
     workspace_idle_minutes: int = 60
+    security_center: bool = False  # opt-in module (docs/security-center.md)
 
     @property
     def projects_dir(self) -> Path:
@@ -153,7 +156,19 @@ class ServerSettings:
             workspace_memory_mb=_int(env, "WORKSPACE_MEMORY_MB", 4096, low=256, high=262_144),
             workspace_cpus=_int(env, "WORKSPACE_CPUS", 2, low=1, high=64),
             workspace_idle_minutes=_int(env, "WORKSPACE_IDLE_MINUTES", 60, low=1, high=10_080),
+            security_center=_switch(env, "SECURITY_CENTER"),
         )
+
+
+def _switch(env: Mapping[str, str], name: str) -> bool:
+    """An opt-in feature flag: off unless explicitly on; a typo stops the server instead
+    of silently choosing either side."""
+    value = env.get(PREFIX + name, "").strip().lower()
+    if value in {"", "off", "false", "0", "no"}:
+        return False
+    if value in {"on", "true", "1", "yes"}:
+        return True
+    raise ValueError(f"{PREFIX}{name} must be on or off, not {value!r}")
 
 
 def _workspaces(raw: str) -> str:
